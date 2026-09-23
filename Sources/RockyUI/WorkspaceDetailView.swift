@@ -5,8 +5,12 @@ struct WorkspaceDetailView: View {
     let model: AppModel
     let workspace: Workspace
     @State private var agent: AgentKind = .claude
-    @State private var chat: ChatSessionModel?
     @State private var starting = false
+
+    /// Read from the model, not kept here: a chat the model stops (for example after a settings change) must show Start again.
+    private var chat: ChatSessionModel? {
+        model.existingChat(workspaceId: workspace.id)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -40,16 +44,13 @@ struct WorkspaceDetailView: View {
             }
         }
         .onAppear {
-            if let existing = model.existingChat(workspaceId: workspace.id) {
-                chat = existing
-                agent = existing.agent
-            }
+            if let chat { agent = chat.agent }
         }
     }
 
     private func start() async {
         starting = true
-        chat = await model.openChat(workspace: workspace, agent: agent)
+        _ = await model.openChat(workspace: workspace, agent: agent)
         starting = false
     }
 }

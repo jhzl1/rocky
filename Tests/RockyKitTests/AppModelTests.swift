@@ -90,7 +90,7 @@ struct AppModelTests {
         let repo = try GitFixture.localRepo(in: try Fixtures.temporaryDirectory("repos"))
         await model.addRepo(at: repo)
         let repoId = try #require(model.repos.first?.id)
-        model.setClaudeConfigDir(repoId: repoId, "/Users/me/.claude-celes")
+        await model.setClaudeConfigDir(repoId: repoId, "/Users/me/.claude-celes")
         await model.createWorkspace(repoId: repoId)
         let workspace = try #require(model.workspaces[repoId]?.first)
 
@@ -110,6 +110,28 @@ struct AppModelTests {
         #expect(resumed.items.map(\.text) == ["hi", "Hello", "Run printenv"])
         #expect(resumed.items.last?.status == "completed")
         await reopened.stopAllAgents()
+    }
+
+    @Test func changingTheClaudeInstanceStopsTheRunningClaudeChat() async throws {
+        let launches = LaunchBox()
+        let model = try makeModel(launches: launches)
+        await model.bootstrap()
+        let repo = try GitFixture.localRepo(in: try Fixtures.temporaryDirectory("repos"))
+        await model.addRepo(at: repo)
+        let repoId = try #require(model.repos.first?.id)
+        await model.createWorkspace(repoId: repoId)
+        let workspace = try #require(model.workspaces[repoId]?.first)
+        let chat = try #require(await model.openChat(workspace: workspace, agent: .claude))
+        #expect(launches.last?["CLAUDE_CONFIG_DIR"] == nil)
+
+        await model.setClaudeConfigDir(repoId: repoId, "/Users/me/.claude-rentek")
+        #expect(chat.state == .stopped("Stopped"))
+        #expect(model.existingChat(workspaceId: workspace.id) == nil)
+
+        let restarted = try #require(await model.openChat(workspace: workspace, agent: .claude))
+        #expect(restarted !== chat)
+        #expect(launches.last?["CLAUDE_CONFIG_DIR"] == "/Users/me/.claude-rentek")
+        await model.stopAllAgents()
     }
 
     @Test func repoWithoutClaudeInstanceNeverInheritsOne() async throws {

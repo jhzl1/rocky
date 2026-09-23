@@ -35,7 +35,7 @@ struct RepoSettingsView: View {
                 Spacer()
                 Button("Cancel") { dismiss() }
                 Button("Save") {
-                    model.setClaudeConfigDir(repoId: repo.id, claudeConfigDir)
+                    Task { await model.setClaudeConfigDir(repoId: repo.id, claudeConfigDir) }
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)

@@ -46,7 +46,8 @@ public final class AppModel {
     @ObservationIgnored private let captureEnvironment: @Sendable () throws -> [String: String]
     @ObservationIgnored private let makeLaunch: @Sendable (AgentKind, URL, [String: String], RockyPaths) throws -> AgentLaunch
     @ObservationIgnored private let installAdapter: @Sendable (RockyPaths, [String: String]) throws -> Void
-    @ObservationIgnored private var chats: [String: ChatSessionModel] = [:]
+    /// Observed: views show the chat from here, so stopping one in the model shows Start again.
+    private var chats: [String: ChatSessionModel] = [:]
 
     public init(
         store: RockyStore,
@@ -111,14 +112,21 @@ public final class AppModel {
         }
     }
 
-    public func setClaudeConfigDir(repoId: String, _ directory: String?) {
+    public func setClaudeConfigDir(repoId: String, _ directory: String?) async {
         guard var repo = repo(id: repoId) else { return }
-        repo.claudeConfigDir = (directory?.isEmpty ?? true) ? nil : directory
+        let claudeConfigDir = (directory?.isEmpty ?? true) ? nil : directory
+        guard claudeConfigDir != repo.claudeConfigDir else { return }
+        repo.claudeConfigDir = claudeConfigDir
         do {
             try store.update(repo)
             reload()
         } catch {
             errorMessage = "\(error)"
+            return
+        }
+        // A running Claude chat keeps the instance it was started with; the next Start picks up the new one.
+        for workspace in workspaces[repoId] ?? [] where chats[workspace.id]?.agent == .claude {
+            await chats.removeValue(forKey: workspace.id)?.stop()
         }
     }
 
