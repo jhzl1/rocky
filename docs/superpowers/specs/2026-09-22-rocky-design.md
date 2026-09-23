@@ -86,8 +86,8 @@ measured from `CurrentPowerlog.PLSQL`.
 | M4 | Multi-account + energy | per-repo account everywhere; energy measured vs Conductor |
 
 ## M0 answers
-- `gh auth git-credential` honors `GH_TOKEN` on HTTPS push: with `GH_TOKEN` set, `gh`/git-over-HTTPS act as that token's account; without it, they fall back to the active `gh` account via `gh auth git-credential` (not an `osxkeychain` cache). Details: `docs/superpowers/spikes/2026-09-22-m0-findings.md`.
-- `claude-code-acp` passes process `env` to agent tools: a probe value set in the environment round-tripped through the agent's shell tool and appeared in its response text. OpenCode does the same; Codex is unverified because its run failed on an auth error before its shell tool ran. Details: `docs/superpowers/spikes/2026-09-22-m0-findings.md`.
+- `gh auth git-credential` honors `GH_TOKEN` for git over HTTPS (verified with `git ls-remote`; `git push` uses the same credential helper but was not exercised): with `GH_TOKEN` set, `gh`/git-over-HTTPS act as that token's account; without it, they fall back to the active `gh` account via `gh auth git-credential` (not an `osxkeychain` cache). Details: `docs/superpowers/spikes/2026-09-22-m0-findings.md`.
+- `claude-agent-acp` (the M0 unknown originally named it `claude-code-acp`) passes process `env` to agent tools: a probe value set in the environment round-tripped through the agent's shell tool and appeared in its response text. OpenCode does the same; Codex is unverified because its run failed on an auth error before its shell tool ran. Details: `docs/superpowers/spikes/2026-09-22-m0-findings.md`.
 - All three ACP adapters (`opencode acp`, `claude-agent-acp@0.81.0`, `codex-acp@1.13.0`) report `loadSession: true` in `initialize`; resume itself (`session/load`) was not exercised — M1 must test it for real. Details: `docs/superpowers/spikes/2026-09-22-m0-findings.md`.
 
 ## Verification
