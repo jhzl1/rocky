@@ -3,7 +3,9 @@
 # Answers initialize, session/new, session/load (replaying one old message first) and session/prompt.
 # A prompt streams "Hel" + "lo", announces tool t1, asks permission, then reports t1 completed or failed.
 # FAKE_ACP_LOAD_SESSION=false makes initialize report loadSession=false.
+# FAKE_ACP_LOAD_FAILS=true makes session/load answer "Resource not found", like a session the agent does not have.
 load_session="${FAKE_ACP_LOAD_SESSION:-true}"
+load_fails="${FAKE_ACP_LOAD_FAILS:-false}"
 update() {
   echo "{\"jsonrpc\":\"2.0\",\"method\":\"session/update\",\"params\":{\"sessionId\":\"fake-1\",\"update\":$1}}"
 }
@@ -19,8 +21,12 @@ while IFS= read -r line; do
       echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"sessionId\":\"fake-1\"}}"
       ;;
     *'"method":"session/load"'*)
-      update '{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"replayed"}}'
-      echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":null}"
+      if [[ $load_fails == true ]]; then
+        echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"error\":{\"code\":-32002,\"message\":\"Resource not found\"}}"
+      else
+        update '{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"replayed"}}'
+        echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":null}"
+      fi
       ;;
     *'"method":"session/prompt"'*)
       update '{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Hel"}}'

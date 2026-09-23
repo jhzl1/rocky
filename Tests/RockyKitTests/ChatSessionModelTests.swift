@@ -90,6 +90,19 @@ struct ChatSessionModelTests {
         await model.stop()
     }
 
+    @Test func resumeStartsANewSessionWhenTheAgentNoLongerHasTheOldOne() async {
+        let history = [ChatItem(kind: .user, text: "earlier")]
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(loadFails: true), history: history, resumeSessionId: "other-instance", flushInterval: .zero)
+        await model.start()
+        #expect(model.state == .ready)
+        #expect(model.sessionId == "fake-1")
+        #expect(summary(model.items) == [
+            "user:earlier",
+            "error:Could not resume the previous conversation (Resource not found); started a new one.",
+        ])
+        await model.stop()
+    }
+
     @Test func agentThatExitsDuringStartStopsWithReason() async {
         let launch = AgentLaunch(
             executable: URL(fileURLWithPath: "/bin/bash"),

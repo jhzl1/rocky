@@ -101,20 +101,32 @@ public final class ChatSessionModel {
             // Updates are dropped while `sessionId` is nil. `session/load` replays the whole
             // conversation before it responds, and the transcript already comes from the store.
             if let resume = resumeSessionId, capabilities.loadSession {
-                _ = try await connection.call("session/load", ACPProtocol.loadSessionParams(sessionId: resume, cwd: launch.cwd))
-                sessionId = resume
-            } else {
-                let result = try await connection.call("session/new", ACPProtocol.newSessionParams(cwd: launch.cwd))
-                guard let id = ACPProtocol.sessionId(fromNewSession: result) else {
-                    throw ACPConnectionError.rpc(code: 0, message: "session/new returned no sessionId")
+                do {
+                    _ = try await connection.call("session/load", ACPProtocol.loadSessionParams(sessionId: resume, cwd: launch.cwd))
+                    sessionId = resume
+                } catch ACPConnectionError.rpc(_, let message) {
+                    // The agent no longer has that session, for example after the repo switched Claude instances.
+                    let note = ChatItem(kind: .error, text: "Could not resume the previous conversation (\(message)); started a new one.")
+                    items.append(note)
+                    onPersist(note)
+                    sessionId = try await newSession(on: connection)
                 }
-                sessionId = id
+            } else {
+                sessionId = try await newSession(on: connection)
             }
             state = .ready
         } catch {
             state = .stopped(Self.describe(error))
             await connection?.terminate()
         }
+    }
+
+    private func newSession(on connection: ACPConnection) async throws -> String {
+        let result = try await connection.call("session/new", ACPProtocol.newSessionParams(cwd: launch.cwd))
+        guard let id = ACPProtocol.sessionId(fromNewSession: result) else {
+            throw ACPConnectionError.rpc(code: 0, message: "session/new returned no sessionId")
+        }
+        return id
     }
 
     public func send(_ text: String) async {
