@@ -46,7 +46,19 @@ struct SidebarView: View {
                 Task { await model.removeWorkspace(id: workspace.id) }
             }
         } message: { workspace in
-            Text("Deletes the folder \(workspace.path). The branch \(workspace.branch) is kept. Git refuses while there are uncommitted changes.")
+            Text("Stops its agent, terminals and scripts, runs the archive script, then deletes the folder \(workspace.path). The branch \(workspace.branch) is kept. Git refuses while there are uncommitted changes.")
+        }
+        .alert(
+            "Archive script failed",
+            isPresented: Binding(get: { model.archiveFailure != nil }, set: { if !$0 { model.archiveFailure = nil } }),
+            presenting: model.archiveFailure
+        ) { failure in
+            Button("Remove Anyway", role: .destructive) {
+                Task { await model.removeWorkspace(id: failure.workspaceId, skipArchive: true) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { failure in
+            Text("\(failure.message) \(failure.workspaceName) was not removed; the Archive tab shows its output.")
         }
     }
 
