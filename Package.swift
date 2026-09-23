@@ -17,11 +17,16 @@ let package = Package(
             .product(name: "GRDB", package: "GRDB.swift"),
             .product(name: "SwiftTerm", package: "SwiftTerm"),
         ]),
-        .target(name: "RockyUI", dependencies: [
-            "RockyKit",
-            .product(name: "SwiftTerm", package: "SwiftTerm"),
-            .product(name: "Textual", package: "textual"),
-        ]),
+        .target(
+            name: "RockyUI",
+            dependencies: [
+                "RockyKit",
+                .product(name: "SwiftTerm", package: "SwiftTerm"),
+                .product(name: "Textual", package: "textual"),
+            ],
+            // Claude and OpenCode logos, from Simple Icons (simpleicons.org, CC0).
+            resources: [.copy("Resources/Icons")]
+        ),
         .executableTarget(name: "Rocky", dependencies: ["RockyKit", "RockyUI"]),
         .testTarget(
             name: "RockyKitTests",

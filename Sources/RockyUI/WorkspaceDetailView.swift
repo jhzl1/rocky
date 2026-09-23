@@ -53,11 +53,7 @@ struct WorkspaceDetailView: View {
                     .help("This workspace owns ports \(String(port))–\(String(port + 9)): $PORT and $CONDUCTOR_PORT are \(String(port)).")
             }
             runButton
-            Picker("Agent", selection: $agent) {
-                ForEach(AgentKind.allCases) { Text($0.displayName).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .fixedSize()
+            AgentSwitcher(selection: $agent)
         }
         .padding()
         .padding(.leading, titleBarLeadingInset)
@@ -88,9 +84,14 @@ struct WorkspaceDetailView: View {
         } else {
             // Agents start only on request: an idle workspace spawns no process (spec Section 1).
             ContentUnavailableView {
-                Label("\(agent.displayName) is not running", systemImage: "bubble.left.and.bubble.right")
+                Label {
+                    Text("\(agent.displayName) is not running")
+                } icon: {
+                    AgentIcon(agent: agent, size: 40)
+                }
             } actions: {
                 Button("Start \(agent.displayName)") { Task { await start() } }
+                    .buttonStyle(.borderedProminent)
                     .disabled(starting)
             }
         }
