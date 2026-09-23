@@ -27,7 +27,7 @@ Per-repo env var override is included; low priority.
   One Swift client. `opencode acp` native; `@agentclientprotocol/claude-agent-acp` and `@agentclientprotocol/codex-acp` adapters (M0 ran 0.81.0 and 1.13.0).
   Accepted cost: new Claude/Codex features lag until adapters update.
 - v1 scope: chat + worktrees, diff + comments + PR, integrated terminal, setup/run/archive scripts.
-- Prerequisite for M1: full Xcode (Command Line Tools lack XCTest/swift-testing).
+- Toolchain: full Xcode 27.0 (build 27A266a), chosen for SwiftUI previews, XCTest/swift-testing and Instruments; active via `xcode-select`.
 - Codex requires a login (API key or ChatGPT login) before use; decide in M1.
 
 ## Section 1 — Architecture and energy rules
