@@ -44,10 +44,14 @@ struct PTYSessionTests {
 
     @Test func passesEnvironmentWorkingDirectoryAndARealTerm() async throws {
         let cwd = try Fixtures.temporaryDirectory("pty")
+        // zsh reports the physical path (/private/var/…); resolvingSymlinksInPath() strips the /private prefix.
+        let pointer = try #require(realpath(cwd.path, nil))
+        let physicalCwd = String(cString: pointer)
+        free(pointer)
         let pty = session(#"printf '%s|%s|%s' "$ROCKY_PROBE" "$PWD" "$TERM""#, environment: ["ROCKY_PROBE": "probe-7", "TERM": "dumb"], cwd: cwd)
         pty.start()
         #expect(await pty.waitForExit() == .exited(0))
-        try await waitForOutput(pty, containing: "probe-7|\(cwd.path)|xterm-256color")
+        try await waitForOutput(pty, containing: "probe-7|\(physicalCwd)|xterm-256color")
     }
 
     @Test func inputReachesTheProcess() async throws {
