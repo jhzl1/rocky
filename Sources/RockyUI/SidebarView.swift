@@ -37,14 +37,8 @@ struct SidebarView: View {
                 }
             }
         }
+        .listStyle(.sidebar)
         .scrollContentBackground(.hidden)
-        .background(Color.rockySidebar)
-        .navigationSplitViewColumnWidth(min: 220, ideal: 260)
-        .toolbar {
-            ToolbarItem {
-                Button("Add Repository", systemImage: "plus", action: addRepository)
-            }
-        }
         .sheet(item: $settingsRepo) { repo in
             RepoSettingsView(model: model, repo: repo)
         }
@@ -91,13 +85,36 @@ struct SidebarView: View {
             .fixedSize()
         }
     }
+}
 
-    private func addRepository() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.prompt = "Add"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        Task { await model.addRepo(at: url) }
+/// The line between the sidebar and the workspace: a light hairline (the system split view draws a black one),
+/// with a wider invisible handle to drag the sidebar's width.
+struct SidebarDivider: View {
+    @Binding var width: Double
+    @State private var widthAtDragStart: Double?
+    static let widthRange: ClosedRange<Double> = 200...420
+
+    var body: some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.08))
+            .frame(width: 1)
+            .ignoresSafeArea()
+            .overlay {
+                Color.clear
+                    .frame(width: 9)
+                    .contentShape(Rectangle())
+                    .onHover { inside in
+                        if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+                    }
+                    .gesture(
+                        DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                            .onChanged { drag in
+                                let start = widthAtDragStart ?? width
+                                widthAtDragStart = start
+                                width = min(max(start + drag.translation.width, Self.widthRange.lowerBound), Self.widthRange.upperBound)
+                            }
+                            .onEnded { _ in widthAtDragStart = nil }
+                    )
+            }
     }
 }
