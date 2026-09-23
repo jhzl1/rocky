@@ -95,6 +95,33 @@ struct ChatSessionModelTests {
         await model.stop()
     }
 
+    @Test func theFirstMessageStartsAnIdleChat() async throws {
+        var ready: [String] = []
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(), flushInterval: .zero, onSessionReady: { ready.append($0) })
+        #expect(model.state == .idle)
+
+        async let sending: Void = model.send("hi")
+        try await waitForPermission(model)
+        model.answerPermission(optionId: "allow")
+        await sending
+
+        #expect(model.state == .ready)
+        #expect(ready == ["fake-1"])
+        #expect(summary(model.items) == ["user:hi", "agent:Hello", "tool:Run printenv[completed]"])
+        await model.stop()
+    }
+
+    @Test func readsTheSessionModelsAndSwitchesThem() async {
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(), flushInterval: .zero)
+        await model.start()
+        #expect(model.models?.options.map(\.name) == ["Default", "Opus"])
+        #expect(model.models?.current == "default")
+
+        await model.selectModel("opus")
+        #expect(model.models?.current == "opus")
+        await model.stop()
+    }
+
     @Test func resumeStartsANewSessionWhenTheAgentNoLongerHasTheOldOne() async {
         let history = [ChatItem(kind: .user, text: "earlier")]
         let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(loadFails: true), history: history, resumeSessionId: "other-instance", flushInterval: .zero)

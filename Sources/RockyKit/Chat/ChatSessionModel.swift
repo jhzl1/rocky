@@ -47,6 +47,8 @@ public final class ChatSessionModel {
     public private(set) var pendingPermission: PermissionRequest?
     public private(set) var sessionId: String?
     public private(set) var capabilities = AgentCapabilities(loadSession: false)
+    /// The models the agent offers for this session; nil until the session exists or when it offers none.
+    public private(set) var models: ModelChoice?
     /// While false, updates are buffered and applied on the next show (spec Section 1).
     public var isVisible = true {
         didSet { if isVisible { flush() } }
@@ -55,6 +57,7 @@ public final class ChatSessionModel {
     @ObservationIgnored private let launch: AgentLaunch
     @ObservationIgnored private let flushInterval: Duration
     @ObservationIgnored private let onPersist: @MainActor (ChatItem) -> Void
+    @ObservationIgnored private let onSessionReady: @MainActor (String) -> Void
     @ObservationIgnored private var resumeSessionId: String?
     @ObservationIgnored private var connection: ACPConnection?
     @ObservationIgnored private var buffered: [SessionEvent] = []
@@ -70,7 +73,8 @@ public final class ChatSessionModel {
         history: [ChatItem] = [],
         resumeSessionId: String? = nil,
         flushInterval: Duration = .milliseconds(100),
-        onPersist: @escaping @MainActor (ChatItem) -> Void = { _ in }
+        onPersist: @escaping @MainActor (ChatItem) -> Void = { _ in },
+        onSessionReady: @escaping @MainActor (String) -> Void = { _ in }
     ) {
         self.agent = agent
         self.launch = launch
@@ -78,6 +82,7 @@ public final class ChatSessionModel {
         self.resumeSessionId = resumeSessionId
         self.flushInterval = flushInterval
         self.onPersist = onPersist
+        self.onSessionReady = onSessionReady
     }
 
     public func start() async {
@@ -114,43 +119,66 @@ public final class ChatSessionModel {
             // conversation before it responds, and the transcript already comes from the store.
             if let resume = resumeSessionId, capabilities.loadSession {
                 do {
-                    _ = try await connection.call("session/load", ACPProtocol.loadSessionParams(sessionId: resume, cwd: launch.cwd))
+                    let loaded = try await connection.call("session/load", ACPProtocol.loadSessionParams(sessionId: resume, cwd: launch.cwd))
                     sessionId = resume
+                    models = ACPProtocol.modelChoice(from: loaded)
                 } catch ACPConnectionError.rpc(_, let message) {
                     // The agent no longer has that session, for example after the repo switched Claude instances.
-                    let note = ChatItem(kind: .error, text: "Could not resume the previous conversation (\(message)); started a new one.")
-                    items.append(note)
-                    onPersist(note)
-                    sessionId = try await newSession(on: connection)
+                    // Shown but not saved: it says why the agent forgot the conversation, and it must not pile up.
+                    items.append(ChatItem(kind: .error, text: "Could not resume the previous conversation (\(message)); started a new one."))
+                    try await startNewSession(on: connection)
                 }
             } else {
-                sessionId = try await newSession(on: connection)
+                try await startNewSession(on: connection)
             }
             state = .ready
+            if let sessionId { onSessionReady(sessionId) }
         } catch {
             state = .stopped(Self.describe(error))
             await connection?.terminate()
         }
     }
 
-    private func newSession(on connection: ACPConnection) async throws -> String {
+    private func startNewSession(on connection: ACPConnection) async throws {
         let result = try await connection.call("session/new", ACPProtocol.newSessionParams(cwd: launch.cwd))
         guard let id = ACPProtocol.sessionId(fromNewSession: result) else {
             throw ACPConnectionError.rpc(code: 0, message: "session/new returned no sessionId")
         }
-        return id
+        sessionId = id
+        models = ACPProtocol.modelChoice(from: result)
     }
 
-    public func send(_ text: String) async {
+    /// Switches the session's model; `value` is one of `models.options`.
+    public func selectModel(_ value: String) async {
+        guard let connection, let sessionId, let choice = models, choice.current != value else { return }
+        let request = ACPProtocol.setModelRequest(sessionId: sessionId, choice: choice, value: value)
+        do {
+            _ = try await connection.call(request.method, request.params)
+            models?.current = value
+        } catch {
+            items.append(ChatItem(kind: .error, text: "Could not switch the model: \(Self.describe(error))"))
+        }
+    }
+
+    /// Sends a message, starting the agent first when it is not running yet: opening a workspace shows its
+    /// transcript without spawning anything (spec Section 1), and the first message starts the agent.
+    /// Images go inline when the agent accepts them; other files are sent as links the agent reads itself.
+    public func send(_ text: String, attachments: [URL] = []) async {
+        if state == .idle { await start() }
         guard state == .ready, let connection, let sessionId else { return }
-        let userItem = ChatItem(kind: .user, text: text)
+        let promptAttachments = attachments.map { PromptAttachment.make(for: $0, imagesAllowed: capabilities.promptImages) }
+        let shown = attachments.isEmpty ? text : text + "\n\n" + attachments.map { "📎 \($0.lastPathComponent)" }.joined(separator: "  ")
+        let userItem = ChatItem(kind: .user, text: shown)
         items.append(userItem)
         onPersist(userItem)
         state = .running
         openTextItem = nil
         turnItems = []
         do {
-            _ = try await connection.call("session/prompt", ACPProtocol.promptParams(sessionId: sessionId, text: text))
+            _ = try await connection.call(
+                "session/prompt",
+                ACPProtocol.promptParams(sessionId: sessionId, text: text, attachments: promptAttachments)
+            )
             flush()
             if state == .running { state = .ready }
         } catch ACPConnectionError.rpc(_, let message) {

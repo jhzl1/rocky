@@ -135,6 +135,55 @@ struct AppModelTests {
         await model.stopAllAgents()
     }
 
+    @Test func reopeningShowsTheLastChatWithoutStartingTheAgent() async throws {
+        let store = try RockyStore.inMemory()
+        let model = try makeModel(store: store)
+        await model.bootstrap()
+        let repo = try GitFixture.localRepo(in: try Fixtures.temporaryDirectory("repos"))
+        await model.addRepo(at: repo)
+        let repoId = try #require(model.repos.first?.id)
+        await model.createWorkspace(repoId: repoId)
+        let workspace = try #require(model.workspaces[repoId]?.first)
+        let chat = try #require(await model.openChat(workspace: workspace, agent: .opencode))
+        async let sending: Void = chat.send("hi")
+        try await answerNextPermission(chat)
+        await sending
+        await model.stopAllAgents()
+
+        let reopened = try makeModel(store: store)
+        await reopened.bootstrap()
+        #expect(reopened.lastAgent(workspaceId: workspace.id) == .opencode)
+        let prepared = try #require(await reopened.prepareChat(workspace: workspace, agent: .opencode))
+        #expect(prepared.state == .idle)
+        #expect(prepared.items.map(\.text) == ["hi", "Hello", "Run printenv"])
+        await reopened.stopAllAgents()
+    }
+
+    @Test func newConversationStartsEmptyAndKeepsTheOldOne() async throws {
+        let store = try RockyStore.inMemory()
+        let model = try makeModel(store: store)
+        await model.bootstrap()
+        let repo = try GitFixture.localRepo(in: try Fixtures.temporaryDirectory("repos"))
+        await model.addRepo(at: repo)
+        let repoId = try #require(model.repos.first?.id)
+        await model.createWorkspace(repoId: repoId)
+        let workspace = try #require(model.workspaces[repoId]?.first)
+        let chat = try #require(await model.openChat(workspace: workspace, agent: .claude))
+        async let sending: Void = chat.send("hi")
+        try await answerNextPermission(chat)
+        await sending
+        let oldRecord = try #require(try store.latestSession(workspaceId: workspace.id, agent: "claude"))
+
+        let fresh = try #require(await model.newConversation(workspace: workspace, agent: .claude))
+        #expect(fresh.items.isEmpty)
+        #expect(fresh.state == .idle)
+        #expect(chat.state == .stopped("Stopped"))
+        #expect(model.existingChat(workspaceId: workspace.id) === fresh)
+        #expect(try store.latestSession(workspaceId: workspace.id, agent: "claude")?.id != oldRecord.id)
+        #expect(try store.messages(sessionId: oldRecord.id).map(\.text) == ["hi", "Hello", "Run printenv"])
+        await model.stopAllAgents()
+    }
+
     @Test func repoWithoutClaudeInstanceNeverInheritsOne() async throws {
         let launches = LaunchBox()
         let model = try makeModel(capture: {

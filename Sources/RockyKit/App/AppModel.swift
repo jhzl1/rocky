@@ -360,32 +360,71 @@ public final class AppModel {
 
     /// Returns the workspace's chat for `agent`, starting it and resuming that agent's last session.
     public func openChat(workspace: Workspace, agent: AgentKind) async -> ChatSessionModel? {
+        guard let chat = await prepareChat(workspace: workspace, agent: agent) else { return nil }
+        await chat.start()
+        return chat
+    }
+
+    /// Shows the workspace's last conversation with `agent` without starting the agent: it starts when the
+    /// user sends the first message (spec Section 1: agents start only on user action).
+    @discardableResult
+    public func prepareChat(workspace: Workspace, agent: AgentKind) async -> ChatSessionModel? {
         if let chat = chats[workspace.id], chat.agent == agent { return chat }
         await chats.removeValue(forKey: workspace.id)?.stop()
-        guard let current = self.workspace(id: workspace.id) else { return nil }
-        let environment = self.environment(for: current)
         do {
-            let launch = try await resolveLaunch(agent, cwd: URL(fileURLWithPath: workspace.path), environment: environment)
-            let existing = try store.latestSession(workspaceId: workspace.id, agent: agent.rawValue)
-            var record = existing ?? ChatSessionRecord(workspaceId: workspace.id, agent: agent.rawValue)
-            if existing == nil { try store.add(record) }
-            let history = try store.messages(sessionId: record.id).map(ChatItem.init(record:))
-            let store = self.store
-            let recordId = record.id
-            let chat = ChatSessionModel(agent: agent, launch: launch, history: history, resumeSessionId: record.acpSessionId) { item in
-                try? store.upsert(ChatMessageRecord(item: item, sessionId: recordId))
-            }
-            chats[workspace.id] = chat
-            await chat.start()
-            if let sessionId = chat.sessionId, sessionId != record.acpSessionId {
-                record.acpSessionId = sessionId
-                try store.update(record)
-            }
-            return chat
+            let record = try store.latestSession(workspaceId: workspace.id, agent: agent.rawValue)
+                ?? newSessionRecord(workspaceId: workspace.id, agent: agent)
+            return try await makeChat(workspace: workspace, agent: agent, record: record)
         } catch {
-            errorMessage = "Could not start \(agent.displayName): \(error)"
+            errorMessage = "Could not open the \(agent.displayName) chat: \(error)"
             return nil
         }
+    }
+
+    /// Stops the workspace's chat and opens an empty conversation with `agent`. Earlier ones stay in the store.
+    @discardableResult
+    public func newConversation(workspace: Workspace, agent: AgentKind) async -> ChatSessionModel? {
+        await chats.removeValue(forKey: workspace.id)?.stop()
+        do {
+            return try await makeChat(workspace: workspace, agent: agent, record: newSessionRecord(workspaceId: workspace.id, agent: agent))
+        } catch {
+            errorMessage = "Could not start a new conversation: \(error)"
+            return nil
+        }
+    }
+
+    /// The agent of the workspace's most recent conversation, so reopening shows the same one.
+    public func lastAgent(workspaceId: String) -> AgentKind? {
+        (try? store.latestSession(workspaceId: workspaceId)).flatMap { AgentKind(rawValue: $0.agent) }
+    }
+
+    private func newSessionRecord(workspaceId: String, agent: AgentKind) throws -> ChatSessionRecord {
+        let record = ChatSessionRecord(workspaceId: workspaceId, agent: agent.rawValue)
+        try store.add(record)
+        return record
+    }
+
+    private func makeChat(workspace: Workspace, agent: AgentKind, record: ChatSessionRecord) async throws -> ChatSessionModel {
+        let current = self.workspace(id: workspace.id) ?? workspace
+        let environment = self.environment(for: current)
+        let launch = try await resolveLaunch(agent, cwd: URL(fileURLWithPath: current.path), environment: environment)
+        let history = try store.messages(sessionId: record.id).map(ChatItem.init(record:))
+        let store = self.store
+        let chat = ChatSessionModel(
+            agent: agent,
+            launch: launch,
+            history: history,
+            resumeSessionId: record.acpSessionId,
+            onPersist: { item in try? store.upsert(ChatMessageRecord(item: item, sessionId: record.id)) },
+            onSessionReady: { sessionId in
+                guard sessionId != record.acpSessionId else { return }
+                var updated = record
+                updated.acpSessionId = sessionId
+                try? store.update(updated)
+            }
+        )
+        chats[workspace.id] = chat
+        return chat
     }
 
     /// Stops every chat's agent process.

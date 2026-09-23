@@ -1,6 +1,7 @@
 #!/bin/bash
 # Scripted ACP agent for ChatSessionModel tests.
-# Answers initialize, session/new, session/load (replaying one old message first) and session/prompt.
+# Answers initialize, session/new, session/load (replaying one old message first), session/prompt and
+# session/set_config_option. session/new offers two models ("default", "opus") as Claude's adapter does.
 # A prompt streams "Hel" + "lo", announces tool t1, asks permission, then reports t1 completed or failed.
 # FAKE_ACP_LOAD_SESSION=false makes initialize report loadSession=false.
 # FAKE_ACP_LOAD_FAILS=true makes session/load answer "Resource not found", like a session the agent does not have.
@@ -18,7 +19,10 @@ while IFS= read -r line; do
       ;;
     *'"method":"session/new"'*)
       update '{"sessionUpdate":"available_commands_update","availableCommands":[]}'
-      echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"sessionId\":\"fake-1\"}}"
+      echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"sessionId\":\"fake-1\",\"configOptions\":[{\"id\":\"model\",\"name\":\"Model\",\"category\":\"model\",\"type\":\"select\",\"currentValue\":\"default\",\"options\":[{\"value\":\"default\",\"name\":\"Default\"},{\"value\":\"opus\",\"name\":\"Opus\"}]}]}}"
+      ;;
+    *'"method":"session/set_config_option"'*)
+      echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"configOptions\":[]}}"
       ;;
     *'"method":"session/load"'*)
       if [[ $load_fails == true ]]; then

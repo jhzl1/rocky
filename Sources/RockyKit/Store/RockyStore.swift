@@ -185,6 +185,16 @@ public final class RockyStore: Sendable {
         }
     }
 
+    /// The workspace's most recent conversation with any agent.
+    public func latestSession(workspaceId: String) throws -> ChatSessionRecord? {
+        try db.read {
+            try ChatSessionRecord
+                .filter(Column("workspaceId") == workspaceId)
+                .order(Column("createdAt").desc)
+                .fetchOne($0)
+        }
+    }
+
     /// Appends with the next `seq`, or replaces the record with the same id (a tool call whose status changed).
     public func upsert(_ message: ChatMessageRecord) throws {
         try db.write { db in
