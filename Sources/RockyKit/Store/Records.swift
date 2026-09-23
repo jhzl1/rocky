@@ -126,8 +126,19 @@ public struct ChatMessageRecord: Codable, Sendable, Equatable, Identifiable, Fet
     public var text: String
     public var status: String?
     public var createdAt: Date
+    /// A user message's turn end; see `ChatItem.completedAt`.
+    public var completedAt: Date?
 
-    public init(id: String, sessionId: String, seq: Int, kind: String, text: String, status: String?, createdAt: Date = Date()) {
+    public init(
+        id: String,
+        sessionId: String,
+        seq: Int,
+        kind: String,
+        text: String,
+        status: String?,
+        createdAt: Date = Date(),
+        completedAt: Date? = nil
+    ) {
         self.id = id
         self.sessionId = sessionId
         self.seq = seq
@@ -135,5 +146,6 @@ public struct ChatMessageRecord: Codable, Sendable, Equatable, Identifiable, Fet
         self.text = text
         self.status = status
         self.createdAt = createdAt
+        self.completedAt = completedAt
     }
 }

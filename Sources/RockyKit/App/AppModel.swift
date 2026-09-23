@@ -560,13 +560,24 @@ extension ChatItem {
             id: UUID(uuidString: record.id) ?? UUID(),
             kind: Kind(rawValue: record.kind) ?? .agent,
             text: record.text,
-            status: record.status
+            status: record.status,
+            createdAt: record.createdAt,
+            completedAt: record.completedAt
         )
     }
 }
 
 extension ChatMessageRecord {
     init(item: ChatItem, sessionId: String) {
-        self.init(id: item.id.uuidString, sessionId: sessionId, seq: 0, kind: item.kind.rawValue, text: item.text, status: item.status)
+        self.init(
+            id: item.id.uuidString,
+            sessionId: sessionId,
+            seq: 0,
+            kind: item.kind.rawValue,
+            text: item.text,
+            status: item.status,
+            createdAt: item.createdAt,
+            completedAt: item.completedAt
+        )
     }
 }

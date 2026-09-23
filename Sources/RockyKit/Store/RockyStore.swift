@@ -85,6 +85,11 @@ public final class RockyStore: Sendable {
                 try db.execute(sql: "UPDATE workspace SET port = ? WHERE id = ?", arguments: [port, id])
             }
         }
+        migrator.registerMigration("v3") { db in
+            try db.alter(table: "chatMessage") { t in
+                t.add(column: "completedAt", .datetime)
+            }
+        }
         return migrator
     }
 

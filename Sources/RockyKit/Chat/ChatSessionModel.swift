@@ -10,12 +10,24 @@ public struct ChatItem: Identifiable, Equatable, Sendable {
     public var kind: Kind
     public var text: String
     public var status: String?
+    public let createdAt: Date
+    /// Set on a user message when the agent finishes the turn it started (the reply footer's duration and time).
+    public var completedAt: Date?
 
-    public init(id: UUID = UUID(), kind: Kind, text: String, status: String? = nil) {
+    public init(
+        id: UUID = UUID(),
+        kind: Kind,
+        text: String,
+        status: String? = nil,
+        createdAt: Date = Date(),
+        completedAt: Date? = nil
+    ) {
         self.id = id
         self.kind = kind
         self.text = text
         self.status = status
+        self.createdAt = createdAt
+        self.completedAt = completedAt
     }
 }
 
@@ -152,6 +164,10 @@ public final class ChatSessionModel {
         }
         for id in turnItems {
             if let item = items.first(where: { $0.id == id }) { onPersist(item) }
+        }
+        if let index = items.firstIndex(where: { $0.id == userItem.id }) {
+            items[index].completedAt = Date()
+            onPersist(items[index])
         }
     }
 

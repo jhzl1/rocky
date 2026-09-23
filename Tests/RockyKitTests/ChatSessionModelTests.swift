@@ -40,7 +40,12 @@ struct ChatSessionModelTests {
 
         #expect(model.state == .ready)
         #expect(summary(model.items) == ["user:hi", "agent:Hello", "tool:Run printenv[completed]"])
-        #expect(summary(persisted) == ["user:hi", "agent:Hello", "tool:Run printenv[completed]"])
+        // The user message is saved again once the turn ends, now with its completedAt.
+        #expect(summary(persisted) == ["user:hi", "agent:Hello", "tool:Run printenv[completed]", "user:hi"])
+        let user = try #require(model.items.first)
+        let completedAt = try #require(user.completedAt)
+        #expect(completedAt >= user.createdAt)
+        #expect(persisted.last?.completedAt == completedAt)
         await model.stop()
     }
 

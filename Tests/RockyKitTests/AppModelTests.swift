@@ -109,6 +109,7 @@ struct AppModelTests {
         #expect(resumed.sessionId == "fake-1")
         #expect(resumed.items.map(\.text) == ["hi", "Hello", "Run printenv"])
         #expect(resumed.items.last?.status == "completed")
+        #expect(resumed.items.first?.completedAt != nil)
         await reopened.stopAllAgents()
     }
 
