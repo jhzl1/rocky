@@ -10,7 +10,9 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-22-rocky-design.md` (M1 row of the milestones table). M0 evidence: `docs/superpowers/spikes/2026-09-22-m0-findings.md`.
 
-**Status of the code in this plan:** the code in Tasks 1–8 was compiled and its tests passed (55 tests) in a scratch build with Xcode 27.0 on 2026-09-23. Tasks 9–11 were written but not compiled. If a build error appears, fix it in the smallest way that keeps the task's interfaces and tests, and note it in the task report.
+**Status of the code in this plan:** the code in Tasks 1–8 was compiled and its tests passed (55 tests) in a scratch build with Xcode 27.0 on 2026-09-23. Tasks 9–11 were written but not compiled.
+
+**Tests and builds run once, in Task 12.** Tasks 1–11 write code and tests and commit them without compiling or running anything. Task 12 builds the package, runs the whole suite, and fixes what breaks, right before the branch is merged into `development`. If a build error appears there, fix it in the smallest way that keeps the task's interfaces and tests, and note it in the task report.
 
 ## Global Constraints
 
@@ -24,14 +26,15 @@
 - `CLAUDE_CONFIG_DIR` is never inherited from the shell; it comes only from the repo setting (M0 finding).
 - Bundle id `dev.jhzl.rocky` (the power log attributes energy by bundle id).
 - All code, comments, identifiers and UI copy in English. URL-like paths English.
-- Branch: create `feat/m1-workspaces-chat` from `docs/initial-spec`. Never commit on `main`. There is no remote: never add one, never push.
+- Branch: `development` is the principal branch. Create `feat/m1-workspaces-chat` from `development`. Never commit on `development`. There is no remote: never add one, never push. With no remote there is no PR: the work lands by merging `feat/m1-workspaces-chat` into `development` at the end of Task 12, only with the user's approval.
+- No `swift build` and no `swift test` before Task 12, not even to check a single task.
 - Commits: Conventional Commits, lowercase imperative, no `Co-Authored-By` or any AI attribution line. Never `--no-verify`.
 - Shell: this machine blocks `cat`, `ls`, `grep`, `find`, `sed` in agent shells; use `bat`, `eza`, `rg`, `fd`, `sd`.
 - Manual tests use personal repos only (for example `~/Documents/dev/personal/rocky` itself). Never add, open or modify any repo under `~/Documents/dev/celes`.
 
 ## Review Focus
 
-1. Quitting Rocky with agents running must leave no agent process behind (energy): `AppDelegate.applicationShouldTerminate` stops all chats; pinned by `AppModelTests.chatUsesTheRepoClaudeInstancePersistsAndResumes` (`stopAllAgents` → `.stopped("Stopped")`) and the `pgrep` check in Task 11.
+1. Quitting Rocky with agents running must leave no agent process behind (energy): `AppDelegate.applicationShouldTerminate` stops all chats; pinned by `AppModelTests.chatUsesTheRepoClaudeInstancePersistsAndResumes` (`stopAllAgents` → `.stopped("Stopped")`) and the `pgrep` check in Task 12.
 2. Agent text containing U+2028 must not split a JSON-RPC line: pinned by `ACPConnectionTests.skipsNoiseDeliversNotificationsAndAnswersPermissionWithoutDeadlock` (fixture sends `a\u{2028}b`).
 3. `git fetch` offline or asking for credentials must not hang or block workspace creation: `GIT_TERMINAL_PROMPT=0`, `ssh -o BatchMode=yes`; pinned by `WorktreeServiceTests.fetchFailureStillCreatesFromLastKnownRef`.
 4. Removing a workspace with uncommitted changes must be refused and keep the folder: pinned by `WorktreeServiceTests.removeKeepsBranchAndRefusesDirtyWorktree`.
@@ -80,7 +83,7 @@ Tests/RockyKitTests/*.swift, Tests/RockyKitTests/Fixtures/*.sh
 
 ```bash
 cd ~/Documents/dev/personal/rocky
-git switch docs/initial-spec
+git switch development
 git switch -c feat/m1-workspaces-chat
 mkdir -p Sources/RockyKit/ACP Sources/RockyUI Sources/Rocky Tests/RockyKitTests/Fixtures Resources scripts
 touch Tests/RockyKitTests/Fixtures/.gitkeep
@@ -165,7 +168,7 @@ actor Recorder<Value: Sendable> {
 }
 ```
 
-- [ ] **Step 2: Write the failing tests**
+- [ ] **Step 2: Write the tests**
 
 `Tests/RockyKitTests/RPCCodecTests.swift`:
 
@@ -222,12 +225,7 @@ struct RPCCodecTests {
 }
 ```
 
-- [ ] **Step 3: Run the tests to verify they fail**
-
-Run: `swift test --filter RPCCodecTests`
-Expected: build fails with `cannot find 'RPCCodec' in scope` (first run also resolves GRDB 7.11.1).
-
-- [ ] **Step 4: Implement**
+- [ ] **Step 3: Implement**
 
 `Sources/RockyKit/ACP/JSONValue.swift`:
 
@@ -395,14 +393,12 @@ public enum RPCCodec {
 }
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [ ] **Step 4: Resolve the dependency and commit**
 
-Run: `swift test --filter RPCCodecTests`
-Expected: `Suite RPCCodecTests passed`, 0 failures.
-
-- [ ] **Step 6: Commit**
+`swift package resolve` fetches GRDB 7.11.1 and writes `Package.resolved` without compiling anything.
 
 ```bash
+swift package resolve
 git add Package.swift Package.resolved .gitignore Sources Tests
 git commit -m "feat(kit): add package scaffold and json-rpc codec"
 ```
@@ -419,7 +415,7 @@ git commit -m "feat(kit): add package scaffold and json-rpc codec"
 - Consumes: `Fixtures.temporaryDirectory(_:)` (Task 1).
 - Produces: `ProcessRunner.run(_ executable: URL, _ arguments: [String], in: URL? = nil, environment: [String: String]? = nil) throws -> String` (trimmed stdout; throws `ProcessFailure(command:status:stderr:)`). `LoginEnvironment.parse(_ output: Data) -> [String: String]`, `LoginEnvironment.capture(shell:arguments:timeout:) throws -> [String: String]` (throws `LoginEnvironmentError.timedOut` / `.markerMissing`), `LoginEnvironment.marker`. `WorkspaceEnvironment.make(login:claudeConfigDir:) -> [String: String]`. `ClaudeInstances.detect(home: URL) -> [String]`.
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Write the tests**
 
 `Tests/RockyKitTests/EnvironmentTests.swift`:
 
@@ -493,12 +489,7 @@ struct EnvironmentTests {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
-
-Run: `swift test --filter EnvironmentTests`
-Expected: build fails with `cannot find 'LoginEnvironment' in scope`.
-
-- [ ] **Step 3: Implement**
+- [ ] **Step 2: Implement**
 
 `Sources/RockyKit/Environment/ProcessRunner.swift`:
 
@@ -670,12 +661,7 @@ public enum ClaudeInstances {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
-
-Run: `swift test --filter EnvironmentTests`
-Expected: `Suite EnvironmentTests passed`, 0 failures. `captureTimesOutOnAHangingShell` takes about 0.5 s.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add Sources/RockyKit/Environment Tests/RockyKitTests/EnvironmentTests.swift
@@ -694,7 +680,7 @@ git commit -m "feat(kit): capture the login shell environment once"
 - Consumes: `RPCCodec`, `RPCMessage`, `JSONValue` (Task 1); `Fixtures.url`, `Fixtures.stderrLog`, `Recorder` (Task 1).
 - Produces: `actor ACPConnection { init(executable: URL, arguments: [String], environment: [String: String], cwd: URL, stderrLog: URL) throws; func setHandlers(_: ACPHandlers); func start() throws; func call(_ method: String, _ params: JSONValue) async throws -> JSONValue; func notify(_ method: String, _ params: JSONValue) throws; func terminate(); var skippedLines: [String] }`. `struct ACPHandlers(onNotification:onRequest:onExit:)`. `struct ACPNotification(method:params:)`. `enum ACPConnectionError { agentExited(status: Int32, stderrTail: String), rpc(code: Int, message: String) }`.
 
-- [ ] **Step 1: Write the fixture and the failing tests**
+- [ ] **Step 1: Write the fixture and the tests**
 
 `Tests/RockyKitTests/Fixtures/fake-agent.sh`:
 
@@ -804,12 +790,7 @@ struct ACPConnectionTests {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
-
-Run: `swift test --filter ACPConnectionTests`
-Expected: build fails with `cannot find 'ACPConnection' in scope`.
-
-- [ ] **Step 3: Implement**
+- [ ] **Step 2: Implement**
 
 `Sources/RockyKit/ACP/ACPConnection.swift`:
 
@@ -970,12 +951,7 @@ public actor ACPConnection {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
-
-Run: `swift test --filter ACPConnectionTests`
-Expected: `Suite ACPConnectionTests passed`, 0 failures. The `ok` case finishing proves no deadlock on 200 KB of stderr.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add Sources/RockyKit/ACP/ACPConnection.swift Tests/RockyKitTests/Fixtures/fake-agent.sh Tests/RockyKitTests/ACPConnectionTests.swift
@@ -994,7 +970,7 @@ git commit -m "feat(kit): add acp stdio connection"
 - Consumes: `JSONValue` (Task 1).
 - Produces: `struct AgentCapabilities(loadSession:)`, `enum SessionEvent { agentText, agentThought, toolCall(id:title:status:), toolCallUpdate(id:status:), ignored(String) }`, `struct PermissionOption(id:name:kind:)`, `struct PermissionRequest(title:options:)`, and `enum ACPProtocol` with `initializeParams()`, `capabilities(from:)`, `newSessionParams(cwd:)`, `loadSessionParams(sessionId:cwd:)`, `promptParams(sessionId:text:)`, `cancelParams(sessionId:)`, `sessionId(fromNewSession:)`, `event(fromUpdate:sessionId:) -> SessionEvent?`, `permissionRequest(from:)`, `permissionResponse(optionId: String?)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Write the tests**
 
 `Tests/RockyKitTests/ACPProtocolTests.swift`:
 
@@ -1057,12 +1033,7 @@ struct ACPProtocolTests {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
-
-Run: `swift test --filter ACPProtocolTests`
-Expected: build fails with `cannot find 'ACPProtocol' in scope`.
-
-- [ ] **Step 3: Implement**
+- [ ] **Step 2: Implement**
 
 `Sources/RockyKit/ACP/ACPProtocol.swift`:
 
@@ -1169,12 +1140,7 @@ public enum ACPProtocol {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
-
-Run: `swift test --filter ACPProtocolTests`
-Expected: `Suite ACPProtocolTests passed`, 0 failures.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add Sources/RockyKit/ACP/ACPProtocol.swift Tests/RockyKitTests/ACPProtocolTests.swift
@@ -1194,7 +1160,7 @@ git commit -m "feat(kit): add acp protocol payload mapping"
 - Consumes: `ProcessRunner`, `ProcessFailure` (Task 2); `Fixtures.temporaryDirectory` (Task 1).
 - Produces: `struct WorktreeService: Sendable { init(environment:); static func worktreesRoot(for: URL) -> URL; static let branchPrefix = "rocky/"; func isRepositoryRoot(_: URL) -> Bool; func baseRef(repo:) throws -> (ref: String, fetchFailed: Bool); func isTaken(repo:name:) -> Bool; func create(repo:name:) throws -> CreatedWorktree; func remove(repo:worktree:) throws }`. `struct CreatedWorktree(name:path:branch:baseRef:fetchFailed:)`. `enum WorkspaceNamer { static let cities: [String]; static func pick(isTaken:order:) -> String }`. Test helper `GitFixture.environment`, `GitFixture.git(_:in:)`, `GitFixture.localRepo(in:name:)`, `GitFixture.clonedRepo(in:)`.
 
-- [ ] **Step 1: Write the fixture helper and the failing tests**
+- [ ] **Step 1: Write the fixture helper and the tests**
 
 `Tests/RockyKitTests/GitFixture.swift`:
 
@@ -1331,12 +1297,7 @@ struct WorktreeServiceTests {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
-
-Run: `swift test --filter WorktreeServiceTests`
-Expected: build fails with `cannot find 'WorktreeService' in scope`.
-
-- [ ] **Step 3: Implement**
+- [ ] **Step 2: Implement**
 
 `Sources/RockyKit/Git/WorktreeService.swift`:
 
@@ -1438,12 +1399,7 @@ public enum WorkspaceNamer {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
-
-Run: `swift test --filter WorktreeServiceTests`
-Expected: `Suite WorktreeServiceTests passed`, 0 failures. All repos are local temp repos; no network.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add Sources/RockyKit/Git Tests/RockyKitTests/GitFixture.swift Tests/RockyKitTests/WorktreeServiceTests.swift
@@ -1462,7 +1418,7 @@ git commit -m "feat(kit): create and remove workspace worktrees"
 - Consumes: GRDB 7.11.1 (Task 1 `Package.swift`); `Fixtures.temporaryDirectory` (Task 1).
 - Produces: records `Repo(id:name:path:claudeConfigDir:createdAt:)`, `Workspace(id:repoId:name:path:branch:createdAt:)`, `ChatSessionRecord(id:workspaceId:agent:acpSessionId:createdAt:)`, `ChatMessageRecord(id:sessionId:seq:kind:text:status:createdAt:)`. `final class RockyStore: Sendable { init(path:) throws; static func inMemory() throws -> RockyStore; add(_: Repo); update(_: Repo); repos(); deleteRepo(id:); add(_: Workspace); workspaces(repoId:); deleteWorkspace(id:); add(_: ChatSessionRecord); update(_: ChatSessionRecord); latestSession(workspaceId:agent:) -> ChatSessionRecord?; upsert(_: ChatMessageRecord); messages(sessionId:) }` (all `throws`). `enum RockyStoreError { duplicateRepo(String) }`.
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Write the tests**
 
 `Tests/RockyKitTests/RockyStoreTests.swift`:
 
@@ -1546,12 +1502,7 @@ struct RockyStoreTests {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
-
-Run: `swift test --filter RockyStoreTests`
-Expected: build fails with `cannot find 'RockyStore' in scope`.
-
-- [ ] **Step 3: Implement**
+- [ ] **Step 2: Implement**
 
 `Sources/RockyKit/Store/Records.swift`:
 
@@ -1781,12 +1732,7 @@ public final class RockyStore: Sendable {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
-
-Run: `swift test --filter RockyStoreTests`
-Expected: `Suite RockyStoreTests passed`, 0 failures.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add Sources/RockyKit/Store Tests/RockyKitTests/RockyStoreTests.swift
@@ -1805,7 +1751,7 @@ git commit -m "feat(kit): persist repos, workspaces and transcripts in sqlite"
 - Consumes: `ProcessRunner` (Task 2); `Fixtures.temporaryDirectory` (Task 1).
 - Produces: `enum AgentKind: String { claude, opencode; displayName }`. `struct AgentLaunch(executable:arguments:environment:cwd:stderrLog:)`. `enum AgentLauncherError { executableNotFound(String), adapterNotInstalled }`. `enum AgentLauncher { claudeAdapterPackage; claudeAdapterVersion = "0.81.0"; claudeAdapterScript(prefix:) -> URL; resolve(_ name:, path: String?) -> URL?; launch(_ kind:, cwd:, environment:, adapterPrefix:, logsDirectory:) throws -> AgentLaunch; installClaudeAdapter(prefix:environment:) throws }`.
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Write the tests**
 
 `Tests/RockyKitTests/AgentLauncherTests.swift`:
 
@@ -1860,12 +1806,7 @@ struct AgentLauncherTests {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
-
-Run: `swift test --filter AgentLauncherTests`
-Expected: build fails with `cannot find 'AgentLauncher' in scope`.
-
-- [ ] **Step 3: Implement**
+- [ ] **Step 2: Implement**
 
 `Sources/RockyKit/Agents/AgentLauncher.swift`:
 
@@ -1964,12 +1905,7 @@ public enum AgentLauncher {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
-
-Run: `swift test --filter AgentLauncherTests`
-Expected: `Suite AgentLauncherTests passed`, 0 failures. No test runs npm.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add Sources/RockyKit/Agents Tests/RockyKitTests/AgentLauncherTests.swift
@@ -1989,7 +1925,7 @@ git commit -m "feat(kit): resolve how to launch claude and opencode"
 - Consumes: `ACPConnection`, `ACPHandlers`, `ACPConnectionError` (Task 3); `ACPProtocol`, `SessionEvent`, `PermissionRequest`, `AgentCapabilities` (Task 4); `AgentKind`, `AgentLaunch` (Task 7).
 - Produces: `struct ChatItem(id: UUID, kind: Kind, text:, status:)` with `Kind { user, agent, thought, tool, error }`. `@MainActor @Observable final class ChatSessionModel { init(agent:launch:history:resumeSessionId:flushInterval:onPersist:); agent; items; state: State { idle, starting, ready, running, stopped(String) }; pendingPermission; sessionId; capabilities; isVisible; start() async; send(_:) async; cancel() async; answerPermission(optionId:); stop() async; flush() }`. Test helper `Fixtures.fakeACPLaunch(loadSession:)`.
 
-- [ ] **Step 1: Write the fixtures and the failing tests**
+- [ ] **Step 1: Write the fixtures and the tests**
 
 `Tests/RockyKitTests/Fixtures/fake-acp-agent.sh`:
 
@@ -2175,12 +2111,7 @@ struct ChatSessionModelTests {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
-
-Run: `swift test --filter ChatSessionModelTests`
-Expected: build fails with `cannot find 'ChatSessionModel' in scope`.
-
-- [ ] **Step 3: Implement**
+- [ ] **Step 2: Implement**
 
 `Sources/RockyKit/Chat/ChatSessionModel.swift`:
 
@@ -2436,12 +2367,7 @@ public final class ChatSessionModel {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass, three times**
-
-Run: `for i in 1 2 3; do swift test --filter ChatSessionModelTests 2>&1 | rg "✘|Suite ChatSessionModelTests"; done`
-Expected: three `Suite ChatSessionModelTests passed` lines and no `✘`. Three runs catch ordering flakiness between notifications and responses.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add Sources/RockyKit/Chat Tests/RockyKitTests/Fixtures/fake-acp-agent.sh Tests/RockyKitTests/FakeACP.swift Tests/RockyKitTests/ChatSessionModelTests.swift
@@ -2460,7 +2386,7 @@ git commit -m "feat(kit): add chat session model over acp"
 - Consumes: everything from Tasks 2–8.
 - Produces: `struct RockyPaths(database:adapterPrefix:logs:)` with `static func standard() throws`. `@MainActor @Observable final class AppModel { init(store:paths:captureEnvironment:makeLaunch:installAdapter:); repos; workspaces: [String: [Workspace]]; selectedWorkspaceId; errorMessage; busyMessage; loginEnvironment; selectedWorkspace; repo(id:); existingChat(workspaceId:); bootstrap() async; refreshEnvironment() async; addRepo(at:) async; setClaudeConfigDir(repoId:_:); removeRepo(id:) async; createWorkspace(repoId:) async; removeWorkspace(id:) async; openChat(workspace:agent:) async -> ChatSessionModel?; stopAllAgents() async }`.
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Write the tests**
 
 `Tests/RockyKitTests/AppModelTests.swift`:
 
@@ -2606,12 +2532,7 @@ struct AppModelTests {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
-
-Run: `swift test --filter AppModelTests`
-Expected: build fails with `cannot find 'AppModel' in scope`.
-
-- [ ] **Step 3: Implement**
+- [ ] **Step 2: Implement**
 
 `Sources/RockyKit/App/AppModel.swift`:
 
@@ -2874,12 +2795,7 @@ extension ChatMessageRecord {
 }
 ```
 
-- [ ] **Step 4: Run the full suite**
-
-Run: `swift test`
-Expected: every suite passes, 0 failures.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add Sources/RockyKit/App Tests/RockyKitTests/AppModelTests.swift
@@ -2899,7 +2815,7 @@ git commit -m "feat(kit): add app model for repos, workspaces and chats"
 - Consumes: `AppModel`, `ChatSessionModel`, `ChatItem`, `PermissionRequest`, `AgentKind`, `ClaudeInstances`, `Repo`, `Workspace`, `RockyPaths`, `RockyStore` (Tasks 2–9).
 - Produces: `public struct RootView(model:)`; the `Rocky` executable; `scripts/make-app.sh` → `build/Rocky.app`.
 
-This task has no automated UI tests: the logic under the views is covered by Tasks 1–9. It is verified by building and by the manual checklist in Task 11.
+This task has no automated UI tests: the logic under the views is covered by Tasks 1–9. It is verified by building and by the manual checklist in Task 12.
 
 - [ ] **Step 1: Remove the placeholders**
 
@@ -3420,17 +3336,7 @@ echo "$app"
 chmod +x scripts/make-app.sh
 ```
 
-- [ ] **Step 5: Build and run the tests**
-
-Run: `swift build && swift test`
-Expected: `Build complete!`, then every suite passes.
-
-- [ ] **Step 6: Build the app bundle and open it**
-
-Run: `scripts/make-app.sh && open build/Rocky.app`
-Expected: the script prints `.../build/Rocky.app`; a "Rocky" window opens with the empty state "No workspace selected" and a `+` (Add Repository) toolbar button. Quit with ⌘Q.
-
-- [ ] **Step 7: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add Sources Resources scripts/make-app.sh
@@ -3439,14 +3345,14 @@ git commit -m "feat(app): add swiftui app for workspaces and chat"
 
 ---
 
-### Task 11: End-to-end check, energy report and README
+### Task 11: Energy report and README
 
 **Files:**
-- Create: `scripts/energy-report.sh`, `README.md`, `docs/superpowers/m1-verification.md`
+- Create: `scripts/energy-report.sh`, `README.md`
 
 **Interfaces:**
-- Consumes: `build/Rocky.app` (Task 10).
-- Produces: the verification record for M1.
+- Consumes: the bundle id `dev.jhzl.rocky` (Task 10).
+- Produces: `scripts/energy-report.sh [minutes] [bundle-id]`, used by Task 12.
 
 - [ ] **Step 1: Write the energy report script**
 
@@ -3504,9 +3410,45 @@ The Claude adapter (`@agentclientprotocol/claude-agent-acp@0.81.0`) installs its
     scripts/energy-report.sh 30    # Rocky vs Conductor over the last 30 minutes, from the macOS power log
 ````
 
-- [ ] **Step 3: Run the manual checklist with real agents**
+- [ ] **Step 3: Commit**
 
-Use a personal repo only: `~/Documents/dev/personal/rocky` itself. Never a repo under `~/Documents/dev/celes`.
+```bash
+git add scripts/energy-report.sh README.md
+git commit -m "docs(m1): add readme and energy report"
+```
+
+---
+
+### Task 12: Build, tests and M1 verification
+
+This is the only task that compiles or runs tests. It runs once all the code of Tasks 1–11 is committed, right before the merge into `development`.
+
+**Files:**
+- Modify: whatever the build or the tests show broken in Tasks 1–11, in the smallest way that keeps each task's interfaces and tests.
+- Create: `docs/superpowers/m1-verification.md`
+
+**Interfaces:**
+- Consumes: everything from Tasks 1–11.
+- Produces: a passing `swift test`, `build/Rocky.app`, and the verification record for M1.
+
+- [ ] **Step 1: Build and run the whole suite**
+
+Run: `swift build && swift test`
+Expected: `Build complete!`, then every suite passes, 0 failures. Tasks 9–11 never compiled, so build errors there are expected. Fix each one in the smallest way that keeps the task's interfaces and tests, commit the fix with the scope of the task it belongs to (for example `fix(kit): ...`), and run this step again until it passes.
+
+- [ ] **Step 2: Run the chat model tests three times**
+
+Run: `for i in 1 2 3; do swift test --filter ChatSessionModelTests 2>&1 | rg "✘|Suite ChatSessionModelTests"; done`
+Expected: three `Suite ChatSessionModelTests passed` lines and no `✘`. Three runs catch ordering flakiness between notifications and responses.
+
+- [ ] **Step 3: Build the app bundle and open it**
+
+Run: `scripts/make-app.sh && open build/Rocky.app`
+Expected: the script prints `.../build/Rocky.app`; a "Rocky" window opens with the empty state "No workspace selected" and a `+` (Add Repository) toolbar button. Quit with ⌘Q.
+
+- [ ] **Step 4: Run the manual checklist with real agents**
+
+The user runs this step. Use a personal repo only: `~/Documents/dev/personal/rocky` itself. Never a repo under `~/Documents/dev/celes`.
 
 1. `open build/Rocky.app`, press `+`, choose `~/Documents/dev/personal/rocky`. Expected: a "rocky" section appears in the sidebar.
 2. From the "rocky" section menu choose "New Workspace". Expected: a city-named workspace appears and is selected; `eza ~/Documents/dev/personal/rocky-worktrees` lists it; `git -C ~/Documents/dev/personal/rocky branch --list 'rocky/*'` shows its branch.
@@ -3517,18 +3459,29 @@ Use a personal repo only: `~/Documents/dev/personal/rocky` itself. Never a repo 
 7. Reopen Rocky, select the workspace, pick Claude, Start. Expected: the earlier transcript is shown and the agent continues the same conversation (ask `What did I ask you before?`).
 8. Right-click the workspace → "Remove Workspace…" → "Remove Worktree". Expected: the folder is gone and the `rocky/<name>` branch still exists. Then delete the branch yourself if you do not need it: `git -C ~/Documents/dev/personal/rocky branch -D rocky/<name>`.
 
-- [ ] **Step 4: Measure energy at rest**
+- [ ] **Step 5: Measure energy at rest**
 
-Leave Rocky open with one workspace and no agent running for 30 minutes (on battery if possible), then run `scripts/energy-report.sh 30`.
+The user runs this step. Leave Rocky open with one workspace and no agent running for 30 minutes (on battery if possible), then run `scripts/energy-report.sh 30`.
 Expected: the `dev.jhzl.rocky` row shows `processes_per_min` below 5 (spec Section 1 success criterion). If the row is missing, the power log has not flushed yet: wait 10 minutes and run it again.
 
-- [ ] **Step 5: Record the results**
+- [ ] **Step 6: Record the results**
 
-Write `docs/superpowers/m1-verification.md` with: the date, `swift test` summary line, the result of each checklist item (pass/fail plus the literal output for items 2, 5 and 6), and the literal `scripts/energy-report.sh 30` output. Any failure goes in a "Known issues" list with the exact error text.
+Write `docs/superpowers/m1-verification.md` with: the date, the `swift test` summary line from Step 1, the result of each checklist item (pass/fail plus the literal output for items 2, 5 and 6), and the literal `scripts/energy-report.sh 30` output. Any failure goes in a "Known issues" list with the exact error text.
 
-- [ ] **Step 6: Commit**
+If Steps 3–5 led to a code fix, run Steps 1 and 2 again before this step and record the new summary line.
+
+- [ ] **Step 7: Commit**
 
 ```bash
-git add scripts/energy-report.sh README.md docs/superpowers/m1-verification.md
-git commit -m "docs(m1): add readme, energy report and verification record"
+git add docs/superpowers/m1-verification.md
+git commit -m "docs(m1): add verification record"
+```
+
+- [ ] **Step 8: Merge into development**
+
+Only after the user approves it. With no remote this merge takes the place of the PR.
+
+```bash
+git switch development
+git merge --ff-only feat/m1-workspaces-chat
 ```
