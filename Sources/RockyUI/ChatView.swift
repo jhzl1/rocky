@@ -4,6 +4,7 @@ import SwiftUI
 struct ChatView: View {
     let chat: ChatSessionModel
     @State private var draft = ""
+    private static let thinkingRowId = "thinking"
 
     var body: some View {
         VStack(spacing: 0) {
@@ -13,11 +14,18 @@ struct ChatView: View {
                         ForEach(chat.items) { item in
                             ChatItemRow(item: item).id(item.id)
                         }
+                        if chat.state == .running {
+                            ThinkingRow(agent: chat.agent, waitingForPermission: chat.pendingPermission != nil)
+                                .id(Self.thinkingRowId)
+                        }
                     }
                     .padding()
                 }
                 .onChange(of: chat.items.last?.text) {
                     if let id = chat.items.last?.id { proxy.scrollTo(id, anchor: .bottom) }
+                }
+                .onChange(of: chat.state) {
+                    if chat.state == .running { proxy.scrollTo(Self.thinkingRowId, anchor: .bottom) }
                 }
             }
             Divider()
@@ -117,6 +125,22 @@ struct ChatItemRow: View {
     static func markdown(_ text: String) -> AttributedString {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+    }
+}
+
+/// Shown at the end of the conversation while the agent works on a turn.
+struct ThinkingRow: View {
+    let agent: AgentKind
+    let waitingForPermission: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+            Text(waitingForPermission ? "Waiting for your permission…" : "\(agent.displayName) is thinking…")
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

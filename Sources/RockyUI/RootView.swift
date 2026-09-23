@@ -12,17 +12,24 @@ public struct RootView: View {
         NavigationSplitView {
             SidebarView(model: model)
         } detail: {
-            if let workspace = model.selectedWorkspace {
-                WorkspaceDetailView(model: model, workspace: workspace)
-                    .id(workspace.id)
-            } else {
-                ContentUnavailableView(
-                    "No workspace selected",
-                    systemImage: "square.stack.3d.up",
-                    description: Text("Add a repository, then create a workspace from its menu.")
-                )
+            Group {
+                if let workspace = model.selectedWorkspace {
+                    WorkspaceDetailView(model: model, workspace: workspace)
+                        .id(workspace.id)
+                } else {
+                    ContentUnavailableView(
+                        "No workspace selected",
+                        systemImage: "square.stack.3d.up",
+                        description: Text("Add a repository, then create a workspace from its menu.")
+                    )
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.rockyBackground)
         }
+        .toolbarBackground(Color.rockyBackground, for: .windowToolbar)
+        .toolbarBackground(.visible, for: .windowToolbar)
+        .preferredColorScheme(.dark)
         .overlay(alignment: .bottom) {
             if let busy = model.busyMessage {
                 ProgressView(busy)

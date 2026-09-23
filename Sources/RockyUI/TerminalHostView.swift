@@ -28,8 +28,8 @@ struct TerminalHostView: NSViewRepresentable {
     func makeNSView(context: Context) -> TerminalView {
         let view = TerminalView(frame: .zero)
         view.font = Self.font
-        // The window's own colors, instead of SwiftTerm's black block.
-        view.nativeBackgroundColor = .windowBackgroundColor
+        // Rocky's background and the system text color, instead of SwiftTerm's black block.
+        view.nativeBackgroundColor = Theme.background
         view.nativeForegroundColor = .textColor
         view.caretColor = .controlAccentColor
         view.terminalDelegate = context.coordinator

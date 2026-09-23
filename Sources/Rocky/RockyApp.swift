@@ -38,6 +38,9 @@ struct RockyApp: App {
                     await model.bootstrap()
                 }
         }
+        // The workspace header already names what is open; the title bar only repeated "Rocky".
+        // "Rocky" stays the window's name in the Window menu.
+        .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
             CommandGroup(after: .appSettings) {
                 // The login shell runs once per launch (spec Section 1); this re-reads it after you edit ~/.zshrc.

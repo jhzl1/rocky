@@ -12,11 +12,20 @@ struct SidebarView: View {
             ForEach(model.repos) { repo in
                 Section {
                     ForEach(model.workspaces[repo.id] ?? []) { workspace in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(workspace.name)
-                            Text(workspace.branch)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(workspace.name)
+                                Text(workspace.branch)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            // Visible from any workspace, so you can see which agents are still working.
+                            if model.existingChat(workspaceId: workspace.id)?.state == .running {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .help("The agent is working")
+                            }
                         }
                         .tag(workspace.id)
                         .contextMenu {
@@ -28,6 +37,8 @@ struct SidebarView: View {
                 }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(Color.rockySidebar)
         .navigationSplitViewColumnWidth(min: 220, ideal: 260)
         .toolbar {
             ToolbarItem {

@@ -49,7 +49,7 @@ struct WorkspacePanelView: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color(nsColor: .windowBackgroundColor))
+                    .background(Color.rockyBackground)
             } else {
                 ContentUnavailableView(
                     "No terminal",
