@@ -21,13 +21,22 @@ struct WorkspaceDetailView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
-            // Chat above, terminals and script output below (M2 layout decision).
-            VSplitView {
-                chatArea
-                    .frame(maxWidth: .infinity, minHeight: 200, maxHeight: .infinity)
-                WorkspacePanelView(model: model, workspace: workspace, selection: $panelSelection)
-                    .frame(maxWidth: .infinity, minHeight: 140, idealHeight: 260, maxHeight: .infinity)
+            Rectangle().fill(Theme.hairline).frame(height: 1)
+            // Chat above, terminals and script output below (M2 layout decision). Until something runs in the
+            // panel it is only its bar, so the chat keeps the window.
+            if model.existingProcesses(for: workspace.id)?.all.isEmpty ?? true {
+                VStack(spacing: 0) {
+                    chatArea
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    WorkspacePanelView(model: model, workspace: workspace, selection: $panelSelection)
+                }
+            } else {
+                VSplitView {
+                    chatArea
+                        .frame(maxWidth: .infinity, minHeight: 200, idealHeight: 520, maxHeight: .infinity)
+                    WorkspacePanelView(model: model, workspace: workspace, selection: $panelSelection)
+                        .frame(maxWidth: .infinity, minHeight: 140, idealHeight: 240, maxHeight: .infinity)
+                }
             }
         }
         .onAppear {

@@ -20,9 +20,21 @@ struct WorkspacePanelView: View {
         sessions.first { $0.id == selection } ?? sessions.last
     }
 
+    /// With no terminal or script yet, the panel is only its bar, so the chat keeps the window.
+    var isEmpty: Bool {
+        sessions.isEmpty
+    }
+
     var body: some View {
         VStack(spacing: 0) {
+            Rectangle().fill(Theme.hairline).frame(height: 1)
             HStack(spacing: 4) {
+                if isEmpty {
+                    Label("Terminal", systemImage: "terminal")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+                }
                 ForEach(sessions) { session in
                     tab(for: session)
                 }
@@ -41,22 +53,16 @@ struct WorkspacePanelView: View {
             }
             .padding(.horizontal, 8)
             .frame(height: 30)
-            .background(.bar)
-            Divider()
+            // A fixed tint: the system bar material picks up the wallpaper's color.
+            .background(Color.white.opacity(0.03))
             if let selected {
+                Rectangle().fill(Theme.hairline).frame(height: 1)
                 TerminalHostView(session: selected)
                     .id(selected.id)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color.rockyBackground)
-            } else {
-                ContentUnavailableView(
-                    "No terminal",
-                    systemImage: "terminal",
-                    description: Text("Press + to open a terminal in \(workspace.name).")
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
     }

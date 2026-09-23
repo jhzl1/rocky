@@ -8,6 +8,8 @@ enum Theme {
     static let background = NSColor(srgbRed: 0x23 / 255, green: 0x27 / 255, blue: 0x2E / 255, alpha: 1)
     /// A little darker than `background`, so the sidebar reads as its own column.
     static let sidebar = NSColor(srgbRed: 0x1E / 255, green: 0x21 / 255, blue: 0x27 / 255, alpha: 1)
+    /// Thin separators between areas (sidebar, header, panel), lighter than the system's black dividers.
+    static let hairline = Color.white.opacity(0.08)
     /// The loading arc (`CircularProgress`).
     static let progressTint = Color.accentColor
 }
