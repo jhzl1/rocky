@@ -28,7 +28,7 @@ Per-repo env var override is included; low priority.
   Accepted cost: new Claude/Codex features lag until adapters update.
 - v1 scope: chat + worktrees, diff + comments + PR, integrated terminal, setup/run/archive scripts.
 - Toolchain: full Xcode 27.0 (build 27A266a), chosen for SwiftUI previews, XCTest/swift-testing and Instruments; active via `xcode-select`.
-- Codex requires a login (API key or ChatGPT login) before use; decide in M1.
+- Codex is deferred to after M1: M1 ships OpenCode and Claude Code only. Codex requires a login (API key or ChatGPT) and its env propagation is still unverified.
 
 ## Section 1 — Architecture and energy rules
 One app process. Child processes only for: one ACP agent per active session, one PTY per terminal tab.
@@ -80,7 +80,7 @@ measured from `CurrentPowerlog.PLSQL`.
 | # | What | Done when |
 | --- | --- | --- |
 | M0 | Spike (throwaway) | Swift CLI talks ACP to all 3 agents; confirms `env` reaches agent tools and `GH_TOKEN` push over HTTPS |
-| M1 | Repos, workspaces, chat | create workspace, chat with any of the 3 agents |
+| M1 | Repos, workspaces, chat | create workspace, chat with OpenCode or Claude Code |
 | M2 | Terminal, scripts, env | terminal tabs, setup/run/archive, repo vars |
 | M3 | Diff, comments, PR | full flow through merge |
 | M4 | Multi-account + energy | per-repo account everywhere; energy measured vs Conductor |
