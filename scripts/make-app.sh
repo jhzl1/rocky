@@ -15,6 +15,11 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$bin_dir/Rocky" "$app/Contents/MacOS/Rocky"
 cp "$root/Resources/Info.plist" "$app/Contents/Info.plist"
+# SwiftPM resource bundles (Textual's highlighter, SwiftTerm's shaders, Rocky's agent icons). Bundle.module looks
+# for them in Contents/Resources and stops the app when one is missing.
+for bundle in "$bin_dir"/*.bundle; do
+  cp -R "$bundle" "$app/Contents/Resources/"
+done
 if [[ "$(security find-identity -p codesigning 2>/dev/null)" == *"\"$identity\""* ]]; then
   codesign --force --sign "$identity" "$app"
 else
