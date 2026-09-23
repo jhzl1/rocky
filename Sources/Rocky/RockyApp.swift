@@ -13,11 +13,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate()
     }
 
-    /// Stops every agent before quitting, so no agent process keeps running (and using energy) after Rocky.
+    /// Stops every agent, terminal and script before quitting, so none keeps running (and using energy) after Rocky.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model else { return .terminateNow }
         Task {
-            await model.stopAllAgents()
+            await model.stopAllProcesses()
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
@@ -37,6 +37,14 @@ struct RockyApp: App {
                     appDelegate.model = model
                     await model.bootstrap()
                 }
+        }
+        .commands {
+            CommandGroup(after: .appSettings) {
+                // The login shell runs once per launch (spec Section 1); this re-reads it after you edit ~/.zshrc.
+                Button("Refresh Shell Environment") {
+                    Task { await model.refreshEnvironment() }
+                }
+            }
         }
     }
 
