@@ -40,17 +40,23 @@ struct WorkspacePanelView: View {
                 }
             }
             .padding(.horizontal, 8)
-            .padding(.vertical, 4)
+            .frame(height: 30)
+            .background(.bar)
             Divider()
             if let selected {
                 TerminalHostView(session: selected)
                     .id(selected.id)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(nsColor: .windowBackgroundColor))
             } else {
                 ContentUnavailableView(
                     "No terminal",
                     systemImage: "terminal",
                     description: Text("Press + to open a terminal in \(workspace.name).")
                 )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
     }

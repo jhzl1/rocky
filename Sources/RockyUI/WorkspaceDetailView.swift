@@ -24,9 +24,9 @@ struct WorkspaceDetailView: View {
             // Chat above, terminals and script output below (M2 layout decision).
             VSplitView {
                 chatArea
-                    .frame(minHeight: 200)
+                    .frame(maxWidth: .infinity, minHeight: 200, maxHeight: .infinity)
                 WorkspacePanelView(model: model, workspace: workspace, selection: $panelSelection)
-                    .frame(minHeight: 120, idealHeight: 240)
+                    .frame(maxWidth: .infinity, minHeight: 140, idealHeight: 260, maxHeight: .infinity)
             }
         }
         .onAppear {

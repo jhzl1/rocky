@@ -8,13 +8,30 @@ import SwiftUI
 struct TerminalHostView: NSViewRepresentable {
     let session: PTYSession
 
+    /// A Nerd Font when one is installed, because prompts such as powerlevel10k and starship draw their icons with
+    /// it (SF Mono shows them as "?"). Otherwise SF Mono.
+    static let font: NSFont = {
+        let size: CGFloat = 12
+        let families = NSFontManager.shared.availableFontFamilies
+        let preferred = ["MesloLGS Nerd Font Mono", "MesloLGM Nerd Font Mono"].first { families.contains($0) }
+        let family = preferred ?? families.filter { $0.hasSuffix("Nerd Font Mono") }.sorted().first
+        if let family, let font = NSFontManager.shared.font(withFamily: family, traits: [], weight: 5, size: size) {
+            return font
+        }
+        return NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+    }()
+
     func makeCoordinator() -> Coordinator {
         Coordinator(session: session)
     }
 
     func makeNSView(context: Context) -> TerminalView {
         let view = TerminalView(frame: .zero)
-        view.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        view.font = Self.font
+        // The window's own colors, instead of SwiftTerm's black block.
+        view.nativeBackgroundColor = .windowBackgroundColor
+        view.nativeForegroundColor = .textColor
+        view.caretColor = .controlAccentColor
         view.terminalDelegate = context.coordinator
         let replay = session.attach(context.coordinator.viewerId) { [weak view] bytes in
             view?.feed(byteArray: bytes)
