@@ -24,7 +24,7 @@ Per-repo env var override is included; low priority.
 ## Decisions
 - Stack: SwiftUI native. Personal use: no notarization, no auto-update.
 - Agents: Claude Code, Codex, OpenCode through ACP (Agent Client Protocol, JSON-RPC over stdio).
-  One Swift client. `opencode acp` native; `claude-code-acp` and `codex-acp` adapters.
+  One Swift client. `opencode acp` native; `@agentclientprotocol/claude-agent-acp` and `@agentclientprotocol/codex-acp` adapters (M0 ran 0.81.0 and 1.13.0).
   Accepted cost: new Claude/Codex features lag until adapters update.
 - v1 scope: chat + worktrees, diff + comments + PR, integrated terminal, setup/run/archive scripts.
 - Prerequisite for M1: full Xcode (Command Line Tools lack XCTest/swift-testing).
