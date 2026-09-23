@@ -4,10 +4,18 @@ import SwiftUI
 struct WorkspaceDetailView: View {
     let model: AppModel
     let workspace: Workspace
-    @State private var agent: AgentKind = .claude
+    @State private var agent: AgentKind
     @State private var starting = false
     @State private var panelSelection: UUID?
     @Environment(\.titleBarLeadingInset) private var titleBarLeadingInset
+
+    init(model: AppModel, workspace: Workspace) {
+        self.model = model
+        self.workspace = workspace
+        // Reopen the agent you used last in this workspace.
+        let agent = model.existingChat(workspaceId: workspace.id)?.agent ?? model.lastAgent(workspaceId: workspace.id) ?? .claude
+        _agent = State(initialValue: agent)
+    }
 
     /// Read from the model, not kept here: a chat the model stops (for example after a settings change) must show Start again.
     private var chat: ChatSessionModel? {
@@ -39,8 +47,9 @@ struct WorkspaceDetailView: View {
                 }
             }
         }
-        .onAppear {
-            if let chat { agent = chat.agent }
+        // Show the conversation right away; the agent itself starts with the first message.
+        .task(id: agent) {
+            await model.prepareChat(workspace: workspace, agent: agent)
         }
     }
 
@@ -62,6 +71,12 @@ struct WorkspaceDetailView: View {
                     .help("This workspace owns ports \(String(port))–\(String(port + 9)): $PORT and $CONDUCTOR_PORT are \(String(port)).")
             }
             runButton
+            Button("New Conversation", systemImage: "square.and.pencil") {
+                Task { await model.newConversation(workspace: workspace, agent: agent) }
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
+            .help("New conversation (earlier ones stay saved)")
             AgentSwitcher(selection: $agent)
         }
         .padding()

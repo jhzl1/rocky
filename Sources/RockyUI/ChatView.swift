@@ -6,6 +6,7 @@ import Textual
 struct ChatView: View {
     let chat: ChatSessionModel
     @State private var draft = ""
+    @State private var attachments: [URL] = []
     private static let thinkingRowId = "thinking"
     /// Like Conductor, long replies read in a centered column instead of across the whole window.
     private static let readingWidth: CGFloat = 820
@@ -67,9 +68,10 @@ struct ChatView: View {
                 Button("Restart") { Task { await chat.start() } }
             }
             .padding()
-        case .idle, .starting:
+        case .starting:
             ProgressLabel(text: "Starting \(chat.agent.displayName)…").padding()
-        case .ready, .running:
+        case .idle, .ready, .running:
+            // Idle: the agent is not running yet; the first message starts it.
             composer
         }
     }
@@ -77,6 +79,15 @@ struct ChatView: View {
     /// A roomy message box like Conductor's: Return sends, Shift-Return starts a new line.
     private var composer: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if !attachments.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(attachments, id: \.self) { url in
+                            AttachmentChip(url: url) { attachments.removeAll { $0 == url } }
+                        }
+                    }
+                }
+            }
             TextField("Ask \(chat.agent.displayName) to make changes…", text: $draft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 14))
@@ -88,12 +99,19 @@ struct ChatView: View {
                 }
                 .onSubmit(send)
             HStack(spacing: 10) {
+                Button("Attach Files", systemImage: "paperclip", action: chooseAttachments)
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
+                    .help(chat.capabilities.promptImages
+                        ? "Attach files: images go inside the message, other files as links the agent opens"
+                        : "Attach files: the agent gets links and opens them")
                 HStack(spacing: 6) {
                     AgentIcon(agent: chat.agent, size: 13)
                     Text(chat.agent.displayName)
                 }
                 .font(.callout)
                 .foregroundStyle(.secondary)
+                ModelMenu(chat: chat)
                 Spacer()
                 if chat.state == .running {
                     Button("Stop", systemImage: "stop.fill") { Task { await chat.cancel() } }
@@ -117,9 +135,77 @@ struct ChatView: View {
 
     private func send() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, chat.state == .ready else { return }
+        guard !text.isEmpty, chat.state == .ready || chat.state == .idle else { return }
+        let files = attachments
         draft = ""
-        Task { await chat.send(text) }
+        attachments = []
+        Task { await chat.send(text, attachments: files) }
+    }
+
+    private func chooseAttachments() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Attach"
+        guard panel.runModal() == .OK else { return }
+        attachments.append(contentsOf: panel.urls.filter { !attachments.contains($0) })
+    }
+}
+
+/// An attached file in the composer, with a button to drop it.
+struct AttachmentChip: View {
+    let url: URL
+    let onRemove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "doc")
+            Text(url.lastPathComponent).lineLimit(1)
+            Button("Remove", systemImage: "xmark", action: onRemove)
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+        }
+        .font(.caption)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color.white.opacity(0.06), in: Capsule())
+        .help(url.path)
+    }
+}
+
+/// The session's model. The agent reports its models once the session exists, so before the first message
+/// this offers to start the agent to list them.
+struct ModelMenu: View {
+    let chat: ChatSessionModel
+
+    var body: some View {
+        if let models = chat.models {
+            Menu {
+                ForEach(models.options) { option in
+                    Button {
+                        Task { await chat.selectModel(option.value) }
+                    } label: {
+                        if option.value == models.current {
+                            Label(option.name, systemImage: "checkmark")
+                        } else {
+                            Text(option.name)
+                        }
+                    }
+                }
+            } label: {
+                Text(models.currentName)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .disabled(chat.state == .running)
+            .help("Model for this conversation")
+        } else if chat.state == .idle {
+            Button("Choose model…") { Task { await chat.start() } }
+                .buttonStyle(.borderless)
+                .font(.callout)
+                .help("Starts \(chat.agent.displayName) to list its models")
+        }
     }
 }
 
