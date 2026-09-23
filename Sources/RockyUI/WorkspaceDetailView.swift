@@ -7,6 +7,7 @@ struct WorkspaceDetailView: View {
     @State private var agent: AgentKind = .claude
     @State private var starting = false
     @State private var panelSelection: UUID?
+    @Environment(\.titleBarLeadingInset) private var titleBarLeadingInset
 
     /// Read from the model, not kept here: a chat the model stops (for example after a settings change) must show Start again.
     private var chat: ChatSessionModel? {
@@ -59,6 +60,9 @@ struct WorkspaceDetailView: View {
             .fixedSize()
         }
         .padding()
+        .padding(.leading, titleBarLeadingInset)
+        // The header is where the title bar was: drag the window from its empty space.
+        .windowDragBackground()
     }
 
     @ViewBuilder
