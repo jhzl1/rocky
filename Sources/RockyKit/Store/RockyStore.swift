@@ -5,7 +5,7 @@ public enum RockyStoreError: Error, Equatable {
     case duplicateRepo(String)
 }
 
-/// SQLite persistence for repos, workspaces and chat transcripts.
+/// SQLite persistence for repos, workspaces, chat transcripts and repo variables (secret values live in the Keychain).
 public final class RockyStore: Sendable {
     private let db: DatabaseQueue
 
@@ -22,7 +22,8 @@ public final class RockyStore: Sendable {
         try Self.migrator.migrate(db)
     }
 
-    private static var migrator: DatabaseMigrator {
+    /// Internal, not private: the migration test builds a v1 database with it.
+    static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
         migrator.registerMigration("v1") { db in
             try db.create(table: "repo") { t in
@@ -55,6 +56,33 @@ public final class RockyStore: Sendable {
                 t.column("text", .text).notNull()
                 t.column("status", .text)
                 t.column("createdAt", .datetime).notNull()
+            }
+        }
+        migrator.registerMigration("v2") { db in
+            try db.alter(table: "repo") { t in
+                t.add(column: "setupScript", .text)
+                t.add(column: "runScript", .text)
+                t.add(column: "archiveScript", .text)
+                t.add(column: "runScriptMode", .text)
+            }
+            try db.alter(table: "workspace") { t in
+                t.add(column: "port", .integer)
+                t.add(column: "baseRef", .text)
+            }
+            try db.create(table: "repoVar") { t in
+                t.primaryKey("id", .text)
+                t.column("repoId", .text).notNull().indexed().references("repo", onDelete: .cascade)
+                t.column("name", .text).notNull()
+                t.column("value", .text)
+                t.column("isSecret", .boolean).notNull().defaults(to: false)
+                t.column("createdAt", .datetime).notNull()
+                t.uniqueKey(["repoId", "name"])
+            }
+            // Workspaces made by M1 had no port: give each its own block, oldest first.
+            let ids = try String.fetchAll(db, sql: "SELECT id FROM workspace ORDER BY createdAt, name")
+            for (index, id) in ids.enumerated() {
+                let port = PortAllocator.firstPort + index * PortAllocator.blockSize
+                try db.execute(sql: "UPDATE workspace SET port = ? WHERE id = ?", arguments: [port, id])
             }
         }
         return migrator
@@ -93,8 +121,44 @@ public final class RockyStore: Sendable {
         try db.read { try Workspace.filter(Column("repoId") == repoId).order(Column("createdAt"), Column("name")).fetchAll($0) }
     }
 
+    public func update(_ workspace: Workspace) throws {
+        try db.write { try workspace.update($0) }
+    }
+
     public func deleteWorkspace(id: String) throws {
         _ = try db.write { try Workspace.deleteOne($0, key: id) }
+    }
+
+    /// First port block no workspace uses yet.
+    public func nextPort() throws -> Int {
+        try db.read { db in
+            PortAllocator.next(taken: try Int.fetchAll(db, sql: "SELECT port FROM workspace WHERE port IS NOT NULL"))
+        }
+    }
+
+    // MARK: Repo variables
+
+    public func repoVars(repoId: String) throws -> [RepoVar] {
+        try db.read { try RepoVar.filter(Column("repoId") == repoId).order(Column("name")).fetchAll($0) }
+    }
+
+    /// Inserts, or replaces the variable with the same name in the repo (keeping its id and creation date).
+    public func save(_ variable: RepoVar) throws {
+        try db.write { db in
+            var variable = variable
+            let existing = try RepoVar
+                .filter(Column("repoId") == variable.repoId && Column("name") == variable.name)
+                .fetchOne(db)
+            if let existing {
+                variable.id = existing.id
+                variable.createdAt = existing.createdAt
+            }
+            try variable.save(db)
+        }
+    }
+
+    public func deleteRepoVar(repoId: String, name: String) throws {
+        _ = try db.write { try RepoVar.filter(Column("repoId") == repoId && Column("name") == name).deleteAll($0) }
     }
 
     // MARK: Chat
