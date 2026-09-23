@@ -63,6 +63,8 @@ struct SidebarView: View {
                 Image(systemName: "ellipsis.circle")
             }
             .menuStyle(.borderlessButton)
+            // The icon is the whole button; the default chevron read as a second control.
+            .menuIndicator(.hidden)
             .fixedSize()
         }
     }
