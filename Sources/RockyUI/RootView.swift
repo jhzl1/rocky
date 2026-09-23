@@ -46,8 +46,9 @@ public struct RootView: View {
         .preferredColorScheme(.dark)
         .overlay(alignment: .bottom) {
             if let busy = model.busyMessage {
-                ProgressView(busy)
-                    .padding(10)
+                ProgressLabel(text: busy)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
                     .background(.regularMaterial, in: Capsule())
                     .padding()
             }

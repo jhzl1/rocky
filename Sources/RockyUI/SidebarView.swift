@@ -22,8 +22,7 @@ struct SidebarView: View {
                             Spacer()
                             // Visible from any workspace, so you can see which agents are still working.
                             if model.existingChat(workspaceId: workspace.id)?.state == .running {
-                                ProgressView()
-                                    .controlSize(.small)
+                                CircularProgress(size: 12)
                                     .help("The agent is working")
                             }
                         }

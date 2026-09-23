@@ -55,7 +55,7 @@ struct ChatView: View {
             }
             .padding()
         case .idle, .starting:
-            ProgressView("Starting \(chat.agent.displayName)…").padding()
+            ProgressLabel(text: "Starting \(chat.agent.displayName)…").padding()
         case .ready, .running:
             HStack(alignment: .bottom) {
                 TextField("Message \(chat.agent.displayName)", text: $draft, axis: .vertical)
@@ -132,13 +132,8 @@ struct ThinkingRow: View {
     let waitingForPermission: Bool
 
     var body: some View {
-        HStack(spacing: 8) {
-            ProgressView()
-                .controlSize(.small)
-            Text(waitingForPermission ? "Waiting for your permission…" : "\(agent.displayName) is thinking…")
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        ProgressLabel(text: waitingForPermission ? "Waiting for your permission…" : "\(agent.displayName) is thinking…")
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
