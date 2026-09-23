@@ -1,5 +1,6 @@
 import RockyKit
 import SwiftUI
+import Textual
 
 struct ChatView: View {
     let chat: ChatSessionModel
@@ -93,8 +94,10 @@ struct ChatItemRow: View {
                 .background(.tint.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))
                 .frame(maxWidth: .infinity, alignment: .trailing)
         case .agent:
-            Text(Self.markdown(item.text))
-                .textSelection(.enabled)
+            // Headings, lists, code blocks with highlighting and tables, like Conductor's replies.
+            StructuredText(markdown: item.text)
+                .textual.structuredTextStyle(.gitHub)
+                .textual.textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         case .thought:
             Text(item.text)
@@ -120,11 +123,6 @@ struct ChatItemRow: View {
         case "failed": "xmark.circle"
         default: "hammer"
         }
-    }
-
-    static func markdown(_ text: String) -> AttributedString {
-        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
     }
 }
 
