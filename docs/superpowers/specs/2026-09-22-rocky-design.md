@@ -27,6 +27,8 @@ Per-repo env var override is included; low priority.
   One Swift client. `opencode acp` native; `claude-code-acp` and `codex-acp` adapters.
   Accepted cost: new Claude/Codex features lag until adapters update.
 - v1 scope: chat + worktrees, diff + comments + PR, integrated terminal, setup/run/archive scripts.
+- Prerequisite for M1: full Xcode (Command Line Tools lack XCTest/swift-testing).
+- Codex requires a login (API key or ChatGPT login) before use; decide in M1.
 
 ## Section 1 — Architecture and energy rules
 One app process. Child processes only for: one ACP agent per active session, one PTY per terminal tab.
@@ -43,10 +45,11 @@ measured from `CurrentPowerlog.PLSQL`.
 
 ## Section 2 — GitHub account per repo
 1. Accounts come from `gh`: `gh auth token --user <login>` once per account at launch, kept in memory.
-   Account = `ghLogin`, `gitName`, `gitEmail`, optional `sshKey`.
+   Account = `ghLogin`, `gitName`, `gitEmail`, optional `sshKey`, `claudeConfigDir`.
 2. Repo → account inferred from the remote (SSH alias `github-celes` → celes account), overridable in repo settings.
 3. Injected into every workspace process (agent, terminal, scripts): `GH_TOKEN`,
-   `GIT_AUTHOR_NAME/EMAIL`, `GIT_COMMITTER_NAME/EMAIL`, and `GIT_SSH_COMMAND="ssh -i <key> -o IdentitiesOnly=yes"` for SSH remotes.
+   `GIT_AUTHOR_NAME/EMAIL`, `GIT_COMMITTER_NAME/EMAIL`, `CLAUDE_CONFIG_DIR=<repo's Claude instance dir>`,
+   and `GIT_SSH_COMMAND="ssh -F /dev/null -i <key> -o IdentitiesOnly=yes"` for SSH remotes.
 4. Rocky's own GraphQL calls use the repo account's token.
 
 ## Section 3 — Workspaces, terminal, scripts, env
@@ -82,11 +85,11 @@ measured from `CurrentPowerlog.PLSQL`.
 | M3 | Diff, comments, PR | full flow through merge |
 | M4 | Multi-account + energy | per-repo account everywhere; energy measured vs Conductor |
 
-## Open unknowns (settled in M0)
-- Does `gh auth git-credential` honor `GH_TOKEN` on HTTPS push?
-- Does `claude-code-acp` pass process `env` to agent tools?
-- Which ACP adapters support `session/load`?
+## M0 answers
+- `gh auth git-credential` honors `GH_TOKEN` on HTTPS push: with `GH_TOKEN` set, `gh`/git-over-HTTPS act as that token's account; without it, they fall back to the active `gh` account via `gh auth git-credential` (not an `osxkeychain` cache). Details: `docs/superpowers/spikes/2026-09-22-m0-findings.md`.
+- `claude-code-acp` passes process `env` to agent tools: a probe value set in the environment round-tripped through the agent's shell tool and appeared in its response text. OpenCode does the same; Codex is unverified because its run failed on an auth error before its shell tool ran. Details: `docs/superpowers/spikes/2026-09-22-m0-findings.md`.
+- All three ACP adapters (`opencode acp`, `claude-agent-acp@0.81.0`, `codex-acp@1.13.0`) report `loadSession: true` in `initialize`; resume itself (`session/load`) was not exercised — M1 must test it for real. Details: `docs/superpowers/spikes/2026-09-22-m0-findings.md`.
 
 ## Verification
 - Spec self-review: no placeholders, sections consistent, each milestone testable.
-- M0 exit: the three unknowns above answered with command output.
+- M0 exit: the three answers above, each backed by command output in `docs/superpowers/spikes/2026-09-22-m0-findings.md`.
