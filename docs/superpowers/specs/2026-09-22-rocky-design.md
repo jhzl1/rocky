@@ -82,6 +82,7 @@ measured from `CurrentPowerlog.PLSQL`.
 | M0 | Spike (throwaway) | Swift CLI talks ACP to all 3 agents; confirms `env` reaches agent tools and `GH_TOKEN` push over HTTPS |
 | M1 | Repos, workspaces, chat | create workspace, chat with OpenCode or Claude Code |
 | M2 | Terminal, scripts, env | terminal tabs, setup/run/archive, repo vars |
+| M2.5 | Visual design | a design spec (palette, type, icons, loading states, motion) applied across the app; replaces `Sources/RockyUI/Theme.swift`'s interim colors (added 2026-09-23) |
 | M3 | Diff, comments, PR | full flow through merge |
 | M4 | Multi-account + energy | per-repo account everywhere; energy measured vs Conductor |
 
