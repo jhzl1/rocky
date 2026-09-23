@@ -34,6 +34,9 @@ struct SidebarView: View {
                 } header: {
                     header(for: repo)
                 }
+                // A sidebar section is collapsible by default, and its chevron appears only on hover, shifting
+                // the repo menu button each time.
+                .collapsible(false)
             }
         }
         .listStyle(.sidebar)
