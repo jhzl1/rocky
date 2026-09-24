@@ -12,6 +12,7 @@ struct CircularProgress: View {
     private static let circumference = 2 * Double.pi * 20.2
 
     var body: some View {
+        let size = Zoom.shared(size)
         TimelineView(.animation) { context in
             let t = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: Self.period) / Self.period
             let arc = Self.arc(at: t)

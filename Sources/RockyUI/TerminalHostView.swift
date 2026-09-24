@@ -7,19 +7,24 @@ import SwiftUI
 /// dismantles the view, and the next one replays the session's buffered output.
 struct TerminalHostView: NSViewRepresentable {
     let session: PTYSession
+    /// `Zoom.scale`: the terminal's 12-point font grows with it.
+    var zoom: Double = 1
 
     /// A Nerd Font when one is installed, because prompts such as powerlevel10k and starship draw their icons with
     /// it (SF Mono shows them as "?"). Otherwise SF Mono.
-    static let font: NSFont = {
-        let size: CGFloat = 12
+    private static let nerdFontFamily: String? = {
         let families = NSFontManager.shared.availableFontFamilies
         let preferred = ["MesloLGS Nerd Font Mono", "MesloLGM Nerd Font Mono"].first { families.contains($0) }
-        let family = preferred ?? families.filter { $0.hasSuffix("Nerd Font Mono") }.sorted().first
-        if let family, let font = NSFontManager.shared.font(withFamily: family, traits: [], weight: 5, size: size) {
+        return preferred ?? families.filter { $0.hasSuffix("Nerd Font Mono") }.sorted().first
+    }()
+
+    static func font(zoom: Double) -> NSFont {
+        let size = 12 * zoom
+        if let family = nerdFontFamily, let font = NSFontManager.shared.font(withFamily: family, traits: [], weight: 5, size: size) {
             return font
         }
         return NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
-    }()
+    }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(session: session)
@@ -27,7 +32,7 @@ struct TerminalHostView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> TerminalView {
         let view = TerminalView(frame: .zero)
-        view.font = Self.font
+        view.font = Self.font(zoom: zoom)
         // Rocky's background and the system text color, instead of SwiftTerm's black block.
         view.nativeBackgroundColor = Theme.background
         view.nativeForegroundColor = .textColor
@@ -40,7 +45,10 @@ struct TerminalHostView: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ view: TerminalView, context: Context) {}
+    func updateNSView(_ view: TerminalView, context: Context) {
+        let font = Self.font(zoom: zoom)
+        if view.font.pointSize != font.pointSize { view.font = font }
+    }
 
     static func dismantleNSView(_ view: TerminalView, coordinator: Coordinator) {
         coordinator.session.detach(coordinator.viewerId)

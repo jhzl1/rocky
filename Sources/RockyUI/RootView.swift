@@ -9,6 +9,8 @@ public struct RootView: View {
     @Bindable var model: AppModel
     @AppStorage("sidebarVisible") private var sidebarVisible = true
     @AppStorage("sidebarWidth") private var sidebarWidth = 260.0
+    /// Rocky's own menus, drawn over the whole window (`MenuHost`).
+    @State private var menus = MenuPresenter()
 
     public init(model: AppModel) {
         self.model = model
@@ -37,13 +39,15 @@ public struct RootView: View {
                 Button("Show Sidebar", systemImage: "sidebar.left", action: toggleSidebar)
                     .labelStyle(.iconOnly)
                     .buttonStyle(.borderless)
-                    .font(.system(size: 14))
+                    .font(.rocky(14))
                     .padding(.leading, 78)
                     .frame(height: 28)
                     .ignoresSafeArea(.container, edges: .top)
             }
         }
         .preferredColorScheme(.dark)
+        // The default font of every view that sets none (sidebar rows, buttons, fields), at Rocky's zoom.
+        .font(.rocky(13))
         .overlay(alignment: .bottom) {
             if let busy = model.busyMessage {
                 ProgressLabel(text: busy)
@@ -53,6 +57,8 @@ public struct RootView: View {
                     .padding()
             }
         }
+        .overlay { MenuHost(presenter: menus) }
+        .environment(menus)
         .alert(
             "Rocky",
             isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })
@@ -69,11 +75,15 @@ public struct RootView: View {
             WorkspaceDetailView(model: model, workspace: workspace)
                 .id(workspace.id)
         } else {
-            ContentUnavailableView(
-                "No workspace selected",
-                systemImage: "square.stack.3d.up",
-                description: Text("Add a repository, then create a workspace from its menu.")
-            )
+            ContentUnavailableView {
+                Label {
+                    Text("No workspace selected")
+                } icon: {
+                    RockyLogo(size: 96)
+                }
+            } description: {
+                Text("Add a repository, then create a workspace from its menu.")
+            }
         }
     }
 

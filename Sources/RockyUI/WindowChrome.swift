@@ -32,7 +32,7 @@ struct SidebarTopBar: View {
         }
         .labelStyle(.iconOnly)
         .buttonStyle(.borderless)
-        .font(.system(size: 14))
+        .font(.rocky(14))
         // The window buttons take the first ~76 points; the row is as tall as the hidden title bar.
         .padding(.leading, 78)
         .padding(.trailing, 12)

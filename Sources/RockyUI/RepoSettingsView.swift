@@ -49,7 +49,7 @@ struct RepoSettingsView: View {
                         }
                     }
                     Text("Sets CLAUDE_CONFIG_DIR for Claude Code sessions in this repo. Rocky never inherits it from your shell.")
-                        .font(.caption)
+                        .font(.rocky(10))
                         .foregroundStyle(.secondary)
                 }
                 scriptsSection
@@ -76,8 +76,8 @@ struct RepoSettingsView: View {
                 Text("Concurrent: every workspace can run").tag(RunScriptMode.concurrent)
                 Text("One at a time: Run stops the others").tag(RunScriptMode.nonconcurrent)
             }
-            Text("Scripts run with zsh in the workspace folder: setup once when a workspace is created, run from the Run button, archive before a workspace is removed. A conductor.json at the root of a workspace replaces all three there.")
-                .font(.caption)
+            Text("Scripts run with zsh in the workspace folder: setup once when a workspace is created, run from the Run button, archive before a workspace is removed. A rocky.json at the root of a workspace replaces all three there.")
+                .font(.rocky(10))
                 .foregroundStyle(.secondary)
         }
     }
@@ -88,7 +88,7 @@ struct RepoSettingsView: View {
                 HStack {
                     TextField("Name", text: $variable.name, prompt: Text("API_URL"))
                         .labelsHidden()
-                        .font(.body.monospaced())
+                        .font(.rocky(13, design: .monospaced))
                         .frame(width: 170)
                     if variable.isSecret {
                         SecureField("Value", text: $variable.value, prompt: Text(variable.savedAsSecret ? "unchanged" : "value"))
@@ -107,8 +107,8 @@ struct RepoSettingsView: View {
             Button("Add Variable", systemImage: "plus") {
                 variables.append(VariableDraft(name: "", value: "", isSecret: false, savedName: nil, savedAsSecret: false))
             }
-            Text("Every agent, terminal and script of this repo gets these, plus PORT and the ROCKY_* and CONDUCTOR_* variables. Secrets are stored in the macOS Keychain, not in Rocky's database. Running processes keep the values they started with.")
-                .font(.caption)
+            Text("Every agent, terminal and script of this repo gets these, plus PORT and the ROCKY_* variables. Secrets are stored in the macOS Keychain, not in Rocky's database. Running processes keep the values they started with.")
+                .font(.rocky(10))
                 .foregroundStyle(.secondary)
         }
     }

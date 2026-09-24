@@ -5,49 +5,71 @@ import Textual
 
 struct ChatView: View {
     let chat: ChatSessionModel
-    @State private var draft = ""
-    @State private var attachments: [URL] = []
-    private static let thinkingRowId = "thinking"
+    /// False while a file tab covers the conversation: the view stays, with its draft, but takes no shortcut.
+    var isActive = true
+    @State private var composerText = ComposerController()
+    @State private var keyMonitor: Any?
+    @Environment(\.openFile) private var openFile
+    /// The last thing in the scroll view: scrolling to it reaches the very bottom, even while a reply's markdown
+    /// is still being laid out.
+    private static let bottomId = "bottom"
     /// Like Conductor, long replies read in a centered column instead of across the whole window.
     private static let readingWidth: CGFloat = 820
+    /// The conversation's side margin, and the inner padding of the message box and the question card.
+    static let columnPadding: CGFloat = 24
+    static let boxPadding: CGFloat = 14
 
     var body: some View {
         let rows = ChatLayout.rows(chat.items)
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 14) {
+                    // Not lazy: a lazy stack guesses the height of the rows it has not drawn, so the scroll bar
+                    // grew and shrank while scrolling as each reply got measured. Rows that did not change skip
+                    // their body (`equatable()`), so a long conversation stays cheap while a reply streams.
+                    VStack(alignment: .leading, spacing: 14) {
                         ForEach(rows) { row in
                             switch row {
-                            case .item(let item): ChatItemRow(item: item)
-                            case .tools(let tools): ToolGroupRow(tools: tools)
+                            case .item(let item): ChatItemRow(item: item, isLive: isLive(item)).equatable()
+                            case .tools(let tools): ToolGroupRow(tools: tools, isLive: tools.last.map(isLive) ?? false)
                             case .turnFooter(let summary): TurnFooterRow(agent: chat.agent, summary: summary)
                             }
                         }
                         if chat.state == .running {
-                            ThinkingRow(agent: chat.agent, waitingForPermission: chat.pendingPermission != nil)
-                                .id(Self.thinkingRowId)
+                            ThinkingRow(startedAt: chat.turnStartedAt)
                         }
+                        Color.clear.frame(height: 1).id(Self.bottomId)
                     }
-                    .font(.system(size: 14))
-                    .padding(.horizontal, 24)
+                    .font(.rocky(14))
+                    .padding(.horizontal, Self.columnPadding)
                     .padding(.vertical, 20)
-                    .frame(maxWidth: Self.readingWidth)
+                    .frame(maxWidth: Zoom.shared(Self.readingWidth))
                     .frame(maxWidth: .infinity)
                 }
-                .onChange(of: chat.items.last?.text) {
-                    if let id = ChatLayout.rows(chat.items).last?.id { proxy.scrollTo(id, anchor: .bottom) }
+                // The message box floats over the end of the conversation, which scrolls under it, as in Conductor.
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    bottomArea
                 }
-                .onChange(of: chat.state) {
-                    if chat.state == .running { proxy.scrollTo(Self.thinkingRowId, anchor: .bottom) }
-                }
+                // Stay pinned to the bottom while the content grows.
+                .defaultScrollAnchor(.bottom)
+                .onChange(of: chat.items.count) { proxy.scrollTo(Self.bottomId, anchor: .bottom) }
+                .onChange(of: chat.items.last?.text) { proxy.scrollTo(Self.bottomId, anchor: .bottom) }
+                .onChange(of: chat.state) { proxy.scrollTo(Self.bottomId, anchor: .bottom) }
             }
-            footer
-                .frame(maxWidth: Self.readingWidth)
-                .frame(maxWidth: .infinity)
         }
-        .onAppear { chat.isVisible = true }
-        .onDisappear { chat.isVisible = false }
+        .onAppear {
+            chat.isVisible = true
+            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { handleKey($0) }
+            DispatchQueue.main.async { composerText.focus() }
+        }
+        .onChange(of: isActive) {
+            if isActive { composerText.focus() } else { composerText.resignFocus() }
+        }
+        .onDisappear {
+            chat.isVisible = false
+            if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+            keyMonitor = nil
+        }
         .sheet(isPresented: Binding(
             get: { chat.pendingPermission != nil },
             set: { if !$0 { chat.answerPermission(optionId: nil) } }
@@ -56,6 +78,32 @@ struct ChatView: View {
                 PermissionSheet(request: request) { chat.answerPermission(optionId: $0) }
             }
         }
+    }
+
+    /// The agent's questions, then the message box, floating above the conversation; the conversation fades out
+    /// under them.
+    private var bottomArea: some View {
+        VStack(spacing: 10) {
+            if let question = chat.pendingQuestion {
+                QuestionCard(agent: chat.agent, request: question) { chat.answerQuestion($0) }
+                    .id(question.questions.map(\.id).joined() + question.message)
+            }
+            footer
+        }
+        // The boxes reach 14 points (their inner padding) past the conversation's column on each side, so the text
+        // typed in them lines up with the conversation's text.
+        .padding(.horizontal, Self.columnPadding - Self.boxPadding)
+        .padding(.top, 12)
+        .padding(.bottom, 16)
+        .frame(maxWidth: Zoom.shared(Self.readingWidth))
+        .frame(maxWidth: .infinity)
+        .background(
+            LinearGradient(
+                stops: [.init(color: Color.rockyBackground.opacity(0), location: 0), .init(color: Color.rockyBackground.opacity(0.9), location: 0.6)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
     }
 
     @ViewBuilder
@@ -67,79 +115,109 @@ struct ChatView: View {
                 Spacer()
                 Button("Restart") { Task { await chat.start() } }
             }
-            .padding()
-        case .starting:
-            ProgressLabel(text: "Starting \(chat.agent.displayName)…").padding()
-        case .idle, .ready, .running:
-            // Idle: the agent is not running yet; the first message starts it.
+            .padding(Self.boxPadding)
+            .background(Theme.composer, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.composerBorder))
+        case .idle, .starting, .ready, .running:
+            // The agent may still be starting in the background; a message sent meanwhile waits for it.
             composer
         }
     }
 
-    /// A roomy message box like Conductor's: Return sends, Shift-Return starts a new line.
+    /// A tool call of the turn in progress: while it is pending it is still running.
+    private func isLive(_ item: ChatItem) -> Bool {
+        guard chat.state == .running, let start = chat.turnStartedAt else { return false }
+        return item.createdAt >= start
+    }
+
+    private var canSend: Bool {
+        composerText.hasContent && chat.state != .running
+    }
+
+    /// A roomy message box laid out like Conductor's: the text with its files inside it as badges, then model and
+    /// effort on the left, the + menu and send on the right. Return sends, Shift-Return starts a new line, Shift-Tab
+    /// switches plan mode; pasting or dropping images and files puts them in the text.
     private var composer: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if !attachments.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(attachments, id: \.self) { url in
-                            AttachmentChip(url: url) { attachments.removeAll { $0 == url } }
-                        }
-                    }
+            ComposerEditor(
+                controller: composerText,
+                zoom: Zoom.shared.scale,
+                history: chat.items.filter { $0.kind == .user }.map { MessageHistory.Entry(text: $0.text, files: $0.attachments) },
+                onSubmit: send,
+                onBacktab: { Task { await chat.setPlanMode(!chat.isPlanMode) } },
+                openFile: openFile
+            )
+            .frame(height: composerText.height)
+            .overlay(alignment: .topLeading) {
+                if composerText.isEmpty {
+                    Text("Ask \(chat.agent.displayName) to make changes…")
+                        .font(.rocky(14))
+                        .foregroundStyle(.tertiary)
+                        .allowsHitTesting(false)
                 }
             }
-            TextField("Ask \(chat.agent.displayName) to make changes…", text: $draft, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(.system(size: 14))
-                .lineLimit(2...10)
-                .onKeyPress(.return, phases: .down) { press in
-                    guard press.modifiers.contains(.shift) else { return .ignored }
-                    draft.append("\n")
-                    return .handled
+            HStack(spacing: 8) {
+                ModelMenuButton(chat: chat)
+                if chat.isPlanMode {
+                    PlanModeChip { Task { await chat.setPlanMode(false) } }
                 }
-                .onSubmit(send)
-            HStack(spacing: 10) {
-                Button("Attach Files", systemImage: "paperclip", action: chooseAttachments)
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.borderless)
-                    .help(chat.capabilities.promptImages
-                        ? "Attach files: images go inside the message, other files as links the agent opens"
-                        : "Attach files: the agent gets links and opens them")
-                HStack(spacing: 6) {
-                    AgentIcon(agent: chat.agent, size: 13)
-                    Text(chat.agent.displayName)
-                }
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                ModelMenu(chat: chat)
                 Spacer()
+                plusMenu
                 if chat.state == .running {
-                    Button("Stop", systemImage: "stop.fill") { Task { await chat.cancel() } }
+                    ComposerButton(systemImage: "stop.fill", isEnabled: true) { Task { await chat.cancel() } }
                         .help("Stop the agent's turn")
                 } else {
-                    Button("Send", systemImage: "arrow.up", action: send)
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(.borderedProminent)
-                        .clipShape(Circle())
-                        .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    ComposerButton(systemImage: "arrow.up", isEnabled: canSend, action: send)
                         .help("Send (Return)")
                 }
             }
         }
-        .padding(14)
-        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.1)))
-        .padding(.horizontal, 24)
-        .padding(.bottom, 16)
+        .padding(Self.boxPadding)
+        // Opaque, with a shadow, since it floats over the conversation. The border is drawn inside the shape: a
+        // centered stroke falls half a point outside and smears across two pixels on a 1x screen.
+        .background(Theme.composer, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.composerBorder))
+        .shadow(color: .black.opacity(0.35), radius: 16, y: 6)
+        // Files dropped on the box outside its text go in at the insertion point.
+        .dropDestination(for: URL.self) { urls, _ in
+            let files = urls.filter(\.isFileURL)
+            composerText.insert(files: files)
+            return !files.isEmpty
+        }
+    }
+
+    /// The + next to Send, like Conductor's: attach files, and plan mode when the agent has one.
+    private var plusMenu: some View {
+        MenuButton(id: "composer-\(ObjectIdentifier(chat))", placement: .aboveTrailing, width: 250) { isOpen in
+            Image(systemName: "plus")
+                .font(.rocky(15))
+                .frame(width: Zoom.shared(28), height: Zoom.shared(28))
+                .background(Color.white.opacity(isOpen ? 0.1 : 0), in: RoundedRectangle(cornerRadius: 7))
+                .contentShape(Rectangle())
+        } content: {
+            MenuItem(title: "Add attachment", icon: .symbol("paperclip"), shortcut: "⌘U", action: chooseAttachments)
+            if chat.canUsePlanMode {
+                MenuItem(title: "Plan mode", icon: .symbol("map"), shortcut: "⇧Tab", isChecked: chat.isPlanMode) {
+                    Task { await chat.setPlanMode(!chat.isPlanMode) }
+                }
+            }
+        }
+        .help("Attach files or switch plan mode")
     }
 
     private func send() {
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, chat.state == .ready || chat.state == .idle else { return }
-        let files = attachments
-        draft = ""
-        attachments = []
-        Task { await chat.send(text, attachments: files) }
+        guard canSend else { return }
+        let message = composerText.takeMessage()
+        Task { await chat.send(message.text, attachments: message.files) }
+    }
+
+    /// ⌘U attaches files. The message box handles its own keys (`ComposerTextView`).
+    private func handleKey(_ event: NSEvent) -> NSEvent? {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard isActive, modifiers == .command, event.charactersIgnoringModifiers == "u" else { return event }
+        // After the key event: the open panel runs its own event loop.
+        DispatchQueue.main.async { chooseAttachments() }
+        return nil
     }
 
     private func chooseAttachments() {
@@ -149,141 +227,73 @@ struct ChatView: View {
         panel.allowsMultipleSelection = true
         panel.prompt = "Attach"
         guard panel.runModal() == .OK else { return }
-        attachments.append(contentsOf: panel.urls.filter { !attachments.contains($0) })
+        composerText.insert(files: panel.urls)
+        composerText.focus()
     }
 }
 
-/// An attached file in the composer, with a button to drop it.
-struct AttachmentChip: View {
-    let url: URL
-    let onRemove: () -> Void
+/// Shown next to the model while plan mode is on; clicking it leaves plan mode.
+struct PlanModeChip: View {
+    let action: () -> Void
 
     var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "doc")
-            Text(url.lastPathComponent).lineLimit(1)
-            Button("Remove", systemImage: "xmark", action: onRemove)
-                .labelStyle(.iconOnly)
-                .buttonStyle(.borderless)
-        }
-        .font(.caption)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(Color.white.opacity(0.06), in: Capsule())
-        .help(url.path)
-    }
-}
-
-/// The session's model. The agent reports its models once the session exists, so before the first message
-/// this offers to start the agent to list them.
-struct ModelMenu: View {
-    let chat: ChatSessionModel
-
-    var body: some View {
-        if let models = chat.models {
-            Menu {
-                ForEach(models.options) { option in
-                    Button {
-                        Task { await chat.selectModel(option.value) }
-                    } label: {
-                        if option.value == models.current {
-                            Label(option.name, systemImage: "checkmark")
-                        } else {
-                            Text(option.name)
-                        }
-                    }
-                }
-            } label: {
-                Text(models.currentName)
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: "map")
+                Text("Plan")
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .disabled(chat.state == .running)
-            .help("Model for this conversation")
-        } else if chat.state == .idle {
-            Button("Choose model…") { Task { await chat.start() } }
-                .buttonStyle(.borderless)
-                .font(.callout)
-                .help("Starts \(chat.agent.displayName) to list its models")
+            .font(.rocky(12))
+            .foregroundStyle(Theme.plan)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Theme.plan.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .help("Plan mode: the agent plans and asks before changing anything. Click or press ⇧Tab to leave it.")
     }
 }
 
-struct ChatItemRow: View {
+/// Send and Stop in the message box: a rounded square like Conductor's, white when it can be pressed.
+struct ComposerButton: View {
+    let systemImage: String
+    let isEnabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.rocky(13, weight: .bold))
+                .frame(width: Zoom.shared(28), height: Zoom.shared(28))
+                .foregroundStyle(isEnabled ? Color.black : Color.secondary)
+                .background(isEnabled ? Color.white : Color.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+    }
+}
+
+struct ChatItemRow: View, Equatable {
     let item: ChatItem
+    let isLive: Bool
 
     var body: some View {
         switch item.kind {
         case .user:
-            Text(item.text)
-                .textSelection(.enabled)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(.tint.opacity(0.15), in: RoundedRectangle(cornerRadius: 10))
-                .frame(maxWidth: 620, alignment: .trailing)
-                .frame(maxWidth: .infinity, alignment: .trailing)
+            UserMessageRow(item: item)
         case .agent:
             // Headings, lists, highlighted code blocks and tables, styled like Conductor's replies.
-            StructuredText(markdown: item.text)
+            StructuredText(item.text, parser: RockyMarkdownParser(zoom: Zoom.shared.scale))
                 .textual.structuredTextStyle(RockyMarkdownStyle())
                 .textual.textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         case .thought:
-            Text(item.text)
-                .italic()
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            ThoughtRow(item: item)
         case .tool:
-            ToolCallRow(item: item)
+            ToolCallRow(item: item, isLive: isLive)
         case .error:
             Label(item.text, systemImage: "exclamationmark.triangle")
                 .foregroundStyle(.red)
-        }
-    }
-}
-
-struct ToolCallRow: View {
-    let item: ChatItem
-
-    var body: some View {
-        Label {
-            Text(item.text) + Text(item.status.map { "  \($0)" } ?? "").foregroundStyle(.secondary)
-        } icon: {
-            Image(systemName: icon)
-        }
-        .font(.callout)
-        .foregroundStyle(.secondary)
-    }
-
-    private var icon: String {
-        switch item.status {
-        case "completed": "checkmark.circle"
-        case "failed": "xmark.circle"
-        default: "hammer"
-        }
-    }
-}
-
-/// Consecutive tool calls folded into one line, like Conductor's "2 tool calls"; click to see each one.
-struct ToolGroupRow: View {
-    let tools: [ChatItem]
-    @State private var expanded = false
-
-    private var title: String {
-        let failed = tools.filter { $0.status == "failed" }.count
-        return "\(tools.count) tool calls" + (failed > 0 ? " · \(failed) failed" : "")
-    }
-
-    var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(tools) { ToolCallRow(item: $0) }
-            }
-            .padding(.top, 6)
-        } label: {
-            Label(title, systemImage: "hammer")
-                .font(.callout)
-                .foregroundStyle(.secondary)
         }
     }
 }
@@ -313,20 +323,9 @@ struct TurnFooterRow: View {
             .help("Copy the reply")
             .disabled(summary.agentText.isEmpty)
         }
-        .font(.caption)
+        .font(.rocky(10))
         .foregroundStyle(.secondary)
         .padding(.bottom, 6)
-    }
-}
-
-/// Shown at the end of the conversation while the agent works on a turn.
-struct ThinkingRow: View {
-    let agent: AgentKind
-    let waitingForPermission: Bool
-
-    var body: some View {
-        ProgressLabel(text: waitingForPermission ? "Waiting for your permission…" : "\(agent.displayName) is thinking…")
-            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -336,7 +335,7 @@ struct PermissionSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Permission needed").font(.headline)
+            Text("Permission needed").font(.rocky(13, weight: .semibold))
             Text(request.title).textSelection(.enabled)
             HStack {
                 Button("Cancel") { answer(nil) }

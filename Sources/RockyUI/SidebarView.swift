@@ -16,19 +16,21 @@ struct SidebarView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(workspace.name)
                                 Text(workspace.branch)
-                                    .font(.caption)
+                                    .font(.rocky(10))
                                     .foregroundStyle(.secondary)
                             }
                             Spacer()
                             // Visible from any workspace, so you can see which agents are still working.
-                            if model.existingChat(workspaceId: workspace.id)?.state == .running {
+                            if model.isAgentWorking(workspaceId: workspace.id) {
                                 CircularProgress(size: 12)
                                     .help("The agent is working")
                             }
                         }
                         .tag(workspace.id)
-                        .contextMenu {
-                            Button("Remove Workspace…", role: .destructive) { workspaceToRemove = workspace }
+                        .rockyContextMenu(id: "workspace-\(workspace.id)") {
+                            MenuItem(title: "Remove workspace…", icon: .symbol("trash"), isDestructive: true) {
+                                workspaceToRemove = workspace
+                            }
                         }
                     }
                 } header: {
@@ -73,17 +75,20 @@ struct SidebarView: View {
         HStack {
             Text(repo.name)
             Spacer()
-            Menu {
-                Button("New Workspace") { Task { await model.createWorkspace(repoId: repo.id) } }
-                Button("Settings…") { settingsRepo = repo }
-                Divider()
-                Button("Remove from Rocky", role: .destructive) { Task { await model.removeRepo(id: repo.id) } }
-            } label: {
+            MenuButton(id: "repo-\(repo.id)", placement: .belowTrailing, width: 220) { isOpen in
                 Image(systemName: "ellipsis.circle")
+                    .foregroundStyle(isOpen ? .primary : .secondary)
+                    .contentShape(Rectangle())
+            } content: {
+                MenuItem(title: "New workspace", icon: .symbol("plus.square.on.square")) {
+                    Task { await model.createWorkspace(repoId: repo.id) }
+                }
+                MenuItem(title: "Settings…", icon: .symbol("gearshape")) { settingsRepo = repo }
+                MenuDivider()
+                MenuItem(title: "Remove from Rocky", icon: .symbol("trash"), isDestructive: true) {
+                    Task { await model.removeRepo(id: repo.id) }
+                }
             }
-            .menuStyle(.borderlessButton)
-            // The icon is the whole button; the default chevron read as a second control.
-            .menuIndicator(.hidden)
             .fixedSize()
         }
     }

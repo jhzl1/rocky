@@ -2,6 +2,23 @@ import AppKit
 import RockyKit
 import SwiftUI
 
+/// Rocky's beagle on its rounded white square, the same art as the app icon (scripts/make-icon.swift).
+struct RockyLogo: View {
+    var size: CGFloat = 64
+    private static let image = Bundle.module.url(forResource: "rocky", withExtension: "png", subdirectory: "Icons")
+        .flatMap(NSImage.init(contentsOf:))
+
+    var body: some View {
+        if let image = Self.image {
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: Zoom.shared(size), height: Zoom.shared(size))
+                .accessibilityLabel("Rocky")
+        }
+    }
+}
+
 /// The agent's logo: Claude's starburst in its brand orange, OpenCode's mark in the text color.
 /// The SVGs are in Resources/Icons (from Simple Icons, CC0); NSImage draws SVG as vectors.
 struct AgentIcon: View {
@@ -13,7 +30,7 @@ struct AgentIcon: View {
             .renderingMode(.template)
             .resizable()
             .aspectRatio(contentMode: .fit)
-            .frame(width: size, height: size)
+            .frame(width: Zoom.shared(size), height: Zoom.shared(size))
             .foregroundStyle(Self.tint(for: agent))
             .accessibilityLabel(agent.displayName)
     }
@@ -36,37 +53,5 @@ struct AgentIcon: View {
         image.isTemplate = true
         images[agent] = image
         return image
-    }
-}
-
-/// Claude Code | OpenCode, each with its logo. Replaces the plain segmented picker.
-struct AgentSwitcher: View {
-    @Binding var selection: AgentKind
-
-    var body: some View {
-        HStack(spacing: 2) {
-            ForEach(AgentKind.allCases) { agent in
-                Button {
-                    selection = agent
-                } label: {
-                    HStack(spacing: 6) {
-                        AgentIcon(agent: agent, size: 13)
-                        Text(agent.displayName)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(
-                        selection == agent ? Color.white.opacity(0.1) : Color.clear,
-                        in: RoundedRectangle(cornerRadius: 6)
-                    )
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(selection == agent ? .primary : .secondary)
-            }
-        }
-        .padding(2)
-        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.08)))
     }
 }
