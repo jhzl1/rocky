@@ -71,12 +71,24 @@ public actor ACPConnection {
 
     public func start() throws {
         try process.run()
-        let stdout = stdout
+        // Not `stdout.bytes`: every FileHandle.AsyncBytes in the app reads on one serial queue
+        // (com.apple.Foundation.AsyncBytesIOActorQueue), so an idle agent's blocked read stopped every other agent's
+        // output from being read. A readability handler per pipe has no shared queue.
+        let (chunks, continuation) = AsyncStream<Data>.makeStream()
+        stdout.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                handle.readabilityHandler = nil
+                continuation.finish()
+            } else {
+                continuation.yield(data)
+            }
+        }
         Task { [weak self] in
-            // Split on "\n" only: JSON text may contain U+2028, which `bytes.lines` would treat as a line break.
+            // Split on "\n" only: JSON text may contain U+2028, which a line splitter could treat as a line break.
             var line: [UInt8] = []
-            do {
-                for try await byte in stdout.bytes {
+            for await chunk in chunks {
+                for byte in chunk {
                     if byte == 0x0A {
                         await self?.receive(String(decoding: line, as: UTF8.self))
                         line.removeAll(keepingCapacity: true)
@@ -84,7 +96,7 @@ public actor ACPConnection {
                         line.append(byte)
                     }
                 }
-            } catch {}
+            }
             await self?.finish()
         }
     }

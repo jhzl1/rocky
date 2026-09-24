@@ -69,4 +69,25 @@ struct ACPConnectionTests {
         #expect(try await connection.call("initialize", [:])["probe"] == "probe-123")
         await connection.terminate()
     }
+
+    /// With `FileHandle.bytes`, an idle agent's blocked read held Foundation's one shared read queue, so a second
+    /// agent's answer was never read (a new conversation stuck on "Starting…").
+    @Test func anIdleAgentDoesNotBlockAnotherAgentsReplies() async throws {
+        let idle = try connect("env")   // started and never sent anything: it waits silently
+        try await idle.start()
+        try await Task.sleep(for: .milliseconds(200))
+        let other = try connect("env", environment: ["ROCKY_PROBE": "second"])
+        try await other.start()
+
+        let replies = Recorder<JSONValue>()
+        Task {
+            if let reply = try? await other.call("initialize", [:]) { await replies.append(reply) }
+        }
+        for _ in 0..<300 where await replies.values.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await replies.values.first?["probe"] == "second")
+        await idle.terminate()
+        await other.terminate()
+    }
 }
