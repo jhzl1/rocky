@@ -40,6 +40,24 @@ public struct ChatItem: Identifiable, Equatable, Sendable {
     }
 }
 
+/// What a conversation reports to `AppModel`, which decides whether the user hears about it.
+public enum ChatAttention: Sendable, Equatable {
+    /// A turn ended normally (`.running` → `.ready`).
+    case finished
+    /// An error stopped the agent during a turn.
+    case failed
+    /// The agent is waiting for a permission or an answer to its question.
+    case needsYou
+}
+
+/// A message written while the agent was working. It goes out when the turn ends, like Conductor's queue (user
+/// decision, 2026-09-23).
+public struct QueuedMessage: Identifiable, Sendable, Equatable {
+    public let id: UUID
+    public let text: String
+    public let attachments: [URL]
+}
+
 /// One agent session in one workspace: starts the ACP process, streams its updates into `items`,
 /// and surfaces permission prompts.
 @MainActor
@@ -62,6 +80,22 @@ public final class ChatSessionModel {
     public private(set) var configOptions: [SessionConfigOption] = []
     /// When the turn in progress started, for the elapsed time shown while the agent works.
     public private(set) var turnStartedAt: Date?
+    /// Why the agent stopped on an error (ROW-03). nil after an explicit `stop()`, which also ends in `.stopped`;
+    /// cleared when the agent starts again or a turn starts.
+    public private(set) var failure: String?
+    /// Messages waiting for the turn in progress, oldest first; the next one goes out when a turn ends. In memory
+    /// only: quitting Rocky drops them.
+    public private(set) var queue: [QueuedMessage] = []
+    /// The queue waits instead of going out: the user stopped the turn, or it ended on an error or a crash. The next
+    /// message the user sends, or Send Now, lets it go again.
+    public private(set) var isQueueHeld = false
+    /// This turn was stopped or ended on an error, so the queue is held when it ends…
+    @ObservationIgnored private var holdsQueue = false
+    /// …unless it was stopped to send a queued message now (`sendQueuedNow`).
+    @ObservationIgnored private var steers = false
+    /// Called when a turn ends or fails and when the agent starts waiting for the user: the sidebar's unread state
+    /// (ROW-04), the alert sound and the Dock's number.
+    @ObservationIgnored public var onAttention: (@MainActor (ChatAttention) -> Void)?
     /// While false, updates are buffered and applied on the next show (spec Section 1).
     public var isVisible = true {
         didSet { if isVisible { flush() } }
@@ -121,6 +155,7 @@ public final class ChatSessionModel {
 
     private func performStart() async {
         state = .starting
+        failure = nil
         resumeSessionId = sessionId ?? resumeSessionId
         sessionId = nil
         do {
@@ -152,7 +187,10 @@ public final class ChatSessionModel {
             capabilities = ACPProtocol.capabilities(from: try await connection.call("initialize", ACPProtocol.initializeParams()))
             // Updates are dropped while `sessionId` is nil. `session/load` replays the whole
             // conversation before it responds, and the transcript already comes from the store.
-            if let resume = resumeSessionId, capabilities.loadSession {
+            // A conversation nobody wrote in has nothing to resume: Claude Code saves a session only once it
+            // gets its first prompt, so loading it would fail with "Resource not found".
+            let hasBeenPrompted = items.contains { $0.kind == .user }
+            if let resume = resumeSessionId, capabilities.loadSession, hasBeenPrompted {
                 do {
                     let loaded = try await connection.call("session/load", ACPProtocol.loadSessionParams(sessionId: resume, cwd: launch.cwd))
                     sessionId = resume
@@ -169,7 +207,7 @@ public final class ChatSessionModel {
             state = .ready
             if let sessionId { onSessionReady(sessionId) }
         } catch {
-            state = .stopped(Self.describe(error))
+            fail(Self.describe(error))
             await connection?.terminate()
         }
     }
@@ -235,6 +273,8 @@ public final class ChatSessionModel {
         items.append(userItem)
         onPersist(userItem)
         state = .running
+        failure = nil
+        isQueueHeld = false
         turnStartedAt = userItem.createdAt
         openTextItem = nil
         turnItems = []
@@ -244,15 +284,16 @@ public final class ChatSessionModel {
                 ACPProtocol.promptParams(sessionId: sessionId, text: text, attachments: promptAttachments)
             )
             flush()
-            if state == .running { state = .ready }
+            endTurn()
         } catch ACPConnectionError.rpc(_, let message) {
             flush()
             appendTurnItem(ChatItem(kind: .error, text: message))
-            if state == .running { state = .ready }
+            holdsQueue = true
+            endTurn()
         } catch {
             flush()
             // stop() or the exit handler may already have set a more precise reason.
-            if state == .running { state = .stopped(Self.describe(error)) }
+            if state == .running { fail(Self.describe(error)) }
         }
         for id in turnItems {
             if let item = items.first(where: { $0.id == id }) { onPersist(item) }
@@ -264,10 +305,47 @@ public final class ChatSessionModel {
     }
 
     public func cancel() async {
+        if state == .running { holdsQueue = true }
         answerPermission(optionId: nil)
         answerQuestion(.cancelled)
         guard let connection, let sessionId else { return }
         try? await connection.notify("session/cancel", ACPProtocol.cancelParams(sessionId: sessionId))
+    }
+
+    /// Keeps a message for when the agent's turn ends.
+    public func enqueue(_ text: String, attachments: [URL] = []) {
+        queue.append(QueuedMessage(id: UUID(), text: text, attachments: attachments))
+    }
+
+    /// Takes a message out of the queue, to delete it or to edit it in the message box.
+    @discardableResult
+    public func removeQueued(id: UUID) -> QueuedMessage? {
+        guard let index = queue.firstIndex(where: { $0.id == id }) else { return nil }
+        return queue.remove(at: index)
+    }
+
+    /// Sends a queued message now, Conductor's "steer": a turn in progress is stopped first, and this message goes
+    /// out as soon as it ends, ahead of the rest of the queue.
+    public func sendQueuedNow(id: UUID) async {
+        guard let message = removeQueued(id: id) else { return }
+        if state == .running {
+            queue.insert(message, at: 0)
+            steers = true
+            await cancel()
+            return
+        }
+        if case .stopped = state { await start() }
+        await send(message.text, attachments: message.attachments)
+    }
+
+    /// The queue's next message, once `send` has finished the turn before it. A message the user sent in between
+    /// goes first; this one waits at the front of the queue.
+    private func sendNextQueued(_ message: QueuedMessage) async {
+        guard state == .ready else {
+            queue.insert(message, at: 0)
+            return
+        }
+        await send(message.text, attachments: message.attachments)
     }
 
     public func answerPermission(optionId: String?) {
@@ -279,7 +357,9 @@ public final class ChatSessionModel {
     public func stop() async {
         answerPermission(optionId: nil)
         answerQuestion(.cancelled)
+        isQueueHeld = !queue.isEmpty
         state = .stopped("Stopped")
+        failure = nil
         await connection?.terminate()
     }
 
@@ -362,6 +442,7 @@ public final class ChatSessionModel {
             questionContinuation?.resume(returning: .cancelled)
             questionContinuation = continuation
             pendingQuestion = request
+            onAttention?(.needsYou)
         }
     }
 
@@ -370,6 +451,7 @@ public final class ChatSessionModel {
             permissionContinuation?.resume(returning: nil)
             permissionContinuation = continuation
             pendingPermission = request
+            onAttention?(.needsYou)
         }
     }
 
@@ -378,7 +460,38 @@ public final class ChatSessionModel {
         answerQuestion(.cancelled)
         connection = nil
         if case .stopped = state { return }
-        state = .stopped(Self.describe(error))
+        fail(Self.describe(error))
+    }
+
+    /// The turn in progress ended with the agent still there.
+    private func endTurn() {
+        guard state == .running else { return }
+        state = .ready
+        let holds = holdsQueue && !steers
+        holdsQueue = false
+        steers = false
+        if !queue.isEmpty {
+            if holds {
+                isQueueHeld = true
+            } else {
+                // The agent goes on with the next message, so there is nothing to report yet. It goes out after
+                // `send` has persisted this turn, which a nested call would interleave with the next one.
+                let next = queue.removeFirst()
+                Task { await sendNextQueued(next) }
+                return
+            }
+        }
+        onAttention?(.finished)
+    }
+
+    /// An error stopped the agent: shown in the message box and as the workspace's error state.
+    private func fail(_ reason: String) {
+        let wasWorking = state == .running
+        state = .stopped(reason)
+        failure = reason
+        isQueueHeld = !queue.isEmpty
+        // An agent that cannot start shows its error where you started it; one that dies mid-turn may be out of sight.
+        if wasWorking { onAttention?(.failed) }
     }
 
     static func describe(_ error: Error) -> String {

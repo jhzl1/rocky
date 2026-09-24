@@ -61,6 +61,19 @@ struct AppModelProcessTests {
         #expect(workspace.baseRef == "main")
     }
 
+    /// ROW-03: a Setup that exits non-zero is the workspace's error state.
+    @Test func failedSetupIsAnError() async throws {
+        let model = try makeModel()
+        let repoId = try await addRepo(model)
+        model.setScripts(repoId: repoId, setup: "exit 3", run: "", archive: "", runMode: .concurrent)
+        await model.createWorkspace(repoId: repoId)
+        let workspace = try #require(model.workspaces[repoId]?.first)
+        let setup = try #require(model.existingProcesses(for: workspace.id)?.setup)
+
+        #expect(await setup.waitForExit() == .exited(3))
+        #expect(model.status(workspaceId: workspace.id) == .failed("Setup exited with 3. See the Setup tab."))
+    }
+
     @Test func rockyJSONInTheWorkspaceWinsOverRepoSettings() async throws {
         let model = try makeModel()
         let repoId = try await addRepo(model, committing: ["rocky.json": #"{"scripts":{"setup":"touch from-json"}}"#])

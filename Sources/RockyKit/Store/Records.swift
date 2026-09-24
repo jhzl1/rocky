@@ -15,6 +15,9 @@ public struct Repo: Codable, Sendable, Equatable, Identifiable, FetchableRecord,
     public var archiveScript: String?
     /// `RunScriptMode` raw value; nil means concurrent.
     public var runScriptMode: String?
+    /// Extra paths or globs `WorktreeLinker` links from the main clone into every new workspace, one per line. Added
+    /// to the `links` of a `rocky.json`, not replaced by them.
+    public var linkedPaths: String?
     public var createdAt: Date
 
     public init(
@@ -26,6 +29,7 @@ public struct Repo: Codable, Sendable, Equatable, Identifiable, FetchableRecord,
         runScript: String? = nil,
         archiveScript: String? = nil,
         runScriptMode: String? = nil,
+        linkedPaths: String? = nil,
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -36,6 +40,7 @@ public struct Repo: Codable, Sendable, Equatable, Identifiable, FetchableRecord,
         self.runScript = runScript
         self.archiveScript = archiveScript
         self.runScriptMode = runScriptMode
+        self.linkedPaths = linkedPaths
         self.createdAt = createdAt
     }
 }

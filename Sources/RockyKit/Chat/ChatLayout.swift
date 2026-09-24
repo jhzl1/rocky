@@ -25,6 +25,18 @@ public enum ChatRow: Identifiable, Equatable, Sendable {
     }
 }
 
+extension ChatRow {
+    /// Which rows enter with an animation (MOT-02): a key that survives regrouping, so a lone tool row that becomes
+    /// an "N tool calls" group keeps it and does not enter again, while `id` changes. A turn's footer has its own.
+    public var entranceKey: String {
+        switch self {
+        case .item(let item): item.id.uuidString
+        case .tools(let tools): tools.first?.id.uuidString ?? ""
+        case .turnFooter(let summary): "footer-\(summary.id.uuidString)"
+        }
+    }
+}
+
 public enum ChatLayout {
     /// Two or more tool calls in a row fold into one `.tools` row; a lone tool call stays an `.item`.
     /// Every turn whose user message has `completedAt` ends with a `.turnFooter`.

@@ -73,7 +73,28 @@ public final class WorkspaceProcesses {
 public final class AppModel {
     public private(set) var repos: [Repo] = []
     public private(set) var workspaces: [String: [Workspace]] = [:]
-    public var selectedWorkspaceId: String?
+    public var selectedWorkspaceId: String? {
+        didSet {
+            // Seeing a workspace reads what finished there (ROW-04).
+            if let selectedWorkspaceId, isWindowActive { unreadWorkspaceIds.remove(selectedWorkspaceId) }
+            // Opened again at the next launch (user decision, 2026-09-23).
+            defaults.set(selectedWorkspaceId, forKey: Self.lastWorkspaceKey)
+        }
+    }
+    /// Workspaces where a turn ended or failed while the user was not watching them: another workspace was selected,
+    /// or Rocky's window was in the background (ROW-04). In memory only (user decision).
+    public private(set) var unreadWorkspaceIds: Set<String> = []
+    /// Whether Rocky's window is active; set by the window. Coming back to it reads the selected workspace.
+    public var isWindowActive = true {
+        didSet {
+            if isWindowActive, let selectedWorkspaceId { unreadWorkspaceIds.remove(selectedWorkspaceId) }
+        }
+    }
+    /// Plays the alert sound; set by the app. Called only for what the user is not watching (user decision,
+    /// 2026-09-23: a sound and the Dock's number, no system notification).
+    @ObservationIgnored public var onAlert: (@MainActor (ChatAttention) -> Void)?
+    /// Each workspace's task title (ROW-02), from `RockyStore.conversationTitles()`.
+    public private(set) var workspaceTitles: [String: String] = [:]
     public var errorMessage: String?
     public var archiveFailure: ArchiveFailure?
     public private(set) var busyMessage: String?
@@ -105,7 +126,15 @@ public final class AppModel {
     /// Each workspace's open conversations, oldest first: its tabs.
     public private(set) var conversations: [String: [ChatSessionRecord]] = [:]
     /// The conversation each workspace shows.
-    public private(set) var selectedConversationIds: [String: String] = [:]
+    /// Kept across launches with the selected workspace, so Rocky reopens the last session.
+    public private(set) var selectedConversationIds: [String: String] = [:] {
+        didSet { defaults.set(selectedConversationIds, forKey: Self.lastConversationsKey) }
+    }
+    /// The first read of the login shell's environment, at launch. The last session's workspace is selected before it
+    /// ends, so the window shows it at once; its agents wait for this, or they would start without the user's PATH.
+    @ObservationIgnored private var launchEnvironment: Task<Void, Never>?
+    private static let lastWorkspaceKey = "lastWorkspaceId"
+    private static let lastConversationsKey = "lastConversationIds"
     /// Files opened in tabs next to the conversations (from a file badge), by workspace. Kept only while Rocky runs.
     public private(set) var openFiles: [String: [String]] = [:]
     /// The file tab each workspace shows instead of its conversation; none shows the selected conversation.
@@ -139,6 +168,7 @@ public final class AppModel {
         self.latestVersion = latestVersion
         self.defaults = defaults
         self.lastAgentCheck = defaults.object(forKey: Self.lastAgentCheckKey) as? Date
+        self.selectedConversationIds = defaults.dictionary(forKey: Self.lastConversationsKey) as? [String: String] ?? [:]
         self.secrets = secrets
         self.terminalShell = terminalShell
         self.processStopGracePeriod = processStopGracePeriod
@@ -166,6 +196,55 @@ public final class AppModel {
         chats.contains { chatWorkspaceIds[$0.key] == workspaceId && $0.value.state == .running }
     }
 
+    /// The workspace's sidebar state (ROW-03): needs you › error › working › unread › idle.
+    public func status(workspaceId: String) -> WorkspaceStatus {
+        let own = chats.filter { chatWorkspaceIds[$0.key] == workspaceId }.map(\.value)
+        return WorkspaceStatus.resolve(
+            needsYou: own.contains { $0.pendingPermission != nil || $0.pendingQuestion != nil },
+            failure: own.lazy.compactMap(\.failure).first ?? setupFailure(workspaceId: workspaceId),
+            working: own.contains { $0.state == .running },
+            unread: unreadWorkspaceIds.contains(workspaceId)
+        )
+    }
+
+    /// The row's title: the task title, or the workspace name (drawn dimmer) until a conversation has one (ROW-02).
+    public func title(for workspace: Workspace) -> (text: String, isFallback: Bool) {
+        if let title = workspaceTitles[workspace.id] { return (title, false) }
+        return (workspace.name, true)
+    }
+
+    private func setupFailure(workspaceId: String) -> String? {
+        guard let setup = processes[workspaceId]?.setup, !setup.stopRequested else { return nil }
+        return switch setup.state {
+        case .exited(let code) where code != 0: "Setup exited with \(code). See the Setup tab."
+        case .failedToStart: "Setup could not start. See the Setup tab."
+        default: nil
+        }
+    }
+
+    /// The Dock's number: workspaces with something unread or an agent waiting for you, except the one on screen.
+    public var attentionCount: Int {
+        let waiting = chats.compactMap { id, chat in
+            chat.pendingPermission != nil || chat.pendingQuestion != nil ? chatWorkspaceIds[id] : nil
+        }
+        var workspaceIds = unreadWorkspaceIds.union(waiting)
+        if isWindowActive, let selectedWorkspaceId { workspaceIds.remove(selectedWorkspaceId) }
+        return workspaceIds.count
+    }
+
+    /// A conversation's news reaches the user only when they are not watching its workspace: another one is
+    /// selected, or the window is in the background. A turn that ended or failed also marks it unread (ROW-04).
+    private func attention(_ kind: ChatAttention, workspaceId: String) {
+        let isWatching = isWindowActive && selectedWorkspaceId == workspaceId
+        guard !isWatching else { return }
+        if kind != .needsYou { unreadWorkspaceIds.insert(workspaceId) }
+        onAlert?(kind)
+    }
+
+    private func refreshWorkspaceTitles() {
+        if let titles = try? store.conversationTitles() { workspaceTitles = titles }
+    }
+
     public func workspace(id: String) -> Workspace? {
         workspaces.values.joined().first { $0.id == id }
     }
@@ -178,7 +257,13 @@ public final class AppModel {
     /// Loads persisted state and captures the login environment once (spec Section 1).
     public func bootstrap() async {
         reload()
-        await refreshEnvironment()
+        let environment = Task { await refreshEnvironment() }
+        launchEnvironment = environment
+        // The last session: the workspace that was on screen, which shows its last conversation.
+        if selectedWorkspaceId == nil, let last = defaults.string(forKey: Self.lastWorkspaceKey), workspace(id: last) != nil {
+            selectedWorkspaceId = last
+        }
+        await environment.value
         refreshInstalledAgentVersions()
         // Once a day at most: one HTTPS request per agent, no timer.
         Task { await checkAgentUpdates() }
@@ -239,6 +324,20 @@ public final class AppModel {
         repo.runScript = ScriptConfigResolver.clean(run)
         repo.archiveScript = ScriptConfigResolver.clean(archive)
         repo.runScriptMode = runMode.rawValue
+        do {
+            try store.update(repo)
+            reload()
+        } catch {
+            errorMessage = "\(error)"
+        }
+    }
+
+    /// Saves the paths or globs, one per line, that new workspaces of the repo get linked from the main clone on top
+    /// of the environment files `WorktreeLinker` finds on its own. Stored one clean entry per line; blank is none.
+    public func setLinkedPaths(repoId: String, _ text: String) {
+        guard var repo = repo(id: repoId) else { return }
+        let entries = ScriptConfigResolver.linkEntries(text)
+        repo.linkedPaths = entries.isEmpty ? nil : entries.joined(separator: "\n")
         do {
             try store.update(repo)
             reload()
@@ -334,18 +433,57 @@ public final class AppModel {
             if created.fetchFailed {
                 errorMessage = "git fetch failed; \(created.name) was created from the last fetched \(created.baseRef)."
             }
-            // Setup runs once, right after the worktree exists (spec Section 3). A failure shows in its tab and
-            // leaves the workspace usable.
+            // rocky.json is read from the new worktree. When it is invalid, Setup does not run and the links come
+            // from the repo settings alone.
+            var config: ScriptConfig?
             do {
-                if let setup = try scriptConfig(for: workspace).setup {
-                    processesCreatingIfNeeded(for: workspace.id).setup = startScript(setup, title: "Setup", in: workspace)
-                }
+                config = try scriptConfig(for: workspace)
             } catch {
                 errorMessage = "\(error)"
+            }
+            // Before Setup, which may read the environment files (a migration reading DATABASE_URL from .env).
+            await linkMainCloneFiles(
+                into: workspace,
+                repo: repo,
+                extraEntries: config?.links ?? ScriptConfigResolver.linkEntries(repo.linkedPaths)
+            )
+            // Setup runs once, right after the worktree exists (spec Section 3). A failure shows in its tab and
+            // leaves the workspace usable.
+            if let setup = config?.setup {
+                processesCreatingIfNeeded(for: workspace.id).setup = startScript(setup, title: "Setup", in: workspace)
             }
         } catch {
             errorMessage = "Could not create a workspace: \(error)"
         }
+    }
+
+    /// Symlinks the main clone's environment files and `extraEntries` into a new workspace (see `WorktreeLinker`).
+    /// A problem is added to `errorMessage` and never stops the workspace or its Setup.
+    ///
+    /// `git worktree add` has already run the repo's post-checkout hook, and a repo whose hook runs its own
+    /// setup-worktree script (veritas, celes-platform) has these links by now. The linker leaves every existing
+    /// destination alone, so either one may run first.
+    private func linkMainCloneFiles(into workspace: Workspace, repo: Repo, extraEntries: [String]) async {
+        let linker = WorktreeLinker(environment: loginEnvironment)
+        let mainClone = URL(fileURLWithPath: repo.path)
+        let worktree = URL(fileURLWithPath: workspace.path)
+        let problem: String?
+        do {
+            let result = try await Task.detached {
+                try linker.link(mainClone: mainClone, into: worktree, extraEntries: extraEntries)
+            }.value
+            problem = result.rejected.isEmpty ? nil : Self.rejectedLinksMessage(result.rejected, workspaceName: workspace.name)
+        } catch {
+            problem = "Could not link the main folder's environment files into \(workspace.name): \(error)"
+        }
+        guard let problem else { return }
+        // An earlier problem of the same creation, such as a failed fetch, stays in the message.
+        errorMessage = [errorMessage, problem].compactMap { $0 }.joined(separator: " ")
+    }
+
+    static func rejectedLinksMessage(_ rejected: [String], workspaceName: String) -> String {
+        let list = rejected.map { "\"\($0)\"" }.joined(separator: ", ")
+        return "Rocky did not link \(list) into \(workspaceName): linked files must be paths inside the main folder."
     }
 
     /// Stops the workspace's agent, scripts and terminals, runs its archive script, then removes the worktree
@@ -508,6 +646,7 @@ public final class AppModel {
 
     @discardableResult
     private func makeChat(workspace: Workspace, record: ChatSessionRecord, agent: AgentKind) async throws -> ChatSessionModel {
+        await launchEnvironment?.value
         let current = self.workspace(id: workspace.id) ?? workspace
         let environment = self.environment(for: current)
         let launch = try await resolveLaunch(agent, cwd: URL(fileURLWithPath: current.path), environment: environment)
@@ -531,6 +670,7 @@ public final class AppModel {
                 try? store.update(stored)
             }
         )
+        chat.onAttention = { [weak self] kind in self?.attention(kind, workspaceId: workspaceId) }
         chats[conversationId] = chat
         chatWorkspaceIds[conversationId] = workspaceId
         return chat
@@ -552,6 +692,7 @@ public final class AppModel {
             try? store.update(open[index])
         }
         conversations[workspaceId] = open
+        refreshWorkspaceTitles()
     }
 
     private func stopChat(conversationId: String) async {
@@ -721,6 +862,27 @@ public final class AppModel {
         }
     }
 
+    // MARK: Keyboard
+
+    /// The workspaces the sidebar lists, top to bottom, leaving out folded repositories and search misses (KBD-01).
+    /// ⌘1…⌘9 pick from it. The sidebar keeps it current; while the sidebar is hidden it keeps the last order shown.
+    public var visibleWorkspaceIds: [String] = []
+    /// Set by ⌘K (KBD-01). The sidebar shows itself, focuses its search field and sets it back to false.
+    public var isSearchFocusRequested = false
+
+    /// Where ⌘N creates a workspace (KBD-01): the selected workspace's repository, else the first one; nil, which
+    /// disables ⌘N, without repositories.
+    public var newWorkspaceRepoId: String? {
+        selectedWorkspace?.repoId ?? repos.first?.id
+    }
+
+    /// ⌘1…⌘9: selects the workspace at `number` (from 1) in `visibleWorkspaceIds`, if there is one.
+    public func selectVisibleWorkspace(number: Int) {
+        let index = number - 1
+        guard visibleWorkspaceIds.indices.contains(index) else { return }
+        selectedWorkspaceId = visibleWorkspaceIds[index]
+    }
+
     // MARK: Agent updates
 
     /// Reads which versions of the agents are installed (package.json files, no process).
@@ -787,6 +949,7 @@ public final class AppModel {
             var byRepo: [String: [Workspace]] = [:]
             for repo in repos { byRepo[repo.id] = try store.workspaces(repoId: repo.id) }
             workspaces = byRepo
+            refreshWorkspaceTitles()
         } catch {
             errorMessage = "\(error)"
         }

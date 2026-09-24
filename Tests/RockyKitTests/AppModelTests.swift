@@ -20,7 +20,8 @@ struct AppModelTests {
     private func makeModel(
         store: RockyStore? = nil,
         capture: @escaping @Sendable () throws -> [String: String] = { GitFixture.environment },
-        launches: LaunchBox = LaunchBox()
+        launches: LaunchBox = LaunchBox(),
+        defaults: UserDefaults? = nil
     ) throws -> AppModel {
         let root = try Fixtures.temporaryDirectory("app")
         let paths = RockyPaths(database: root.appendingPathComponent("rocky.sqlite"), adapterPrefix: root.appendingPathComponent("agents"), logs: root)
@@ -35,7 +36,7 @@ struct AppModelTests {
             },
             installAdapter: { _, _, _, _ in },
             latestVersion: { _ in "0.0.0" },
-            defaults: UserDefaults(suiteName: "rocky-tests-\(UUID().uuidString)")!
+            defaults: defaults ?? UserDefaults(suiteName: "rocky-tests-\(UUID().uuidString)")!
         )
     }
 
@@ -151,6 +152,119 @@ struct AppModelTests {
         try await answerNextPermission(chat)
         await sending
         return (model, workspace, chat)
+    }
+
+    /// ROW-04: a turn that ends in a workspace you are not looking at marks it unread; selecting it clears it.
+    @Test func turnEndingInAnotherWorkspaceMarksItUnread() async throws {
+        let model = try makeModel()
+        await model.bootstrap()
+        let repo = try GitFixture.localRepo(in: try Fixtures.temporaryDirectory("repos"))
+        await model.addRepo(at: repo)
+        let repoId = try #require(model.repos.first?.id)
+        await model.createWorkspace(repoId: repoId)
+        let workspace = try #require(model.workspaces[repoId]?.first)
+        let chat = try #require(await model.openChat(workspace: workspace, agent: .claude))
+        model.selectedWorkspaceId = nil
+
+        async let sending: Void = chat.send("hi")
+        try await answerNextPermission(chat)
+        await sending
+        #expect(model.unreadWorkspaceIds == [workspace.id])
+        #expect(model.status(workspaceId: workspace.id) == .unread)
+
+        model.selectedWorkspaceId = workspace.id
+        #expect(model.unreadWorkspaceIds.isEmpty)
+        #expect(model.status(workspaceId: workspace.id) == .idle)
+        await model.stopAllAgents()
+    }
+
+    /// The last session opens again: the workspace that was on screen, showing the conversation it showed.
+    @Test func reopensTheLastWorkspaceAndConversation() async throws {
+        let store = try RockyStore.inMemory()
+        let defaults = try #require(UserDefaults(suiteName: "rocky-tests-\(UUID().uuidString)"))
+        let model = try makeModel(store: store, defaults: defaults)
+        await model.bootstrap()
+        let repo = try GitFixture.localRepo(in: try Fixtures.temporaryDirectory("repos"))
+        await model.addRepo(at: repo)
+        let repoId = try #require(model.repos.first?.id)
+        await model.createWorkspace(repoId: repoId)
+        let workspace = try #require(model.workspaces[repoId]?.first)
+        await model.showConversations(workspace: workspace)
+        let first = try #require(model.selectedConversationIds[workspace.id])
+        _ = await model.newConversation(workspace: workspace, agent: .claude)
+        await model.showConversation(workspace: workspace, conversationId: first)
+        await model.stopAllAgents()
+
+        let reopened = try makeModel(store: store, defaults: defaults)
+        await reopened.bootstrap()
+        #expect(reopened.selectedWorkspaceId == workspace.id)
+        await reopened.showConversations(workspace: workspace)
+        #expect(reopened.selectedConversationIds[workspace.id] == first)
+        await reopened.stopAllAgents()
+    }
+
+    @Test func turnEndingInTheSelectedWorkspaceMarksNothing() async throws {
+        let store = try RockyStore.inMemory()
+        let (model, workspace, _) = try await workspaceWithAConversation(store: store)
+        #expect(model.selectedWorkspaceId == workspace.id)
+        #expect(model.unreadWorkspaceIds.isEmpty)
+        await model.stopAllAgents()
+    }
+
+    /// ROW-04: with Rocky in the background, even the selected workspace is not being watched.
+    @Test func turnEndingWhileRockyIsInTheBackgroundMarksTheSelectedWorkspaceUnread() async throws {
+        let store = try RockyStore.inMemory()
+        let (model, workspace, chat) = try await workspaceWithAConversation(store: store)
+        model.isWindowActive = false
+        async let sending: Void = chat.send("again")
+        try await answerNextPermission(chat)
+        await sending
+        #expect(model.unreadWorkspaceIds == [workspace.id])
+        #expect(model.attentionCount == 1)
+
+        model.isWindowActive = true
+        #expect(model.unreadWorkspaceIds.isEmpty)
+        #expect(model.attentionCount == 0)
+        await model.stopAllAgents()
+    }
+
+    /// The alert sound plays only for what the user is not watching (user decision, 2026-09-23).
+    @Test func alertsOnlyForAWorkspaceTheUserIsNotWatching() async throws {
+        let store = try RockyStore.inMemory()
+        let (model, _, chat) = try await workspaceWithAConversation(store: store)
+        var alerts: [ChatAttention] = []
+        model.onAlert = { alerts.append($0) }
+
+        async let watched: Void = chat.send("watched")
+        try await answerNextPermission(chat)
+        await watched
+        #expect(alerts.isEmpty)
+
+        model.selectedWorkspaceId = nil
+        async let unwatched: Void = chat.send("unwatched")
+        try await answerNextPermission(chat)
+        await unwatched
+        #expect(alerts == [.needsYou, .finished])
+        await model.stopAllAgents()
+    }
+
+    /// ROW-02: the task title of the oldest open titled conversation, else the workspace name, dimmer.
+    @Test func titleFallsBackToTheWorkspaceName() async throws {
+        let model = try makeModel()
+        await model.bootstrap()
+        let repo = try GitFixture.localRepo(in: try Fixtures.temporaryDirectory("repos"))
+        await model.addRepo(at: repo)
+        let repoId = try #require(model.repos.first?.id)
+        await model.createWorkspace(repoId: repoId)
+        let workspace = try #require(model.workspaces[repoId]?.first)
+        #expect(model.title(for: workspace) == (workspace.name, true))
+
+        let chat = try #require(await model.openChat(workspace: workspace, agent: .claude))
+        async let sending: Void = chat.send("Fix invoice rounding")
+        try await answerNextPermission(chat)
+        await sending
+        #expect(model.title(for: workspace) == ("Fix invoice rounding", false))
+        await model.stopAllAgents()
     }
 
     @Test func reopeningShowsTheLastConversationTitledByItsFirstMessage() async throws {

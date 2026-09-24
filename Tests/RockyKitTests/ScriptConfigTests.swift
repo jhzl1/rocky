@@ -47,6 +47,18 @@ struct ScriptConfigTests {
         #expect(config == ScriptConfig(setup: "make deps", run: nil, archive: nil, runMode: .nonconcurrent, source: .repoSettings))
     }
 
+    /// Links add up instead of replacing: the repo setting's first, then the file's, each once.
+    @Test func linksAreTheRepoSettingsAndTheFilesTogether() throws {
+        let repo = Repo(name: "app", path: "/r/app", linkedPaths: ".venv\n  \n.vscode/*\n")
+        let withFile = try ScriptConfigResolver.resolve(
+            workspace: try workspace(rockyJSON: #"{"links":[".vscode/*", " apps/api-core/celes-platform-*.json ", ""]}"#),
+            repo: repo
+        )
+        #expect(withFile.links == [".venv", ".vscode/*", "apps/api-core/celes-platform-*.json"])
+        let withoutFile = try ScriptConfigResolver.resolve(workspace: try workspace(rockyJSON: nil), repo: repo)
+        #expect(withoutFile.links == [".venv", ".vscode/*"])
+    }
+
     @Test func rejectsInvalidJSON() throws {
         let url = try workspace(rockyJSON: "{ not json")
         #expect(throws: ScriptConfigError.self) {

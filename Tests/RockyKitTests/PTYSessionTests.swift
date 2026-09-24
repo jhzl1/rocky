@@ -49,6 +49,21 @@ struct PTYSessionTests {
         #expect(String(decoding: first, as: UTF8.self).contains("late output"))
     }
 
+    /// TERM-03: what Rocky stopped reads "stopped", even when the script catches the signal and exits with a code.
+    @Test func stopRecordsThatRockyAskedForIt() async throws {
+        let caught = session("trap 'exit 143' TERM; while true; do sleep 0.1; done")
+        caught.start()
+        try await Task.sleep(for: .milliseconds(200))
+        await caught.stop()
+        #expect(caught.stopRequested)
+        #expect(caught.state == .exited(143))
+
+        let finished = session("exit 0")
+        finished.start()
+        _ = await finished.waitForExit()
+        #expect(!finished.stopRequested)
+    }
+
     @Test func runsAScriptAndReportsItsExitCode() async throws {
         let pty = session("printf 'hi from pty'; exit 3")
         pty.start()

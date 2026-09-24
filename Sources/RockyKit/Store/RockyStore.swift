@@ -102,6 +102,11 @@ public final class RockyStore: Sendable {
                 t.add(column: "toolKind", .text)
             }
         }
+        migrator.registerMigration("v6") { db in
+            try db.alter(table: "repo") { t in
+                t.add(column: "linkedPaths", .text)
+            }
+        }
         return migrator
     }
 
@@ -202,6 +207,22 @@ public final class RockyStore: Sendable {
     }
 
     /// The workspace's conversations whose tab is open, oldest first.
+    /// Each workspace's task title for the sidebar (ROW-02): the title of its oldest open conversation that has one.
+    public func conversationTitles() throws -> [String: String] {
+        try db.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: "SELECT workspaceId, title FROM chatSession WHERE closedAt IS NULL AND title IS NOT NULL ORDER BY createdAt, rowid"
+            )
+            var titles: [String: String] = [:]
+            for row in rows {
+                let workspaceId: String = row["workspaceId"]
+                if titles[workspaceId] == nil { titles[workspaceId] = row["title"] }
+            }
+            return titles
+        }
+    }
+
     public func openConversations(workspaceId: String) throws -> [ChatSessionRecord] {
         try db.read {
             try ChatSessionRecord

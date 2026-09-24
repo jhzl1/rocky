@@ -59,6 +59,9 @@ public final class PTYSession: Identifiable {
     public let title: String
     public let command: PTYCommand
     public private(set) var state: PTYState = .running
+    /// Rocky asked it to stop (Stop, closing the tab, removing the workspace): however it then ends, by the signal or
+    /// with a code from a script that caught it, the panel says "stopped", not "failed" (TERM-03).
+    public private(set) var stopRequested = false
 
     @ObservationIgnored public private(set) var output: [UInt8] = []
     @ObservationIgnored private let stopSignal: Int32
@@ -149,6 +152,7 @@ public final class PTYSession: Identifiable {
     /// reported and the child never reaped.
     public func stop() async {
         guard state.isRunning, pid > 0 else { return }
+        stopRequested = true
         // forkpty makes the child a session leader, so its pid is also its process group id.
         let group = -pid
         kill(group, stopSignal)

@@ -14,6 +14,15 @@ struct RockyStoreTests {
         #expect(try store.repos() == [repo])
     }
 
+    @Test func keepsARepoLinkedPaths() throws {
+        let store = try RockyStore.inMemory()
+        var repo = Repo(name: "app", path: "/dev/app", createdAt: day)
+        try store.add(repo)
+        repo.linkedPaths = "apps/api-core/.venv\n.vscode/*"
+        try store.update(repo)
+        #expect(try store.repos().first?.linkedPaths == "apps/api-core/.venv\n.vscode/*")
+    }
+
     @Test func rejectsTheSameRepoPathTwice() throws {
         let store = try RockyStore.inMemory()
         try store.add(Repo(name: "app", path: "/dev/app"))
@@ -84,6 +93,25 @@ struct RockyStoreTests {
         let messages = try store.messages(sessionId: session.id)
         #expect(messages.map(\.attachments) == [["/tmp/shot.png"], ["/tmp/shot.png"]])
         #expect(messages.map(\.toolKind) == [nil, "read"])
+    }
+
+    /// ROW-02: the oldest open conversation that has a title; closed and untitled ones are ignored.
+    @Test func conversationTitlesPickTheOldestOpenTitledConversation() throws {
+        let store = try RockyStore.inMemory()
+        let repo = Repo(name: "app", path: "/dev/app")
+        try store.add(repo)
+        let workspace = Workspace(repoId: repo.id, name: "lisbon", path: "/p", branch: "b")
+        let other = Workspace(repoId: repo.id, name: "oslo", path: "/q", branch: "c")
+        try store.add(workspace)
+        try store.add(other)
+        let day = Date(timeIntervalSince1970: 1_000_000)
+        try store.add(ChatSessionRecord(workspaceId: workspace.id, agent: "claude", title: "Closed first", closedAt: day, createdAt: day))
+        try store.add(ChatSessionRecord(workspaceId: workspace.id, agent: "claude", title: nil, createdAt: day.addingTimeInterval(10)))
+        try store.add(ChatSessionRecord(workspaceId: workspace.id, agent: "claude", title: "Fix invoice rounding", createdAt: day.addingTimeInterval(20)))
+        try store.add(ChatSessionRecord(workspaceId: workspace.id, agent: "opencode", title: "Later task", createdAt: day.addingTimeInterval(30)))
+        try store.add(ChatSessionRecord(workspaceId: other.id, agent: "claude", title: nil, createdAt: day))
+
+        #expect(try store.conversationTitles() == [workspace.id: "Fix invoice rounding"])
     }
 
     @Test func aTabTitleLeavesTheFilesOut() {

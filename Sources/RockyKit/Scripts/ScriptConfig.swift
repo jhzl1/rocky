@@ -21,6 +21,8 @@ public struct ScriptConfig: Equatable, Sendable {
     public var archive: String?
     public var runMode: RunScriptMode
     public var source: Source
+    /// Extra paths or globs `WorktreeLinker` links into a new workspace: the repo setting's, then rocky.json's.
+    public var links: [String] = []
 }
 
 public enum ScriptConfigError: Error, Equatable, CustomStringConvertible {
@@ -37,7 +39,9 @@ public enum ScriptConfigError: Error, Equatable, CustomStringConvertible {
 /// repo settings in Rocky. The file replaces all of the settings, even for keys it lacks:
 ///
 ///     { "scripts": { "setup": "pnpm install", "run": "pnpm dev --port $PORT", "archive": "…" },
-///       "runScriptMode": "concurrent" }
+///       "runScriptMode": "concurrent", "links": [".venv", ".vscode/*"] }
+///
+/// Links are the exception: each entry only adds a file to link, so the repo setting's and the file's add up.
 ///
 /// Same shape as Conductor's conductor.json, which Rocky no longer reads (user decision, 2026-09-23).
 public enum ScriptConfigResolver {
@@ -52,19 +56,32 @@ public enum ScriptConfigResolver {
 
         var scripts: Scripts?
         var runScriptMode: String?
+        var links: [String]?
     }
 
     public static func resolve(workspace: URL, repo: Repo) throws -> ScriptConfig {
+        let repoLinks = linkEntries(repo.linkedPaths)
         if let data = FileManager.default.contents(atPath: workspace.appendingPathComponent(fileName).path) {
-            return try parse(data)
+            var config = try parse(data)
+            var seen: Set<String> = []
+            config.links = (repoLinks + config.links).filter { seen.insert($0).inserted }
+            return config
         }
         return ScriptConfig(
             setup: clean(repo.setupScript),
             run: clean(repo.runScript),
             archive: clean(repo.archiveScript),
             runMode: RunScriptMode(rawValue: repo.runScriptMode ?? "") ?? .concurrent,
-            source: .repoSettings
+            source: .repoSettings,
+            links: repoLinks
         )
+    }
+
+    /// The entries of `Repo.linkedPaths`: one per line, trimmed, blank lines dropped.
+    public static func linkEntries(_ text: String?) -> [String] {
+        (text ?? "").split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
     }
 
     /// A blank script is no script.
@@ -92,7 +109,8 @@ public enum ScriptConfigResolver {
             run: clean(file.scripts?.run),
             archive: clean(file.scripts?.archive),
             runMode: runMode,
-            source: .rockyJSON
+            source: .rockyJSON,
+            links: (file.links ?? []).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         )
     }
 

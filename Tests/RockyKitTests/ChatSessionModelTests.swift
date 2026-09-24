@@ -187,6 +187,67 @@ struct ChatSessionModelTests {
         await model.stop()
     }
 
+    @Test func aQueuedMessageGoesOutWhenTheTurnEnds() async throws {
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(), flushInterval: .zero)
+        var reported: [ChatAttention] = []
+        model.onAttention = { reported.append($0) }
+        await model.start()
+        async let sending: Void = model.send("first")
+        try await waitForPermission(model)
+        model.enqueue("second")
+        model.answerPermission(optionId: "allow")
+        await sending
+        #expect(model.queue.isEmpty)
+        try await waitForPermission(model)
+        #expect(model.items.filter { $0.kind == .user }.map(\.text) == ["first", "second"])
+        model.answerPermission(optionId: "allow")
+        for _ in 0..<500 where model.state != .ready { try await Task.sleep(for: .milliseconds(10)) }
+        // The first turn did not report finishing: the agent went on with the queued message.
+        #expect(reported == [.needsYou, .needsYou, .finished])
+        await model.stop()
+    }
+
+    @Test func stoppingTheTurnHoldsTheQueue() async throws {
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(), flushInterval: .zero)
+        await model.start()
+        async let sending: Void = model.send("first")
+        try await waitForPermission(model)
+        model.enqueue("second")
+        await model.cancel()
+        await sending
+        #expect(model.state == .ready)
+        #expect(model.queue.map(\.text) == ["second"])
+        #expect(model.isQueueHeld)
+        #expect(model.items.filter { $0.kind == .user }.map(\.text) == ["first"])
+        await model.stop()
+    }
+
+    @Test func sendQueuedNowStopsTheTurnAndSendsIt() async throws {
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(), flushInterval: .zero)
+        await model.start()
+        async let sending: Void = model.send("first")
+        try await waitForPermission(model)
+        model.enqueue("second")
+        model.enqueue("third")
+        let third = try #require(model.queue.last)
+        await model.sendQueuedNow(id: third.id)
+        await sending
+        try await waitForPermission(model)
+        #expect(model.items.filter { $0.kind == .user }.map(\.text) == ["first", "third"])
+        #expect(model.queue.map(\.text) == ["second"])
+        #expect(!model.isQueueHeld)
+        await model.stop()
+    }
+
+    @Test func aConversationWithNoMessageStartsANewSessionWithoutAnError() async {
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(loadFails: true), history: [], resumeSessionId: "never-prompted", flushInterval: .zero)
+        await model.start()
+        #expect(model.state == .ready)
+        #expect(model.sessionId == "fake-1")
+        #expect(model.items.isEmpty)
+        await model.stop()
+    }
+
     @Test func agentThatExitsDuringStartStopsWithReason() async {
         let launch = AgentLaunch(
             executable: URL(fileURLWithPath: "/bin/bash"),
@@ -198,6 +259,41 @@ struct ChatSessionModelTests {
         let model = ChatSessionModel(agent: .claude, launch: launch, flushInterval: .zero)
         await model.start()
         #expect(model.state == .stopped("Agent exited (3). Authentication required"))
+    }
+
+    @Test func agentExitSetsFailure() async {
+        let launch = AgentLaunch(
+            executable: URL(fileURLWithPath: "/bin/bash"),
+            arguments: ["-c", "read -r line; echo 'Authentication required' >&2; exit 3"],
+            environment: ProcessInfo.processInfo.environment,
+            cwd: FileManager.default.temporaryDirectory,
+            stderrLog: Fixtures.stderrLog()
+        )
+        let model = ChatSessionModel(agent: .claude, launch: launch, flushInterval: .zero)
+        await model.start()
+        #expect(model.failure == "Agent exited (3). Authentication required")
+    }
+
+    /// An explicit stop also ends in `.stopped`, but it is not the sidebar's error state.
+    @Test func explicitStopIsNotAFailure() async {
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(), flushInterval: .zero)
+        await model.start()
+        await model.stop()
+        #expect(model.state == .stopped("Stopped"))
+        #expect(model.failure == nil)
+    }
+
+    @Test func aTurnReportsItsPermissionRequestAndItsEnd() async throws {
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(), flushInterval: .zero)
+        var reported: [ChatAttention] = []
+        model.onAttention = { reported.append($0) }
+        await model.start()
+        async let sending: Void = model.send("hi")
+        try await waitForPermission(model)
+        model.answerPermission(optionId: "allow")
+        await sending
+        #expect(reported == [.needsYou, .finished])
+        await model.stop()
     }
 
     @Test func stopWhileWaitingForPermissionUnblocksTheTurn() async throws {
