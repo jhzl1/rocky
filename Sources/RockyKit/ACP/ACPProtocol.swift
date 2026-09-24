@@ -83,6 +83,8 @@ public enum SessionEvent: Sendable, Equatable {
     /// The agent changed its settings by itself, for example leaving plan mode once the plan is approved.
     case configOptions([SessionConfigOption])
     case currentMode(String)
+    /// The agent's whole command list (ACP-01): it replaces the previous one, never adds to it.
+    case availableCommands([SlashCommand])
     case ignored(String)
 }
 
@@ -237,8 +239,30 @@ public enum ACPProtocol {
         case "current_mode_update":
             guard let mode = update["currentModeId"]?.stringValue else { return .ignored(kind) }
             return .currentMode(mode)
+        case availableCommandsUpdate:
+            return .availableCommands(commands(from: update["availableCommands"]))
         default:
             return .ignored(kind)
+        }
+    }
+
+    /// The `sessionUpdate` kind that carries the agent's commands.
+    public static let availableCommandsUpdate = "available_commands_update"
+
+    /// Reads an `availableCommands` list (KIT-01): an entry without a name is dropped, a missing description is
+    /// empty, and an `input` that is null, missing or has no hint gives no hint. The order is kept, `_meta` is
+    /// ignored. A name announced twice keeps its first entry, since the popup identifies rows by name.
+    public static func commands(from list: JSONValue?) -> [SlashCommand] {
+        var seen: Set<String> = []
+        return (list?.arrayValue ?? []).compactMap { entry -> SlashCommand? in
+            guard let name = entry["name"]?.stringValue, !name.isEmpty, seen.insert(name).inserted else { return nil }
+            let hint = entry["input"]?["hint"]?.stringValue
+            return SlashCommand(
+                name: name,
+                description: entry["description"]?.stringValue ?? "",
+                // A blank hint would complete the command instead of running it, with nothing to show.
+                inputHint: hint?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? hint : nil
+            )
         }
     }
 

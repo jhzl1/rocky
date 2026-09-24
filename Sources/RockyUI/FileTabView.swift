@@ -108,7 +108,8 @@ struct FileTabView: View {
         default: return nil
         }
         let limit = maxTextBytes
-        return await Task.detached {
+        // Off the cooperative pool (`Task.blocking`): file reads block, and a starved pool stops terminal output.
+        return await Task.blocking {
             let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int) ?? 0
             guard size <= limit, let data = FileManager.default.contents(atPath: path) else { return nil }
             return String(data: data, encoding: .utf8)

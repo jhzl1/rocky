@@ -86,7 +86,7 @@ tab is shown, so its settings are ready without a click. Hidden tabs start nothi
   agent replaying recorded JSON-RPC; energy script reading `CurrentPowerlog.PLSQL` over 30 min.
 
 ## Milestones (each gets its own implementation plan)
-Status as of 2026-09-24. **Done** means merged into `development`; each plan's first lines say the same.
+Status as of 2026-09-24 (after M2.7's merge). **Done** means merged into `development`; each plan's first lines say the same.
 
 | # | What | Done when | Status |
 | --- | --- | --- | --- |
@@ -95,7 +95,7 @@ Status as of 2026-09-24. **Done** means merged into `development`; each plan's f
 | M2 | Terminal, scripts, env | terminal tabs, setup/run/archive, repo vars | **Done** 2026-09-23; manual checklist still open (`m2-verification.md`) |
 | M2.5 | Visual design | a design spec (palette, type, icons, loading states, motion) applied across the app; replaces `Sources/RockyUI/Theme.swift`'s interim colors (added 2026-09-23) | **Done** 2026-09-23; manual checklist still open (`m2.5-verification.md`) |
 | M2.6 | Slash commands | the agent's commands in the message box; terminal-only ones in an embedded terminal (added 2026-09-23) | **Done** 2026-09-23, pushed; Task 9 with real agents still open (`m2.6-verification.md`) |
-| M2.7 | GitHub pull request panel | Conductor's right panel, one GitHub account per repository, PR state, checks, merge and agent actions (added 2026-09-23) | **In verification**: all tasks built on `feat/m2.7-github`, 351 tests pass; not committed or merged yet |
+| M2.7 | GitHub pull request panel | Conductor's right panel, one GitHub account per repository, PR state, checks, merge and agent actions (added 2026-09-23) | **Done** 2026-09-24, pushed; manual checklist on a throwaway repository still open (`m2.7-verification.md`) |
 | M2.8 | Conversations and agents | "+" creates at once, the default agent, agents in the model menu (added 2026-09-23) | **Designed**: HTML ready, plan not written; starts after M3 (user decision, 2026-09-24) |
 | M3 | Diff, comments, editor, files | review, comment, edit and commit; the All files tab to browse and edit any file (added 2026-09-24); its PR part moved to M2.7 | **Planned, next**: HTML and plan ready, All files being designed; starts once M2.7 is merged |
 | M4 | Multi-account + energy | per-repo account everywhere; energy measured vs Conductor | **Not planned**: M2.7 already gives each repository its account and `GH_TOKEN`; left: git identity and SSH key per account, and the energy measurement |

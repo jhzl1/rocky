@@ -9,13 +9,24 @@
 # FAKE_ACP_LOAD_FAILS=true makes session/load answer "Resource not found", like a session the agent does not have.
 # FAKE_ACP_ASKS=true makes a prompt ask "Which color?" (Blue or Red) with elicitation/create, as Claude's
 # AskUserQuestion does, and reply "answered <color>" or "no answer".
+# Commands: right after the session/new and session/load results, as both adapters do from a setTimeout, the agent
+# announces compact (with a hint), review (input null) and mcp:linear:triage (with a hint and _meta).
+# FAKE_ACP_COMMANDS_EARLY=true sends that list before the session/new result instead, as if the notification had
+# reached the client ahead of the response.
+# A prompt "change commands" announces a new list, init alone, and ends the turn.
+# FAKE_ACP_LOG=<file> appends every line the agent receives to that file, to tell what reached it.
 load_session="${FAKE_ACP_LOAD_SESSION:-true}"
 load_fails="${FAKE_ACP_LOAD_FAILS:-false}"
 asks="${FAKE_ACP_ASKS:-false}"
+commands_early="${FAKE_ACP_COMMANDS_EARLY:-false}"
+log="${FAKE_ACP_LOG:-}"
 update() {
   echo "{\"jsonrpc\":\"2.0\",\"method\":\"session/update\",\"params\":{\"sessionId\":\"fake-1\",\"update\":$1}}"
 }
+commands='{"sessionUpdate":"available_commands_update","availableCommands":[{"name":"compact","description":"Clear conversation history but keep a summary in context","input":{"hint":"<optional custom summarization instructions>"}},{"name":"review","description":"Review a pull request","input":null},{"name":"mcp:linear:triage","description":"Triage a Linear issue","input":{"hint":"<issue>"},"_meta":{"source":"mcp"}}]}'
+changed_commands='{"sessionUpdate":"available_commands_update","availableCommands":[{"name":"init","description":"Write a CLAUDE.md for this repository"}]}'
 while IFS= read -r line; do
+  if [[ -n $log ]]; then echo "$line" >> "$log"; fi
   id=""
   if [[ $line =~ \"id\":([0-9]+) ]]; then id="${BASH_REMATCH[1]}"; fi
   case "$line" in
@@ -23,8 +34,11 @@ while IFS= read -r line; do
       echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"protocolVersion\":1,\"agentCapabilities\":{\"loadSession\":$load_session}}}"
       ;;
     *'"method":"session/new"'*)
-      update '{"sessionUpdate":"available_commands_update","availableCommands":[]}'
+      # Before the result: the client has no session id yet and drops it.
+      update '{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"too early"}}'
+      if [[ $commands_early == true ]]; then update "$commands"; fi
       echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"sessionId\":\"fake-1\",\"configOptions\":[{\"id\":\"model\",\"name\":\"Model\",\"category\":\"model\",\"type\":\"select\",\"currentValue\":\"default\",\"options\":[{\"value\":\"default\",\"name\":\"Default\"},{\"value\":\"opus\",\"name\":\"Opus\"}]},{\"id\":\"effort\",\"name\":\"Effort\",\"category\":\"thought_level\",\"type\":\"select\",\"currentValue\":\"high\",\"options\":[{\"value\":\"low\",\"name\":\"Low\"},{\"value\":\"high\",\"name\":\"High\"}]},{\"id\":\"mode\",\"name\":\"Mode\",\"category\":\"mode\",\"type\":\"select\",\"currentValue\":\"default\",\"options\":[{\"value\":\"default\",\"name\":\"Manual\"},{\"value\":\"plan\",\"name\":\"Plan\"}]}]}}"
+      if [[ $commands_early != true ]]; then update "$commands"; fi
       ;;
     *'"method":"session/set_config_option"'*)
       echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"configOptions\":[]}}"
@@ -35,9 +49,15 @@ while IFS= read -r line; do
       else
         update '{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"replayed"}}'
         echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":null}"
+        update "$commands"
       fi
       ;;
     *'"method":"session/prompt"'*)
+      if [[ $line == *'"text":"change commands"'* ]]; then
+        update "$changed_commands"
+        echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"stopReason\":\"end_turn\"}}"
+        continue
+      fi
       if [[ $asks == true ]]; then
         echo '{"jsonrpc":"2.0","id":"ask-1","method":"elicitation/create","params":{"mode":"form","sessionId":"fake-1","message":"Which color?","requestedSchema":{"type":"object","properties":{"question_0":{"type":"string","title":"Color","oneOf":[{"const":"Blue","title":"Blue"},{"const":"Red","title":"Red","description":"Warm"}]},"question_0_custom":{"type":"string","title":"Other"}}}}}'
         IFS= read -r reply

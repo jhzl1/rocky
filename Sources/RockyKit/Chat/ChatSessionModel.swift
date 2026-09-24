@@ -80,6 +80,11 @@ public final class ChatSessionModel {
     public private(set) var capabilities = AgentCapabilities(loadSession: false)
     /// The settings the agent offers for this session (model, effort, fast mode…); empty until the session exists.
     public private(set) var configOptions: [SessionConfigOption] = []
+    /// The slash commands the agent announced for this session (KIT-01), replaced on every update.
+    public private(set) var commands: [SlashCommand] = []
+    /// False until the agent's first command list arrives; until then `AppModel.commands(for:)` offers the last list
+    /// of the repository and agent.
+    public private(set) var commandsReceived = false
     /// When the turn in progress started, for the elapsed time shown while the agent works.
     public private(set) var turnStartedAt: Date?
     /// Why the agent stopped on an error (ROW-03). nil after an explicit `stop()`, which also ends in `.stopped`;
@@ -104,6 +109,8 @@ public final class ChatSessionModel {
     public var isVisible = true {
         didSet { if isVisible { flush() } }
     }
+    /// Called with every command list the agent announces, for `AppModel`'s cache per repository and agent.
+    @ObservationIgnored public var onCommands: (@MainActor ([SlashCommand]) -> Void)?
 
     @ObservationIgnored private let launch: AgentLaunch
     @ObservationIgnored private let flushInterval: Duration
@@ -113,6 +120,11 @@ public final class ChatSessionModel {
     @ObservationIgnored private var startTask: Task<Void, Never>?
     @ObservationIgnored private var connection: ACPConnection?
     @ObservationIgnored private var buffered: [SessionEvent] = []
+    /// The last command list that came while `sessionId` was still nil. Both adapters send it from a `setTimeout`
+    /// right after the `session/new`, `session/load` or `session/resume` response (ACP-01), and that notification can
+    /// reach this actor before the code that stores the new id; dropping it would leave the popup without commands
+    /// until the list changes.
+    @ObservationIgnored private var earlyCommands: JSONValue?
     @ObservationIgnored private var flushScheduled = false
     @ObservationIgnored private var openTextItem: UUID?
     @ObservationIgnored private var toolItems: [String: UUID] = [:]
@@ -151,10 +163,22 @@ public final class ChatSessionModel {
         case .idle, .stopped: break
         default: return
         }
-        let task = Task { await performStart() }
+        // Cleared by the task itself, before anyone waiting on it resumes, so `restart()` can start again right after.
+        let task = Task {
+            await performStart()
+            startTask = nil
+        }
         startTask = task
         await task.value
-        startTask = nil
+    }
+
+    /// Stops the agent and starts it again (CMD-08's Refresh): a new process rereads Claude Code's MCP and plugin
+    /// configuration and announces a new command list. A conversation with messages resumes its session through
+    /// `session/load`. A start in progress ends on the stop, and the new one begins after it.
+    public func restart() async {
+        await stop()
+        await startTask?.value
+        await start()
     }
 
     private func performStart() async {
@@ -162,6 +186,7 @@ public final class ChatSessionModel {
         failure = nil
         resumeSessionId = sessionId ?? resumeSessionId
         sessionId = nil
+        earlyCommands = nil
         do {
             let connection = try ACPConnection(
                 executable: launch.executable,
@@ -171,8 +196,11 @@ public final class ChatSessionModel {
                 stderrLog: launch.stderrLog
             )
             self.connection = connection
+            // A restart starts the next process before the stopped one has exited: what the old one still reports,
+            // its exit above all, must not reach the new session.
+            let connectionId = ObjectIdentifier(connection)
             await connection.setHandlers(ACPHandlers(
-                onNotification: { [weak self] notification in await self?.receive(notification) },
+                onNotification: { [weak self] notification in await self?.receive(notification, from: connectionId) },
                 onRequest: { [weak self] method, params in
                     if method == ACPProtocol.questionMethod {
                         guard let self, let request = ACPProtocol.questionRequest(from: params) else { return ["action": "decline"] }
@@ -185,7 +213,7 @@ public final class ChatSessionModel {
                     let optionId = await self.askPermission(ACPProtocol.permissionRequest(from: params))
                     return ACPProtocol.permissionResponse(optionId: optionId)
                 },
-                onExit: { [weak self] error in await self?.connectionEnded(error) }
+                onExit: { [weak self] error in await self?.connectionEnded(error, from: connectionId) }
             ))
             try await connection.start()
             capabilities = ACPProtocol.capabilities(from: try await connection.call("initialize", ACPProtocol.initializeParams()))
@@ -197,7 +225,7 @@ public final class ChatSessionModel {
             if let resume = resumeSessionId, capabilities.loadSession, hasBeenPrompted {
                 do {
                     let loaded = try await connection.call("session/load", ACPProtocol.loadSessionParams(sessionId: resume, cwd: launch.cwd))
-                    sessionId = resume
+                    adopt(sessionId: resume)
                     configOptions = ACPProtocol.configOptions(from: loaded)
                 } catch ACPConnectionError.rpc(_, let message) {
                     // The agent no longer has that session, for example after the repo switched Claude instances.
@@ -221,8 +249,23 @@ public final class ChatSessionModel {
         guard let id = ACPProtocol.sessionId(fromNewSession: result) else {
             throw ACPConnectionError.rpc(code: 0, message: "session/new returned no sessionId")
         }
-        sessionId = id
+        adopt(sessionId: id)
         configOptions = ACPProtocol.configOptions(from: result)
+    }
+
+    /// From here on the session's updates are applied, starting with a command list that came before the id was
+    /// stored (`earlyCommands`).
+    private func adopt(sessionId id: String) {
+        sessionId = id
+        guard let early = earlyCommands else { return }
+        earlyCommands = nil
+        if case .availableCommands(let list)? = ACPProtocol.event(fromUpdate: early, sessionId: id) { setCommands(list) }
+    }
+
+    private func setCommands(_ list: [SlashCommand]) {
+        commands = list
+        commandsReceived = true
+        onCommands?(list)
     }
 
     public func option(_ id: String) -> SessionConfigOption? {
@@ -269,7 +312,9 @@ public final class ChatSessionModel {
     /// Sends a message, first starting the agent if it has not started, or waiting for a start in progress.
     /// Images go inline when the agent accepts them; other files are sent as links the agent reads itself. `text`
     /// may mark where each file sits with `PromptAttachment.marker`.
+    /// A terminal command (CMD-08) never goes out: see `terminalCommand(in:)`.
     public func send(_ text: String, attachments: [URL] = []) async {
+        guard terminalCommand(in: text) == nil else { return }
         if state == .idle || state == .starting { await start() }
         guard state == .ready, let connection, let sessionId else { return }
         let promptAttachments = attachments.map { PromptAttachment.make(for: $0, imagesAllowed: capabilities.promptImages) }
@@ -326,9 +371,17 @@ public final class ChatSessionModel {
         ChatItem(kind: .interrupted, text: "Interrupted by user")
     }
 
-    /// Keeps a message for when the agent's turn ends.
+    /// Keeps a message for when the agent's turn ends. A terminal command (CMD-08) is never queued.
     public func enqueue(_ text: String, attachments: [URL] = []) {
+        guard terminalCommand(in: text) == nil else { return }
         queue.append(QueuedMessage(id: UUID(), text: text, attachments: attachments))
+    }
+
+    /// The Claude Code terminal command a message runs (CMD-08), which the message box turns into the embedded
+    /// terminal's strip. Such a message never reaches the agent, whether it is idle, starting or working: `send` and
+    /// `enqueue` drop it, so no path (the queue, Send Now, a popup pick) can deliver it.
+    public func terminalCommand(in text: String) -> TerminalOnlyCommand? {
+        TerminalOnlyCommand.invoked(by: text, agent: agent)
     }
 
     /// Takes a message out of the queue, to delete it or to edit it in the message box.
@@ -383,9 +436,25 @@ public final class ChatSessionModel {
         for event in events { apply(event) }
     }
 
-    private func receive(_ notification: ACPNotification) {
-        guard notification.method == "session/update", let sessionId,
-              let event = ACPProtocol.event(fromUpdate: notification.params, sessionId: sessionId) else { return }
+    /// Whether `connectionId` is the process this model talks to now, not one a restart replaced.
+    private func isCurrent(_ connectionId: ObjectIdentifier) -> Bool {
+        connection.map(ObjectIdentifier.init) == connectionId
+    }
+
+    private func receive(_ notification: ACPNotification, from connectionId: ObjectIdentifier) {
+        guard notification.method == "session/update", isCurrent(connectionId) else { return }
+        guard let sessionId else {
+            // Everything else before the id is dropped: `session/load` replays the conversation, which the transcript
+            // already has from the store.
+            if notification.params["update"]?["sessionUpdate"]?.stringValue == ACPProtocol.availableCommandsUpdate {
+                earlyCommands = notification.params
+            }
+            return
+        }
+        guard let event = ACPProtocol.event(fromUpdate: notification.params, sessionId: sessionId) else { return }
+        // Not buffered while the conversation is hidden: the list adds nothing to the transcript, and the cache a new
+        // conversation starts from must not wait for this one to be shown.
+        if case .availableCommands(let list) = event { return setCommands(list) }
         buffered.append(event)
         scheduleFlush()
     }
@@ -424,6 +493,8 @@ public final class ChatSessionModel {
             if let index = configOptions.firstIndex(where: { $0.id == SessionConfigOption.mode }) {
                 configOptions[index].current = mode
             }
+        case .availableCommands(let list):
+            setCommands(list)
         case .ignored:
             break
         }
@@ -469,7 +540,8 @@ public final class ChatSessionModel {
         }
     }
 
-    private func connectionEnded(_ error: ACPConnectionError) {
+    private func connectionEnded(_ error: ACPConnectionError, from connectionId: ObjectIdentifier) {
+        guard isCurrent(connectionId) else { return }
         answerPermission(optionId: nil)
         answerQuestion(.cancelled)
         connection = nil

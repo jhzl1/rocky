@@ -13,7 +13,12 @@ final class ComposerController {
     private(set) var hasContent = false
     /// The editor's height: from two lines up to ten, then it scrolls.
     private(set) var height = ComposerController.minHeight
+    /// The slash command popup over the box (CMD-01…CMD-05), driven by this text view.
+    let popup = SlashCommandPopupModel()
     @ObservationIgnored fileprivate weak var textView: ComposerTextView?
+    /// What the popup offers: `AppModel.commands(for:)` of the conversation, set by ChatView.
+    @ObservationIgnored private var commands: [SlashCommand] = []
+    @ObservationIgnored private var commandsConfirmed = false
 
     /// A line of 14-point text, at Rocky's zoom.
     static var lineHeight: CGFloat { Zoom.shared(18) }
@@ -49,6 +54,21 @@ final class ComposerController {
         return message
     }
 
+    /// The conversation's commands changed, or its first list arrived: an open popup shows them in place.
+    func setCommands(_ commands: [SlashCommand], confirmed: Bool) {
+        self.commands = commands
+        commandsConfirmed = confirmed
+        refreshPopup()
+    }
+
+    /// The "+" menu's Commands (CMD-07): a "/" at the start of the message, and the popup open on it.
+    func startCommand() {
+        popup.allowReopening()
+        textView?.beginCommand()
+        focus()
+        refreshPopup()
+    }
+
     fileprivate func textChanged() {
         guard let textView else { return }
         let string = textView.string
@@ -56,6 +76,73 @@ final class ComposerController {
         hasContent = string.contains(PromptAttachment.marker)
             || !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         height = min(max(textView.contentHeight, Self.minHeight), Self.maxHeight)
+        refreshPopup()
+    }
+
+    /// KIT-02 and KIT-03 again, after every edit and caret move.
+    fileprivate func refreshPopup() {
+        guard let textView else { return }
+        let string = textView.string
+        popup.update(
+            text: string,
+            caret: textView.selectedRange().location,
+            firstIsAttachment: string.hasPrefix(PromptAttachment.marker),
+            commands: commands,
+            confirmed: commandsConfirmed
+        )
+    }
+
+    /// The keys the text view hands over while the popup is open (CMD-03). False lets the key do what it does
+    /// without the popup: Return with no match sends the text as typed, and ↑ and ↓ over an empty list move the
+    /// caret or browse the history.
+    fileprivate func handlePopupKey(_ key: PopupKey) -> Bool {
+        guard popup.isOpen, let textView else { return false }
+        switch key {
+        case .up, .down:
+            guard !popup.matches.isEmpty else { return false }
+            popup.moveSelection(key == .up ? -1 : 1)
+        case .escape:
+            popup.dismiss(text: textView.string)
+        case .tab:
+            // Nothing to complete is not a reason to put a tab in a command's name.
+            if let choice = popup.choose(isReturn: false) { textView.apply(choice) }
+        case .returnKey:
+            guard let choice = popup.choose(isReturn: true) else { return false }
+            textView.apply(choice)
+        }
+        return true
+    }
+
+    /// A sent "/compact" shown again with ↑ does not open the popup, or the next ↑ would move its selection instead
+    /// of going on through the history. Editing the token opens it.
+    fileprivate func historyShown() {
+        guard let textView else { return }
+        popup.dismiss(text: textView.string)
+    }
+
+    /// A click on a row: Return on it (CMD-03).
+    func chooseRow(_ index: Int) {
+        popup.select(index)
+        guard let choice = popup.choose(isReturn: true) else { return }
+        focus()
+        textView?.apply(choice)
+    }
+}
+
+/// The keys the message box hands to the slash command popup while it is open.
+enum PopupKey {
+    case up, down, returnKey, tab, escape
+
+    init?(_ event: NSEvent) {
+        guard event.modifierFlags.intersection([.shift, .control, .option, .command]).isEmpty else { return nil }
+        switch event.keyCode {
+        case 126: self = .up
+        case 125: self = .down
+        case 36, 76: self = .returnKey
+        case 48: self = .tab
+        case 53: self = .escape
+        default: return nil
+        }
     }
 }
 
@@ -84,6 +171,9 @@ struct ComposerEditor: NSViewRepresentable {
         scrollView.scrollerStyle = .overlay
         controller.textView = textView
         update(textView)
+        // A new text view (the box comes back after Restart) starts empty: the controller's state follows it. After
+        // this update, which must not change observed state.
+        DispatchQueue.main.async { [weak controller] in controller?.textChanged() }
         return scrollView
     }
 
@@ -100,6 +190,9 @@ struct ComposerEditor: NSViewRepresentable {
         textView.onBacktab = onBacktab
         textView.openFile = openFile
         textView.onChange = { [weak controller] in controller?.textChanged() }
+        textView.onSelectionChange = { [weak controller] in controller?.refreshPopup() }
+        textView.onPopupKey = { [weak controller] key in controller?.handlePopupKey(key) ?? false }
+        textView.onHistoryShown = { [weak controller] in controller?.historyShown() }
     }
 
     func makeCoordinator() -> Coordinator {
@@ -111,18 +204,31 @@ struct ComposerEditor: NSViewRepresentable {
         func textDidChange(_ notification: Notification) {
             (notification.object as? ComposerTextView)?.onChange()
         }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            (notification.object as? ComposerTextView)?.onSelectionChange()
+        }
     }
 }
 
 /// Return sends, Shift-Return starts a new line, Shift-Tab switches plan mode, ↑ and ↓ browse the conversation's
 /// messages from an empty box. Pasted or dropped files become badges where the text is; pasted text comes in plain.
+/// While the slash command popup is open, ↑, ↓, Return, Tab and Esc go to it first.
 final class ComposerTextView: NSTextView {
     var history = MessageHistory()
     var onSubmit: () -> Void = {}
     var onBacktab: () -> Void = {}
     var onChange: () -> Void = {}
+    var onSelectionChange: () -> Void = {}
+    fileprivate var onPopupKey: (PopupKey) -> Bool = { _ in false }
+    fileprivate var onHistoryShown: () -> Void = {}
     var openFile: OpenFileAction?
     fileprivate(set) var zoom: Double = 1
+    /// A completed command's input hint, drawn in `textTertiary` after the "/name " at `location` until the next
+    /// edit (CMD-04). Drawn, not typed: it is never sent, and VoiceOver does not read it (A11Y-02).
+    private var ghostHint: (text: String, location: Int)? {
+        didSet { needsDisplay = true }
+    }
 
     private var textFont: NSFont { .systemFont(ofSize: 14 * zoom) }
 
@@ -160,6 +266,8 @@ final class ComposerTextView: NSTextView {
     }
 
     override func keyDown(with event: NSEvent) {
+        // An input method composing text keeps every key.
+        if !hasMarkedText(), let key = PopupKey(event), onPopupKey(key) { return }
         if browseHistory(event) { return }
         let isReturn = event.keyCode == 36 || event.keyCode == 76
         guard isReturn, !hasMarkedText() else { return super.keyDown(with: event) }
@@ -215,6 +323,7 @@ final class ComposerTextView: NSTextView {
     private func show(_ entry: MessageHistory.Entry) {
         replaceAll(with: attributedMessage(entry))
         history.didShow(string)
+        onHistoryShown()
     }
 
     /// A queued message back in the box. Not a history entry: ↑ and ↓ treat it as typed text, so they cannot
@@ -251,6 +360,72 @@ final class ComposerTextView: NSTextView {
 
     override func insertBacktab(_ sender: Any?) {
         onBacktab()
+    }
+
+    // MARK: Slash commands
+
+    /// A chosen command replaces the message's first token, keeping the text and the files after it (CMD-04).
+    fileprivate func apply(_ choice: SlashCommandPopupModel.Choice) {
+        guard let token = SlashQuery.tokenRange(in: string) else { return }
+        let range = NSRange(location: token.lowerBound, length: token.count)
+        switch choice {
+        case .send(let name):
+            let replacement = "/" + name
+            replaceCharacters(in: range, withPlain: replacement)
+            setSelectedRange(NSRange(location: range.location + replacement.utf16.count, length: 0))
+            // Today's send: while the agent works it goes into the queue.
+            onSubmit()
+        case let .complete(name, hint):
+            let text = string as NSString
+            let hasSpace = range.upperBound < text.length && text.character(at: range.upperBound) == 0x20
+            let completed = "/" + name + " "
+            replaceCharacters(in: range, withPlain: hasSpace ? "/" + name : completed)
+            let caret = range.location + completed.utf16.count
+            setSelectedRange(NSRange(location: caret, length: 0))
+            let rest = (string as NSString).substring(from: caret)
+            // Only over nothing: arguments already typed after the name are the input.
+            if let hint, rest.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                ghostHint = (hint, caret)
+            }
+            scrollRangeToVisible(selectedRange())
+        }
+    }
+
+    /// CMD-07: "/" at the start of an empty message. A message with text gets "/ " before it, so its first word
+    /// stays out of the token a chosen command replaces. A message that already starts with "/" gets the caret
+    /// after it.
+    fileprivate func beginCommand() {
+        if string.isEmpty {
+            replaceCharacters(in: NSRange(location: 0, length: 0), withPlain: "/")
+        } else if !string.hasPrefix("/") {
+            replaceCharacters(in: NSRange(location: 0, length: 0), withPlain: "/ ")
+        }
+        setSelectedRange(NSRange(location: 1, length: 0))
+    }
+
+    /// An edit the user can undo, in the box's font.
+    private func replaceCharacters(in range: NSRange, withPlain text: String) {
+        guard shouldChangeText(in: range, replacementString: text), let storage = textStorage else { return }
+        storage.replaceCharacters(in: range, with: NSAttributedString(string: text, attributes: textAttributes))
+        didChangeText()
+    }
+
+    override func didChangeText() {
+        // The hint goes with the first character typed after it.
+        ghostHint = nil
+        super.didChangeText()
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard let ghostHint, let window, ghostHint.location <= (string as NSString).length else { return }
+        let caret = firstRect(forCharacterRange: NSRange(location: ghostHint.location, length: 0), actualRange: nil)
+        guard caret != .zero else { return }
+        let rect = convert(window.convertFromScreen(caret), from: nil)
+        (ghostHint.text as NSString).draw(
+            at: NSPoint(x: rect.minX, y: rect.minY),
+            withAttributes: [.font: textFont, .foregroundColor: NSColor(Theme.textTertiary)]
+        )
     }
 
     override func paste(_ sender: Any?) {
@@ -443,6 +618,7 @@ final class ComposerTextView: NSTextView {
 
     func clear() {
         string = ""
+        ghostHint = nil
         typingAttributes = textAttributes
         undoManager?.removeAllActions()
         onChange()

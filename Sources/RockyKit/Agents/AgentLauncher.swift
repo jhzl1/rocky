@@ -50,6 +50,27 @@ public enum AgentLauncher {
         prefix.appendingPathComponent("node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js")
     }
 
+    /// The Claude Code executable the adapter runs: its Agent SDK's native package for this Mac's architecture, which
+    /// npm hoists next to the adapter. CMD-08's embedded terminal runs it directly.
+    public static func claudeCodeBinary(prefix: URL) -> URL {
+        prefix.appendingPathComponent("node_modules/\(claudeCodePackage)/claude")
+    }
+
+    /// Where Node would find it from the adapter: in the adapter's own node_modules when npm did not hoist it, else
+    /// next to the adapter. nil while neither is there.
+    public static func installedClaudeCodeBinary(prefix: URL) -> URL? {
+        let nested = prefix.appendingPathComponent("node_modules/\(claudeAdapterPackage)/node_modules/\(claudeCodePackage)/claude")
+        return [nested, claudeCodeBinary(prefix: prefix)].first { FileManager.default.isExecutableFile(atPath: $0.path) }
+    }
+
+    static var claudeCodePackage: String {
+        #if arch(arm64)
+        "@anthropic-ai/claude-agent-sdk-darwin-arm64"
+        #else
+        "@anthropic-ai/claude-agent-sdk-darwin-x64"
+        #endif
+    }
+
     /// The native binary the package's install script puts in place for this Mac's architecture.
     public static func openCodeBinary(prefix: URL) -> URL {
         prefix.appendingPathComponent("node_modules/opencode-ai/bin/opencode.exe")

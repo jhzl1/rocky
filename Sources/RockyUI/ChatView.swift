@@ -1,5 +1,6 @@
 import AppKit
 import RockyKit
+import SwiftTerm
 import SwiftUI
 import Textual
 
@@ -7,7 +8,15 @@ struct ChatView: View {
     let chat: ChatSessionModel
     /// False while a file tab covers the conversation: the view stays, with its draft, but takes no shortcut.
     var isActive = true
+    /// The slash commands the message box offers, `AppModel.commands(for:)`: the conversation's own list, or the last
+    /// one of its repository and agent until its own arrives (`confirmed` false).
+    var commands: [SlashCommand] = []
+    var commandsConfirmed = false
+    /// The conversation's embedded terminal, for Claude Code's terminal commands (CMD-08).
+    let terminal: EmbeddedTerminalHost
     @State private var composerText = ComposerController()
+    /// CMD-08's strip over the message box. In this view only, as in Conductor: nothing is stored.
+    @State private var terminalCommand: TerminalCommandState?
     /// Rows that have already been seen (MOT-02): the whole history when the conversation opens, so it shows at once,
     /// then each new row as it enters. Only rows whose key is not here fade in.
     @State private var settledKeys: Set<String>
@@ -30,9 +39,17 @@ struct ChatView: View {
     static let columnPadding: CGFloat = 24
     static let boxPadding: CGFloat = 14
 
-    init(chat: ChatSessionModel, isActive: Bool = true) {
+    init(
+        chat: ChatSessionModel,
+        isActive: Bool = true,
+        commands: (commands: [SlashCommand], confirmed: Bool) = ([], false),
+        terminal: EmbeddedTerminalHost
+    ) {
         self.chat = chat
         self.isActive = isActive
+        self.commands = commands.commands
+        self.commandsConfirmed = commands.confirmed
+        self.terminal = terminal
         // Before the first frame: a conversation that opens (or a tab or workspace switched to) never animates.
         _settledKeys = State(initialValue: Set(ChatLayout.rows(chat.items).map(\.entranceKey)))
     }
@@ -49,7 +66,7 @@ struct ChatView: View {
                         ForEach(rows) { row in
                             Group {
                                 switch row {
-                                case .item(let item): ChatItemRow(item: item, isLive: isLive(item)).equatable()
+                                case .item(let item): ChatItemRow(item: item, isLive: isLive(item), command: sentCommand(item)).equatable()
                                 case .tools(let tools): ToolGroupRow(tools: tools, isLive: tools.last.map(isLive) ?? false)
                                 case .turnFooter(let summary): TurnFooterRow(agent: chat.agent, summary: summary)
                                 }
@@ -115,11 +132,18 @@ struct ChatView: View {
             liveActive.value = isActive
             keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { handleKey($0) }
             if !sidebarHasKeyboardFocus { DispatchQueue.main.async { composerText.focus() } }
+            restoreTerminalCommand()
+        }
+        // CMD-08: the process ending by itself finishes the command; the terminal stays open until Done or ×.
+        .onChange(of: terminal.session?.state) { _, state in
+            if let state, !state.isRunning, terminalCommand?.stage == .running { terminalCommand?.stage = .done }
         }
         .onChange(of: isActive) {
             liveActive.value = isActive
             if isActive { composerText.focus() } else { composerText.resignFocus() }
         }
+        .onChange(of: commands, initial: true) { composerText.setCommands(commands, confirmed: commandsConfirmed) }
+        .onChange(of: commandsConfirmed) { composerText.setCommands(commands, confirmed: commandsConfirmed) }
         .onDisappear {
             chat.isVisible = false
             if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
@@ -135,15 +159,23 @@ struct ChatView: View {
         }
     }
 
-    /// The agent's questions, then the message box, floating above the conversation; the conversation fades out
-    /// under them.
+    /// The agent's questions, then the embedded terminal (CMD-08) and the message box, floating above the
+    /// conversation; the conversation fades out under them.
     private var bottomArea: some View {
         VStack(spacing: 10) {
             if let question = chat.pendingQuestion {
                 QuestionCard(agent: chat.agent, request: question) { chat.answerQuestion($0) }
                     .id(question.questions.map(\.id).joined() + question.message)
             }
-            footer
+            VStack(spacing: 8) {
+                if let session = terminal.session, let command = terminalCommand?.command {
+                    EmbeddedTerminalView(session: session, command: command, onDone: finishTerminalCommand, onClose: stopTerminalCommand)
+                        .id(session.id)
+                        // It enters like a chat row (MOT-02).
+                        .modifier(Entrance(isNew: true) {})
+                }
+                footer
+            }
         }
         // The boxes reach 14 points (their inner padding) past the conversation's column on each side, so the text
         // typed in them lines up with the conversation's text.
@@ -180,6 +212,12 @@ struct ChatView: View {
         }
     }
 
+    /// The command a user message runs, for its chip (CMD-06): only a name the conversation's list has now.
+    private func sentCommand(_ item: ChatItem) -> String? {
+        guard item.kind == .user else { return nil }
+        return SlashCommand.invoked(by: item.text, among: commands)?.name
+    }
+
     /// A tool call of the turn in progress: while it is pending it is still running.
     private func isLive(_ item: ChatItem) -> Bool {
         guard chat.state == .running, let start = chat.turnStartedAt else { return false }
@@ -195,6 +233,39 @@ struct ChatView: View {
     /// effort on the left, the + menu and send on the right. Return sends, Shift-Return starts a new line, Shift-Tab
     /// switches plan mode; pasting or dropping images and files puts them in the text.
     private var composer: some View {
+        VStack(spacing: 0) {
+            // CMD-08: the strip joins the top of the box, over a hairline, inside the same fill and border.
+            if let terminalCommand {
+                TerminalCommandStrip(
+                    state: terminalCommand,
+                    canRefresh: chat.state != .running,
+                    onOpen: openTerminalCommand,
+                    onRefresh: refreshAgent,
+                    onDismiss: dismissTerminalCommand
+                )
+                Rectangle().fill(Theme.hairline).frame(height: 1)
+            }
+            composerBody
+        }
+        // Opaque, with a shadow, since it floats over the conversation. The border is drawn inside the shape: a
+        // centered stroke falls half a point outside and smears across two pixels on a 1x screen.
+        .background(Theme.composer, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.composerBorder))
+        .shadow(color: .black.opacity(0.35), radius: 16, y: 6)
+        // The slash command popup: as wide as the box, its bottom 8 points above the box's top edge (CMD-01).
+        .overlay(alignment: .top) {
+            SlashCommandPopup(popup: composerText.popup, agent: chat.agent) { composerText.chooseRow($0) }
+                .alignmentGuide(.top) { $0[.bottom] + 8 }
+        }
+        // Files dropped on the box outside its text go in at the insertion point.
+        .dropDestination(for: URL.self) { urls, _ in
+            let files = urls.filter(\.isFileURL)
+            composerText.insert(files: files)
+            return !files.isEmpty
+        }
+    }
+
+    private var composerBody: some View {
         VStack(alignment: .leading, spacing: 10) {
             ComposerEditor(
                 controller: composerText,
@@ -231,17 +302,6 @@ struct ChatView: View {
             }
         }
         .padding(Self.boxPadding)
-        // Opaque, with a shadow, since it floats over the conversation. The border is drawn inside the shape: a
-        // centered stroke falls half a point outside and smears across two pixels on a 1x screen.
-        .background(Theme.composer, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.composerBorder))
-        .shadow(color: .black.opacity(0.35), radius: 16, y: 6)
-        // Files dropped on the box outside its text go in at the insertion point.
-        .dropDestination(for: URL.self) { urls, _ in
-            let files = urls.filter(\.isFileURL)
-            composerText.insert(files: files)
-            return !files.isEmpty
-        }
     }
 
     /// The + next to Send, like Conductor's: attach files, and plan mode when the agent has one.
@@ -254,24 +314,93 @@ struct ChatView: View {
                 .contentShape(Rectangle())
         } content: {
             MenuItem(title: "Add attachment", icon: .symbol("paperclip"), shortcut: "⌘U", action: chooseAttachments)
+            // CMD-07: where to find the agent's commands.
+            MenuItem(title: "Commands", icon: .symbol("slash.circle"), shortcut: "/") { composerText.startCommand() }
             if chat.canUsePlanMode {
                 MenuItem(title: "Plan mode", icon: .symbol("map"), shortcut: "⇧Tab", isChecked: chat.isPlanMode) {
                     Task { await chat.setPlanMode(!chat.isPlanMode) }
                 }
             }
         }
-        .help("Attach files or switch plan mode")
+        .help("Attach files, run one of the agent's commands or switch plan mode")
     }
 
     private func send() {
         guard canSend else { return }
+        // The box empties, files included, also for a terminal command.
         let message = composerText.takeMessage()
+        // CMD-08: one of Claude Code's terminal commands never reaches the agent, idle, starting or working, and is
+        // never queued; the strip offers the embedded terminal instead. A pick in the popup comes through here too.
+        if let command = chat.terminalCommand(in: message.text) {
+            offerTerminal(for: command)
+            return
+        }
         // While the agent works, the message waits for its turn to end (like Conductor's queue).
         if chat.state == .running {
             chat.enqueue(message.text, attachments: message.files)
         } else {
             Task { await chat.send(message.text, attachments: message.files) }
         }
+    }
+
+    // MARK: Terminal commands (CMD-08)
+
+    /// The strip, pending, for `command`. A terminal another command left open closes: one per conversation.
+    private func offerTerminal(for command: TerminalOnlyCommand) {
+        terminalCommand = TerminalCommandState(command: command, stage: .pending)
+        if terminal.session != nil { Task { await terminal.close() } }
+    }
+
+    /// Open terminal: the command runs in the embedded terminal. Back to pending when it could not start (Rocky's
+    /// Claude Code is not installed; `AppModel.errorMessage` says so).
+    private func openTerminalCommand() {
+        guard let state = terminalCommand, state.stage == .pending else { return }
+        terminalCommand?.stage = .running
+        Task {
+            let session = await terminal.open(state.command)
+            if session == nil, terminalCommand == TerminalCommandState(command: state.command, stage: .running) {
+                terminalCommand?.stage = .pending
+            }
+        }
+    }
+
+    /// Done: stops the command if it still runs, closes the terminal, and the strip offers Refresh.
+    private func finishTerminalCommand() {
+        terminalCommand?.stage = .done
+        closeTerminal()
+    }
+
+    /// × on the terminal: stops and closes it, and the strip offers it again.
+    private func stopTerminalCommand() {
+        terminalCommand?.stage = .pending
+        closeTerminal()
+    }
+
+    /// × on the strip: it goes, with the terminal if one is open.
+    private func dismissTerminalCommand() {
+        terminalCommand = nil
+        closeTerminal()
+    }
+
+    /// Refresh: the agent restarts and resumes its session, so it rereads the configuration the command changed and
+    /// announces a new command list. There is no "Configuration refreshed." toast yet (no toast system before M2.7).
+    private func refreshAgent() {
+        guard chat.state != .running else { return }
+        terminalCommand = nil
+        Task { await chat.restart() }
+    }
+
+    private func closeTerminal() {
+        if terminal.session != nil { Task { await terminal.close() } }
+        composerText.focus()
+    }
+
+    /// A terminal still open when the view comes back (another tab or workspace was shown meanwhile) gets its strip
+    /// again, from the command its process runs.
+    private func restoreTerminalCommand() {
+        guard terminalCommand == nil, let session = terminal.session,
+              let command = TerminalOnlyCommand.invoked(by: session.command.arguments.first ?? "", agent: chat.agent) else { return }
+        terminalCommand = TerminalCommandState(command: command, stage: session.state.isRunning ? .running : .done)
     }
 
     /// Takes a queued message back into the empty message box.
@@ -286,10 +415,16 @@ struct ChatView: View {
     private func handleKey(_ event: NSEvent) -> NSEvent? {
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         guard liveActive.value, let window = event.window, window.isKeyWindow else { return event }
-        // An open menu, the settings, a repository's settings and sheets (a permission request, an alert) keep Esc
-        // for closing themselves.
+        // A terminal with the keyboard gets every key, Esc included: the embedded terminal (CMD-08), whose Claude Code
+        // screens use Esc to go back or quit, and the panel's terminals, where Esc belongs to the shell's programs.
+        // Neither may stop the agent's turn.
+        if window.firstResponder is TerminalView { return event }
+        // An open menu, the settings, a repository's settings, sheets (a permission request, an alert) and the slash
+        // command popup keep Esc for closing themselves (CMD-03). The popup's state is read from the controller, a
+        // reference, at the key's time.
         if event.keyCode == 53, modifiers.isEmpty, chat.state == .running, menus?.open == nil,
-           !SettingsPresenter.shared.isPresented, !RepoSettingsPresenter.shared.isPresented, window.attachedSheet == nil {
+           !SettingsPresenter.shared.isPresented, !RepoSettingsPresenter.shared.isPresented, window.attachedSheet == nil,
+           !composerText.popup.isOpen {
             Task { await chat.cancel() }
             return nil
         }
@@ -319,7 +454,7 @@ private final class LiveFlag {
 
 /// A new chat row fading in while it rises 6 points, 220 ms (MOT-02); with Reduce Motion it only fades, 150 ms.
 /// `settle` records the row as seen as the animation starts, so it never plays twice for that row, even when a lone
-/// tool call becomes a group.
+/// tool call becomes a group. The embedded terminal (CMD-08) enters the same way.
 private struct Entrance: ViewModifier {
     let isNew: Bool
     let settle: () -> Void
@@ -390,11 +525,13 @@ struct ComposerButton: View {
 struct ChatItemRow: View, Equatable {
     let item: ChatItem
     let isLive: Bool
+    /// A user message's command, drawn as a chip (CMD-06).
+    var command: String?
 
     var body: some View {
         switch item.kind {
         case .user:
-            UserMessageRow(item: item)
+            UserMessageRow(item: item, command: command)
         case .agent:
             // Headings, lists, highlighted code blocks and tables, styled like Conductor's replies.
             StructuredText(item.text, parser: RockyMarkdownParser(zoom: Zoom.shared.scale))

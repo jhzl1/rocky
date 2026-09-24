@@ -25,6 +25,63 @@ struct ChatSessionModelTests {
         await model.stop()
     }
 
+    private func waitForCommands(_ model: ChatSessionModel) async throws {
+        for _ in 0..<500 where !model.commandsReceived {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(model.commandsReceived)
+    }
+
+    private static let announced = ["compact", "review", "mcp:linear:triage"]
+
+    /// Review Focus 1: both adapters send the list from a `setTimeout` right after the `session/new` result, and it
+    /// must not be lost.
+    @Test func commandsSentRightAfterSessionNewArrive() async throws {
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(), flushInterval: .zero)
+        var reported: [[String]] = []
+        model.onCommands = { reported.append($0.map(\.name)) }
+        #expect(!model.commandsReceived)
+        await model.start()
+        try await waitForCommands(model)
+        #expect(model.commands.map(\.name) == Self.announced)
+        #expect(model.commands.first?.inputHint == "<optional custom summarization instructions>")
+        #expect(model.commands[1].inputHint == nil)
+        #expect(reported == [Self.announced])
+        #expect(model.items.isEmpty)
+        await model.stop()
+    }
+
+    /// The list can reach the model before the code that stores the new session id: it is kept and applied then,
+    /// while the other updates before the id stay dropped.
+    @Test func commandsThatBeatTheSessionIdAreKept() async {
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(commandsEarly: true), flushInterval: .zero)
+        await model.start()
+        #expect(model.commandsReceived)
+        #expect(model.commands.map(\.name) == Self.announced)
+        #expect(model.items.isEmpty)
+        await model.stop()
+    }
+
+    /// Review Focus 2 (ACP-01): each update replaces the whole list.
+    @Test func commandsAreReplacedNotMerged() async throws {
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(), flushInterval: .zero)
+        await model.start()
+        try await waitForCommands(model)
+        await model.send("change commands")
+        #expect(model.commands == [SlashCommand(name: "init", description: "Write a CLAUDE.md for this repository")])
+        await model.stop()
+    }
+
+    @Test func aResumedSessionGetsItsCommandsWithoutReplayingHistory() async throws {
+        let history = [ChatItem(kind: .user, text: "earlier"), ChatItem(kind: .agent, text: "replayed")]
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(), history: history, resumeSessionId: "fake-1", flushInterval: .zero)
+        await model.start()
+        try await waitForCommands(model)
+        #expect(model.commands.map(\.name) == Self.announced)
+        #expect(model.items == history)
+        await model.stop()
+    }
+
     @Test func streamsTextAsksPermissionAndPersistsTheTurn() async throws {
         var persisted: [ChatItem] = []
         let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(), flushInterval: .zero) { persisted.append($0) }
@@ -330,5 +387,109 @@ struct ChatSessionModelTests {
         await sending
         #expect(model.pendingPermission == nil)
         #expect(model.state == .stopped("Stopped"))
+    }
+
+    // MARK: Terminal commands (CMD-08)
+
+    /// The lines the fake agent received so far.
+    private func received(_ log: URL) -> [String] {
+        ((try? String(contentsOf: log, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
+    }
+
+    private func waitUntil(_ condition: () -> Bool) async throws {
+        for _ in 0..<500 where !condition() {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(condition())
+    }
+
+    /// Claude Code's terminal commands never reach the agent, idle or working, and are never queued.
+    @Test func terminalCommandsNeverReachTheAgentNorTheQueue() async throws {
+        let log = Fixtures.stderrLog()
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(log: log), flushInterval: .zero)
+        await model.start()
+        #expect(model.terminalCommand(in: "/mcp extra") == TerminalOnlyCommand(name: "mcp", arguments: "extra"))
+        #expect(model.terminalCommand(in: "/compact") == nil)
+
+        await model.send("/mcp")
+        #expect(model.items.isEmpty)
+        #expect(model.state == .ready)
+        model.enqueue("/mcp extra args")
+        #expect(model.queue.isEmpty)
+
+        // During a turn.
+        async let sending: Void = model.send("hi")
+        try await waitForPermission(model)
+        #expect(model.state == .running)
+        model.enqueue("/hooks")
+        model.enqueue("/plugins now")
+        #expect(model.queue.isEmpty)
+        model.answerPermission(optionId: "allow")
+        await sending
+
+        let prompts = received(log).filter { $0.contains(#""method":"session/prompt""#) }
+        #expect(prompts.count == 1)
+        #expect(prompts.first?.contains(#""text":"hi""#) == true)
+        #expect(!received(log).contains { $0.contains("/mcp") || $0.contains("/hooks") || $0.contains("/plugins") })
+        #expect(model.items.filter { $0.kind == .user }.map(\.text) == ["hi"])
+        await model.stop()
+    }
+
+    /// OpenCode's commands all go to its agent, "/mcp" included.
+    @Test func anOpenCodeConversationSendsTheSameTextToItsAgent() async throws {
+        let log = Fixtures.stderrLog()
+        let model = ChatSessionModel(agent: .opencode, launch: Fixtures.fakeACPLaunch(log: log), flushInterval: .zero)
+        await model.start()
+        #expect(model.terminalCommand(in: "/mcp") == nil)
+        async let sending: Void = model.send("/mcp")
+        try await waitForPermission(model)
+        model.answerPermission(optionId: "allow")
+        await sending
+        #expect(model.items.first?.text == "/mcp")
+        #expect(received(log).contains { $0.contains(#""method":"session/prompt""#) && $0.contains(#""text":"/mcp""#) })
+        await model.stop()
+    }
+
+    /// CMD-08's Refresh: a new agent process resumes the session (`session/load`) and announces its list again. The
+    /// stopped process exits after the new one has started; its exit must not end the new session.
+    @Test func restartResumesTheSessionAndGetsANewCommandList() async throws {
+        let log = Fixtures.stderrLog()
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(log: log), flushInterval: .zero)
+        await model.start()
+        async let sending: Void = model.send("hi")
+        try await waitForPermission(model)
+        model.answerPermission(optionId: "allow")
+        await sending
+        await model.send("change commands")
+        #expect(model.commands.map(\.name) == ["init"])
+
+        await model.restart()
+        #expect(model.state == .ready)
+        #expect(model.sessionId == "fake-1")
+        try await waitUntil { model.commands.map(\.name) == Self.announced }
+        #expect(received(log).filter { $0.contains(#""method":"session/load""#) }.count == 1)
+        #expect(received(log).filter { $0.contains(#""method":"session/new""#) }.count == 1)
+
+        // Long enough for the stopped process's exit to come in.
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(model.state == .ready)
+        #expect(model.failure == nil)
+        await model.send("change commands")
+        #expect(model.commands.map(\.name) == ["init"])
+        await model.stop()
+    }
+
+    /// A Refresh while the agent is still starting waits for that start to end, then starts again.
+    @Test func restartWhileStartingStartsAgain() async throws {
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(), flushInterval: .zero)
+        let starting = Task { await model.start() }
+        // The start sets `.starting` before its first wait on the process, and stays there for its round trips.
+        for _ in 0..<10_000 where model.state == .idle { await Task.yield() }
+        try #require(model.state == .starting)
+        await model.restart()
+        await starting.value
+        #expect(model.state == .ready)
+        #expect(model.sessionId == "fake-1")
+        await model.stop()
     }
 }

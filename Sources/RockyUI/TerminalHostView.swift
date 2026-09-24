@@ -9,6 +9,10 @@ struct TerminalHostView: NSViewRepresentable {
     let session: PTYSession
     /// `Zoom.scale`: the terminal's 12-point font grows with it.
     var zoom: Double = 1
+    /// Names the terminal view, so a key monitor can tell it has the keyboard (CMD-08's embedded terminal).
+    var identifier: NSUserInterfaceItemIdentifier?
+    /// Takes the keyboard as it appears: the embedded terminal opens to be used at once.
+    var focusesOnAppear = false
 
     /// A Nerd Font when one is installed, because prompts such as powerlevel10k and starship draw their icons with
     /// it (SF Mono shows them as "?"). Otherwise SF Mono.
@@ -42,6 +46,9 @@ struct TerminalHostView: NSViewRepresentable {
             view?.feed(byteArray: bytes)
         }
         view.feed(byteArray: replay[...])
+        view.identifier = identifier
+        // Once the view is in its window.
+        if focusesOnAppear { DispatchQueue.main.async { [weak view] in view?.window?.makeFirstResponder(view) } }
         return view
     }
 
