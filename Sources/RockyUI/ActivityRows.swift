@@ -239,14 +239,46 @@ struct ThoughtRow: View {
     }
 }
 
+/// A sent command (CMD-06): "/name" as a chip, accent text on accent at 14 %, then its arguments as ordinary text,
+/// with their files as badges.
+struct CommandMessageText: View {
+    let item: ChatItem
+    let command: String
+
+    /// What follows "/name", without the space between them.
+    private var arguments: String {
+        String(item.text.dropFirst(command.count + 1).drop(while: \.isWhitespace))
+    }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(verbatim: "/" + command)
+                .font(.rocky(12.5, design: .monospaced))
+                .foregroundStyle(Theme.accent)
+                .padding(.horizontal, 7)
+                .frame(height: Zoom.shared(22))
+                .background(Theme.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 6))
+                .fixedSize()
+            if item.attachments.isEmpty {
+                if !arguments.isEmpty { Text(arguments).textSelection(.enabled) }
+            } else {
+                InlineFilesText(text: arguments, files: item.attachments)
+            }
+        }
+    }
+}
+
 /// The user's message on the right. Its files sit inside the text as badges, where they were written, as in
-/// Conductor.
+/// Conductor. A message that runs one of the agent's commands starts with its chip.
 struct UserMessageRow: View {
     let item: ChatItem
+    var command: String?
 
     var body: some View {
         Group {
-            if item.attachments.isEmpty {
+            if let command {
+                CommandMessageText(item: item, command: command)
+            } else if item.attachments.isEmpty {
                 Text(item.text).textSelection(.enabled)
             } else {
                 InlineFilesText(text: item.text, files: item.attachments)

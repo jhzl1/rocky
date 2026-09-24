@@ -190,7 +190,12 @@ struct WorkspaceDetailView: View {
         let file = model.selectedFiles[workspace.id]
         return ZStack {
             if let chat {
-                ChatView(chat: chat, isActive: file == nil)
+                ChatView(
+                    chat: chat,
+                    isActive: file == nil,
+                    commands: model.commands(for: chat),
+                    terminal: EmbeddedTerminalHost(model: model, conversationId: model.selectedConversationIds[workspace.id])
+                )
                     // A new view per conversation, so switching tabs does not carry a draft or a scroll position over.
                     .id(ObjectIdentifier(chat))
                     .opacity(file == nil ? 1 : 0)
