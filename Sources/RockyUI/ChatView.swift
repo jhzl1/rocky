@@ -8,8 +8,17 @@ struct ChatView: View {
     /// False while a file tab covers the conversation: the view stays, with its draft, but takes no shortcut.
     var isActive = true
     @State private var composerText = ComposerController()
+    /// Rows that have already been seen (MOT-02): the whole history when the conversation opens, so it shows at once,
+    /// then each new row as it enters. Only rows whose key is not here fade in.
+    @State private var settledKeys: Set<String>
     @State private var keyMonitor: Any?
+    /// `isActive` for the key monitor: its closure keeps the view as it was when it appeared.
+    @State private var liveActive = LiveFlag()
     @Environment(\.openFile) private var openFile
+    @Environment(MenuPresenter.self) private var menus: MenuPresenter?
+    /// The sidebar list has the keyboard: a workspace chosen with ↑/↓ must not take it into its message box, or the
+    /// next ↑ would browse the message history instead of the list (KBD-01).
+    @Environment(\.sidebarHasKeyboardFocus) private var sidebarHasKeyboardFocus
     /// The last thing in the scroll view: scrolling to it reaches the very bottom, even while a reply's markdown
     /// is still being laid out.
     private static let bottomId = "bottom"
@@ -18,6 +27,13 @@ struct ChatView: View {
     /// The conversation's side margin, and the inner padding of the message box and the question card.
     static let columnPadding: CGFloat = 24
     static let boxPadding: CGFloat = 14
+
+    init(chat: ChatSessionModel, isActive: Bool = true) {
+        self.chat = chat
+        self.isActive = isActive
+        // Before the first frame: a conversation that opens (or a tab or workspace switched to) never animates.
+        _settledKeys = State(initialValue: Set(ChatLayout.rows(chat.items).map(\.entranceKey)))
+    }
 
     var body: some View {
         let rows = ChatLayout.rows(chat.items)
@@ -29,14 +45,39 @@ struct ChatView: View {
                     // their body (`equatable()`), so a long conversation stays cheap while a reply streams.
                     VStack(alignment: .leading, spacing: 14) {
                         ForEach(rows) { row in
-                            switch row {
-                            case .item(let item): ChatItemRow(item: item, isLive: isLive(item)).equatable()
-                            case .tools(let tools): ToolGroupRow(tools: tools, isLive: tools.last.map(isLive) ?? false)
-                            case .turnFooter(let summary): TurnFooterRow(agent: chat.agent, summary: summary)
+                            Group {
+                                switch row {
+                                case .item(let item): ChatItemRow(item: item, isLive: isLive(item)).equatable()
+                                case .tools(let tools): ToolGroupRow(tools: tools, isLive: tools.last.map(isLive) ?? false)
+                                case .turnFooter(let summary): TurnFooterRow(agent: chat.agent, summary: summary)
+                                }
                             }
+                            .modifier(Entrance(isNew: !settledKeys.contains(row.entranceKey)) {
+                                settledKeys.insert(row.entranceKey)
+                            })
                         }
                         if chat.state == .running {
-                            ThinkingRow(startedAt: chat.turnStartedAt)
+                            WorkingRow(startedAt: chat.turnStartedAt)
+                                .modifier(Entrance(isNew: true) {})
+                        }
+                        // Where they will be sent: after the turn in progress, as one group with one caption (user
+                        // decisions, 2026-09-23).
+                        if !chat.queue.isEmpty {
+                            VStack(alignment: .trailing, spacing: 8) {
+                                ForEach(chat.queue) { message in
+                                    QueuedMessageRow(
+                                        message: message,
+                                        isAgentWorking: chat.state == .running,
+                                        canEdit: !composerText.hasContent,
+                                        onSendNow: { Task { await chat.sendQueuedNow(id: message.id) } },
+                                        onEdit: { edit(message) },
+                                        onDelete: { chat.removeQueued(id: message.id) }
+                                    )
+                                    .modifier(Entrance(isNew: true) {})
+                                }
+                                QueueCaption(count: chat.queue.count, isHeld: chat.isQueueHeld)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .trailing)
                         }
                         Color.clear.frame(height: 1).id(Self.bottomId)
                     }
@@ -55,14 +96,17 @@ struct ChatView: View {
                 .onChange(of: chat.items.count) { proxy.scrollTo(Self.bottomId, anchor: .bottom) }
                 .onChange(of: chat.items.last?.text) { proxy.scrollTo(Self.bottomId, anchor: .bottom) }
                 .onChange(of: chat.state) { proxy.scrollTo(Self.bottomId, anchor: .bottom) }
+                .onChange(of: chat.queue.count) { proxy.scrollTo(Self.bottomId, anchor: .bottom) }
             }
         }
         .onAppear {
             chat.isVisible = true
+            liveActive.value = isActive
             keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { handleKey($0) }
-            DispatchQueue.main.async { composerText.focus() }
+            if !sidebarHasKeyboardFocus { DispatchQueue.main.async { composerText.focus() } }
         }
         .onChange(of: isActive) {
+            liveActive.value = isActive
             if isActive { composerText.focus() } else { composerText.resignFocus() }
         }
         .onDisappear {
@@ -114,6 +158,7 @@ struct ChatView: View {
                 Text(reason).foregroundStyle(.secondary).lineLimit(2)
                 Spacer()
                 Button("Restart") { Task { await chat.start() } }
+                    .buttonStyle(RockyFilledButtonStyle())
             }
             .padding(Self.boxPadding)
             .background(Theme.composer, in: RoundedRectangle(cornerRadius: 12))
@@ -130,8 +175,9 @@ struct ChatView: View {
         return item.createdAt >= start
     }
 
+    /// While the agent works, sending queues the message instead.
     private var canSend: Bool {
-        composerText.hasContent && chat.state != .running
+        composerText.hasContent
     }
 
     /// A roomy message box laid out like Conductor's: the text with its files inside it as badges, then model and
@@ -165,10 +211,11 @@ struct ChatView: View {
                 plusMenu
                 if chat.state == .running {
                     ComposerButton(systemImage: "stop.fill", isEnabled: true) { Task { await chat.cancel() } }
-                        .help("Stop the agent's turn")
-                } else {
+                        .help("Stop the agent's turn (Esc)")
+                }
+                if chat.state != .running || composerText.hasContent {
                     ComposerButton(systemImage: "arrow.up", isEnabled: canSend, action: send)
-                        .help("Send (Return)")
+                        .help(chat.state == .running ? "Queue (Return): sent when the agent's turn ends" : "Send (Return)")
                 }
             }
         }
@@ -208,13 +255,33 @@ struct ChatView: View {
     private func send() {
         guard canSend else { return }
         let message = composerText.takeMessage()
-        Task { await chat.send(message.text, attachments: message.files) }
+        // While the agent works, the message waits for its turn to end (like Conductor's queue).
+        if chat.state == .running {
+            chat.enqueue(message.text, attachments: message.files)
+        } else {
+            Task { await chat.send(message.text, attachments: message.files) }
+        }
     }
 
-    /// ⌘U attaches files. The message box handles its own keys (`ComposerTextView`).
+    /// Takes a queued message back into the empty message box.
+    private func edit(_ message: QueuedMessage) {
+        guard !composerText.hasContent, chat.removeQueued(id: message.id) != nil else { return }
+        composerText.load(text: message.text, files: message.attachments.map(\.path))
+        composerText.focus()
+    }
+
+    /// Esc stops the agent's turn, as in Claude Code; ⌘U attaches files. The message box handles its own keys
+    /// (`ComposerTextView`).
     private func handleKey(_ event: NSEvent) -> NSEvent? {
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        guard isActive, modifiers == .command, event.charactersIgnoringModifiers == "u" else { return event }
+        guard liveActive.value, let window = event.window, window.isKeyWindow else { return event }
+        // An open menu, the settings and sheets (a permission request, an alert) keep Esc for closing themselves.
+        if event.keyCode == 53, modifiers.isEmpty, chat.state == .running, menus?.open == nil,
+           !SettingsPresenter.shared.isPresented, window.attachedSheet == nil {
+            Task { await chat.cancel() }
+            return nil
+        }
+        guard modifiers == .command, event.charactersIgnoringModifiers == "u" else { return event }
         // After the key event: the open panel runs its own event loop.
         DispatchQueue.main.async { chooseAttachments() }
         return nil
@@ -229,6 +296,39 @@ struct ChatView: View {
         guard panel.runModal() == .OK else { return }
         composerText.insert(files: panel.urls)
         composerText.focus()
+    }
+}
+
+/// A value a key monitor reads at the time of the key, not when the monitor was added.
+@MainActor
+private final class LiveFlag {
+    var value = true
+}
+
+/// A new chat row fading in while it rises 6 points, 220 ms (MOT-02); with Reduce Motion it only fades, 150 ms.
+/// `settle` records the row as seen as the animation starts, so it never plays twice for that row, even when a lone
+/// tool call becomes a group.
+private struct Entrance: ViewModifier {
+    let isNew: Bool
+    let settle: () -> Void
+    @State private var shown: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(isNew: Bool, settle: @escaping () -> Void) {
+        self.isNew = isNew
+        self.settle = settle
+        _shown = State(initialValue: !isNew)
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(shown ? 1 : 0)
+            .offset(y: shown || reduceMotion ? 0 : 6)
+            .onAppear {
+                guard !shown else { return }
+                settle()
+                withAnimation(reduceMotion ? .easeOut(duration: 0.15) : Theme.Motion.enter) { shown = true }
+            }
     }
 }
 
@@ -250,6 +350,7 @@ struct PlanModeChip: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .clickable()
         .help("Plan mode: the agent plans and asks before changing anything. Click or press ⇧Tab to leave it.")
     }
 }
@@ -269,6 +370,7 @@ struct ComposerButton: View {
                 .background(isEnabled ? Color.white : Color.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 7))
         }
         .buttonStyle(.plain)
+        .clickable()
         .disabled(!isEnabled)
     }
 }
@@ -320,6 +422,7 @@ struct TurnFooterRow: View {
             }
             .labelStyle(.iconOnly)
             .buttonStyle(.borderless)
+            .clickable()
             .help("Copy the reply")
             .disabled(summary.agentText.isEmpty)
         }
@@ -338,13 +441,13 @@ struct PermissionSheet: View {
             Text("Permission needed").font(.rocky(13, weight: .semibold))
             Text(request.title).textSelection(.enabled)
             HStack {
-                Button("Cancel") { answer(nil) }
+                Button("Cancel") { answer(nil) }.clickable()
                 Spacer()
                 ForEach(request.options) { option in
                     if option.kind.hasPrefix("allow") {
-                        Button(option.name) { answer(option.id) }.buttonStyle(.borderedProminent)
+                        Button(option.name) { answer(option.id) }.buttonStyle(.borderedProminent).clickable()
                     } else {
-                        Button(option.name) { answer(option.id) }
+                        Button(option.name) { answer(option.id) }.clickable()
                     }
                 }
             }

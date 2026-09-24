@@ -116,6 +116,7 @@ struct ModelMenuContent: View {
                     Button("Clear", systemImage: "xmark.circle.fill") { query = "" }
                         .labelStyle(.iconOnly)
                         .buttonStyle(.plain)
+                        .clickable()
                         .foregroundStyle(.tertiary)
                 }
             }
@@ -213,6 +214,7 @@ struct EffortChips: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .clickable()
             }
         }
         .padding(2)

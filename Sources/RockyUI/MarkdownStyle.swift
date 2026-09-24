@@ -131,6 +131,7 @@ struct RockyCodeBlockStyle: StructuredText.CodeBlockStyle {
                 Button("Copy", systemImage: "doc.on.doc") { configuration.codeBlock.copyToPasteboard() }
                     .labelStyle(.iconOnly)
                     .buttonStyle(.borderless)
+                    .clickable()
                     .help("Copy the code")
             }
             .padding(.horizontal, 12)

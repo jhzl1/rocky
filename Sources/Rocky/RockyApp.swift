@@ -46,28 +46,39 @@ struct RockyApp: App {
         WindowGroup("Rocky") {
             RootView(model: model)
                 .frame(minWidth: 900, minHeight: 560)
+                .background { CompactTitleBar() }
                 .task {
                     appDelegate.model = model
                     await model.bootstrap()
                 }
         }
         // No title bar: the sidebar's top row holds the window buttons and the workspace header sits at the top,
-        // like Conductor. "Rocky" stays the window's name in the Window menu.
+        // like Conductor. "Rocky" stays the window's name in the Window menu. The empty compact toolbar
+        // (`CompactTitleBar`) makes the transparent title bar H tall, with the window buttons centered in it (WIN-01).
         .windowStyle(.hiddenTitleBar)
+        .windowToolbarStyle(.unifiedCompact)
         .commands {
+            // ⌘N makes a workspace. Without this it would open a second window: the app is a WindowGroup.
+            CommandGroup(replacing: .newItem) {
+                NewWorkspaceCommand(model: model)
+            }
+            // The title bar's toolbar only sizes the title bar (WIN-01): nothing in it to show, hide or customize.
+            CommandGroup(replacing: .toolbar) {}
             CommandGroup(after: .toolbar) {
                 ZoomCommands()
             }
-            CommandGroup(after: .appSettings) {
+            CommandGroup(after: .sidebar) {
+                WorkspaceCommands(model: model)
+            }
+            // Rocky ▸ Settings… (⌘,) opens the settings panel over the window, not a window of its own.
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") { SettingsPresenter.shared.show() }
+                    .keyboardShortcut(",", modifiers: .command)
                 // The login shell runs once per launch (spec Section 1); this re-reads it after you edit ~/.zshrc.
                 Button("Refresh Shell Environment") {
                     Task { await model.refreshEnvironment() }
                 }
             }
-        }
-        // Rocky ▸ Settings… (⌘,): the zoom and everything else that applies to the whole app.
-        Settings {
-            SettingsView(model: model)
         }
     }
 
@@ -79,6 +90,85 @@ struct RockyApp: App {
         } catch {
             fatalError("Rocky could not open its database: \(error)")
         }
+    }
+}
+
+/// WIN-01: an empty toolbar in the compact style, so AppKit makes the title bar H tall (`WindowMetrics.titleBarHeight`)
+/// and centers the traffic lights in it; the transparent title bar hides its background. AppKit's toolbar and not a
+/// SwiftUI `.toolbar`: SwiftUI builds a toolbar only around an item, and an item would sit over the top bar row, take
+/// its clicks and draw a platter on macOS 26 and later. The sidebar's top row and the workspace's top bar stay
+/// SwiftUI views under the transparent title bar.
+private struct CompactTitleBar: NSViewRepresentable {
+    func makeNSView(context: Context) -> WindowHook {
+        WindowHook()
+    }
+
+    func updateNSView(_ view: WindowHook, context: Context) {
+        view.configureWindow()
+    }
+
+    final class WindowHook: NSView {
+        private static let toolbarIdentifier = "RockyTitleBar"
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            configureWindow()
+        }
+
+        /// Never takes a click.
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        /// Idempotent: runs again on every SwiftUI update and changes only what differs.
+        func configureWindow() {
+            guard let window else { return }
+            if window.toolbar == nil {
+                let toolbar = NSToolbar(identifier: Self.toolbarIdentifier)
+                toolbar.allowsUserCustomization = false
+                window.toolbar = toolbar
+            }
+            if window.toolbarStyle != .unifiedCompact { window.toolbarStyle = .unifiedCompact }
+            if window.titleVisibility != .hidden { window.titleVisibility = .hidden }
+            if !window.titlebarAppearsTransparent { window.titlebarAppearsTransparent = true }
+            if window.titlebarSeparatorStyle != .none { window.titlebarSeparatorStyle = .none }
+        }
+    }
+}
+
+/// File ▸ New Workspace (⌘N, KBD-01): in the selected workspace's repository, else the first; off without any.
+private struct NewWorkspaceCommand: View {
+    let model: AppModel
+
+    var body: some View {
+        Button("New Workspace") {
+            guard let repoId = model.newWorkspaceRepoId else { return }
+            Task { await model.createWorkspace(repoId: repoId) }
+        }
+        .keyboardShortcut("n", modifiers: .command)
+        .disabled(model.newWorkspaceRepoId == nil)
+    }
+}
+
+/// View ▸ Search Workspaces (⌘K) and the workspaces the sidebar lists, ⌘1…⌘9 for the first nine (KBD-01). Menu
+/// commands, so they work wherever the focus is. ⌘J, ⌘U, ⇧Tab, ⌘, and the zoom keep their shortcuts.
+private struct WorkspaceCommands: View {
+    let model: AppModel
+
+    var body: some View {
+        Section {
+            Button("Search Workspaces") { model.isSearchFocusRequested = true }
+                .keyboardShortcut("k", modifiers: .command)
+        }
+        Section {
+            ForEach(Array(model.visibleWorkspaceIds.prefix(9).enumerated()), id: \.element) { index, workspaceId in
+                Button(title(of: workspaceId)) { model.selectVisibleWorkspace(number: index + 1) }
+                    .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
+            }
+        }
+    }
+
+    private func title(of workspaceId: String) -> String {
+        guard let workspace = model.workspace(id: workspaceId) else { return "Workspace" }
+        return model.title(for: workspace).text
     }
 }
 

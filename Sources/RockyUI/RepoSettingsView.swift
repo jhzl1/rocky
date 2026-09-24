@@ -10,6 +10,7 @@ struct RepoSettingsView: View {
     @State private var runScript: String
     @State private var archiveScript: String
     @State private var runMode: RunScriptMode
+    @State private var linkedPaths: String
     @State private var variables: [VariableDraft]
     @State private var removedNames: [String] = []
     private let instances = ClaudeInstances.detect(home: FileManager.default.homeDirectoryForCurrentUser)
@@ -32,6 +33,7 @@ struct RepoSettingsView: View {
         _runScript = State(initialValue: repo.runScript ?? "")
         _archiveScript = State(initialValue: repo.archiveScript ?? "")
         _runMode = State(initialValue: RunScriptMode(rawValue: repo.runScriptMode ?? "") ?? .concurrent)
+        _linkedPaths = State(initialValue: repo.linkedPaths ?? "")
         _variables = State(initialValue: model.repoVars(repoId: repo.id).map {
             VariableDraft(name: $0.name, value: $0.value ?? "", isSecret: $0.isSecret, savedName: $0.name, savedAsSecret: $0.isSecret)
         })
@@ -53,13 +55,14 @@ struct RepoSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 scriptsSection
+                linkedFilesSection
                 variablesSection
             }
             .formStyle(.grouped)
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }
-                Button("Save") { save() }
+                Button("Cancel") { dismiss() }.clickable()
+                Button("Save") { save() }.clickable()
                     .keyboardShortcut(.defaultAction)
             }
             .padding()
@@ -77,6 +80,16 @@ struct RepoSettingsView: View {
                 Text("One at a time: Run stops the others").tag(RunScriptMode.nonconcurrent)
             }
             Text("Scripts run with zsh in the workspace folder: setup once when a workspace is created, run from the Run button, archive before a workspace is removed. A rocky.json at the root of a workspace replaces all three there.")
+                .font(.rocky(10))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var linkedFilesSection: some View {
+        Section("Linked files") {
+            TextField("Paths", text: $linkedPaths, prompt: Text(".venv\n.vscode/*"), axis: .vertical)
+                .font(.rocky(13, design: .monospaced))
+            Text("Rocky links .env, .env.*, .envrc, .dev.vars and .claude/settings.local.json from the main folder into every new workspace. Add other paths or globs, one per line, such as .venv or .vscode/*.")
                 .font(.rocky(10))
                 .foregroundStyle(.secondary)
         }
@@ -102,11 +115,13 @@ struct RepoSettingsView: View {
                     Button("Remove", systemImage: "minus.circle") { remove(variable) }
                         .labelStyle(.iconOnly)
                         .buttonStyle(.borderless)
+                        .clickable()
                 }
             }
             Button("Add Variable", systemImage: "plus") {
                 variables.append(VariableDraft(name: "", value: "", isSecret: false, savedName: nil, savedAsSecret: false))
             }
+            .clickable()
             Text("Every agent, terminal and script of this repo gets these, plus PORT and the ROCKY_* variables. Secrets are stored in the macOS Keychain, not in Rocky's database. Running processes keep the values they started with.")
                 .font(.rocky(10))
                 .foregroundStyle(.secondary)
@@ -120,6 +135,7 @@ struct RepoSettingsView: View {
 
     private func save() {
         model.setScripts(repoId: repo.id, setup: setupScript, run: runScript, archive: archiveScript, runMode: runMode)
+        model.setLinkedPaths(repoId: repo.id, linkedPaths)
         for name in removedNames {
             model.deleteRepoVar(repoId: repo.id, name: name)
         }

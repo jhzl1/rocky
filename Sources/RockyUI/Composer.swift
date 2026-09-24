@@ -35,6 +35,11 @@ final class ComposerController {
         window.makeFirstResponder(nil)
     }
 
+    /// A queued message back in the box to edit it: its text, with its files as badges where they were.
+    func load(text: String, files: [String]) {
+        textView?.load(MessageHistory.Entry(text: text, files: files))
+    }
+
     /// The message to send and its files, then an empty box. Each file's place in the text is a
     /// `PromptAttachment.marker`.
     func takeMessage() -> (text: String, files: [URL]) {
@@ -208,6 +213,17 @@ final class ComposerTextView: NSTextView {
 
     /// A sent message back in the box: its text, with its files as badges where they were.
     private func show(_ entry: MessageHistory.Entry) {
+        replaceAll(with: attributedMessage(entry))
+        history.didShow(string)
+    }
+
+    /// A queued message back in the box. Not a history entry: ↑ and ↓ treat it as typed text, so they cannot
+    /// replace it before it is sent again.
+    fileprivate func load(_ entry: MessageHistory.Entry) {
+        replaceAll(with: attributedMessage(entry))
+    }
+
+    private func attributedMessage(_ entry: MessageHistory.Entry) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let marker = PromptAttachment.marker
         // Messages sent before files sat inside the text: their files go first.
@@ -221,8 +237,7 @@ final class ComposerTextView: NSTextView {
             result.append(NSAttributedString(string: part))
         }
         result.addAttributes(textAttributes, range: NSRange(location: 0, length: result.length))
-        replaceAll(with: result)
-        history.didShow(string)
+        return result
     }
 
     private func replaceAll(with text: NSAttributedString) {

@@ -3,14 +3,21 @@ import RockyKit
 import SwiftUI
 
 /// The window: sidebar panel, hairline divider, workspace. A custom layout instead of NavigationSplitView, whose
-/// column divider is drawn black and cannot be restyled. The title bar is hidden, so the sidebar is one
-/// full-height panel with the window buttons on it and the workspace header sits at the very top.
+/// column divider is drawn black and cannot be restyled. The title bar is transparent (an empty compact toolbar,
+/// WIN-01), so the sidebar is one full-height panel with the window buttons on its top row and the workspace's top
+/// bar sits at the very top.
 public struct RootView: View {
     @Bindable var model: AppModel
     @AppStorage("sidebarVisible") private var sidebarVisible = true
     @AppStorage("sidebarWidth") private var sidebarWidth = 260.0
     /// Rocky's own menus, drawn over the whole window (`MenuHost`).
     @State private var menus = MenuPresenter()
+    /// The sidebar list has keyboard focus; the workspace reads it as `sidebarHasKeyboardFocus` (KBD-01).
+    @State private var sidebarHasKeyboardFocus = false
+    @Environment(\.appearsActive) private var appearsActive
+
+    /// WIN-02: 16 margin, 52 window buttons, 8 gap, 28 Show sidebar, 12 gap.
+    private static let hiddenSidebarInset: CGFloat = 116
 
     public init(model: AppModel) {
         self.model = model
@@ -20,8 +27,8 @@ public struct RootView: View {
         HStack(spacing: 0) {
             if sidebarVisible {
                 VStack(spacing: 0) {
-                    SidebarTopBar(onToggleSidebar: toggleSidebar, onAddRepository: addRepository)
-                    SidebarView(model: model)
+                    SidebarTopBar(onToggleSidebar: toggleSidebar)
+                    SidebarView(model: model, hasKeyboardFocus: $sidebarHasKeyboardFocus, onAddRepository: addRepository)
                 }
                 .frame(width: sidebarWidth)
                 .background(Color.rockySidebar)
@@ -30,34 +37,48 @@ public struct RootView: View {
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.rockyBackground)
-                // With the sidebar hidden, the window buttons and Show Sidebar sit over the workspace header.
-                .environment(\.titleBarLeadingInset, sidebarVisible ? 0 : 110)
+                // Over the workspace column, not the window: centered under the content it is about.
+                .overlay(alignment: .bottom) {
+                    if let busy = model.busyMessage {
+                        ProgressLabel(text: busy)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(.regularMaterial, in: Capsule())
+                            .padding()
+                    }
+                }
+                // With the sidebar hidden, the window buttons and Show sidebar sit over the workspace's top bar.
+                .environment(\.titleBarLeadingInset, sidebarVisible ? 0 : Self.hiddenSidebarInset)
+                .environment(\.sidebarHasKeyboardFocus, sidebarHasKeyboardFocus)
         }
         .ignoresSafeArea(.container, edges: .top)
         .overlay(alignment: .topLeading) {
             if !sidebarVisible {
-                Button("Show Sidebar", systemImage: "sidebar.left", action: toggleSidebar)
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.borderless)
+                Button("Show sidebar", systemImage: "sidebar.left", action: toggleSidebar)
+                    .buttonStyle(RockyIconButtonStyle())
                     .font(.rocky(14))
-                    .padding(.leading, 78)
-                    .frame(height: 28)
+                    .help("Show sidebar")
+                    // WIN-02: 8 points after the window buttons, centered on the title bar's height.
+                    .padding(.leading, SidebarTopBar.windowButtonsEnd + 8)
+                    .frame(height: SidebarTopBar.height)
                     .ignoresSafeArea(.container, edges: .top)
             }
+        }
+        // ⌘K with the sidebar hidden shows it; the sidebar then focuses its search field (KBD-01).
+        .onChange(of: model.isSearchFocusRequested) { _, requested in
+            if requested, !sidebarVisible { toggleSidebar() }
         }
         .preferredColorScheme(.dark)
         // The default font of every view that sets none (sidebar rows, buttons, fields), at Rocky's zoom.
         .font(.rocky(13))
-        .overlay(alignment: .bottom) {
-            if let busy = model.busyMessage {
-                ProgressLabel(text: busy)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(.regularMaterial, in: Capsule())
-                    .padding()
-            }
-        }
+        // Menus over the settings modal too: its sound picker is one.
+        .overlay { SettingsModal(model: model) }
         .overlay { MenuHost(presenter: menus) }
+        .onChange(of: appearsActive, initial: true) { _, active in model.isWindowActive = active }
+        .onChange(of: model.attentionCount, initial: true) { _, count in
+            NSApp.dockTile.badgeLabel = count > 0 ? "\(count)" : nil
+        }
+        .onAppear { model.onAlert = { _ in AlertSound.play() } }
         .environment(menus)
         .alert(
             "Rocky",
@@ -75,20 +96,12 @@ public struct RootView: View {
             WorkspaceDetailView(model: model, workspace: workspace)
                 .id(workspace.id)
         } else {
-            ContentUnavailableView {
-                Label {
-                    Text("No workspace selected")
-                } icon: {
-                    RockyLogo(size: 96)
-                }
-            } description: {
-                Text("Add a repository, then create a workspace from its menu.")
-            }
+            WelcomeView()
         }
     }
 
     private func toggleSidebar() {
-        withAnimation(.easeOut(duration: 0.15)) { sidebarVisible.toggle() }
+        withAnimation(Theme.Motion.state) { sidebarVisible.toggle() }
     }
 
     private func addRepository() {

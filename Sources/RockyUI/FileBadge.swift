@@ -171,6 +171,7 @@ struct FileBadge: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .clickable()
                     .help("Remove")
                 }
             }
@@ -189,6 +190,7 @@ struct FileBadge: View {
                 if let openFile { openFile(path) } else { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
             }
             .onDisappear { FilePreviewPanel.shared.hide(path) }
+            .clickable()
     }
 }
 

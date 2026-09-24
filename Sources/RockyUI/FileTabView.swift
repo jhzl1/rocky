@@ -46,12 +46,14 @@ struct FileTabView: View {
             }
             .labelStyle(.iconOnly)
             .buttonStyle(.borderless)
+            .clickable()
             .help("Show in Finder")
             Button("Open", systemImage: "arrow.up.forward.app") {
                 NSWorkspace.shared.open(url)
             }
             .labelStyle(.iconOnly)
             .buttonStyle(.borderless)
+            .clickable()
             .help("Open in its app")
         }
         .padding(.horizontal, 16)

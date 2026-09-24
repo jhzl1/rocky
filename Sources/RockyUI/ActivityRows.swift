@@ -107,11 +107,16 @@ struct ToolCallRow: View {
     /// The call belongs to the turn in progress, so a pending status means it is still running.
     let isLive: Bool
 
+    /// Running now: the label shimmers (MOT-03) instead of a spinner next to it.
+    private var isRunning: Bool {
+        isLive && (item.status == "pending" || item.status == "in_progress")
+    }
+
     var body: some View {
         let summary = ToolSummary(item: item)
         HStack(spacing: 8) {
             ActivityIcon(systemImage: summary.symbol)
-            Text(summary.label)
+            ShimmerText(summary.label, isLive: isRunning)
                 .lineLimit(1)
                 .layoutPriority(1)
             ForEach(item.attachments.prefix(3), id: \.self) { FileBadge(path: $0) }
@@ -135,9 +140,7 @@ struct ToolCallRow: View {
         case "completed" where item.toolKind == ACPProtocol.questionToolKind:
             DetailBadge(text: "ANSWERED", monospaced: true, systemImage: "checkmark.circle")
         case "failed":
-            DetailBadge(text: "FAILED", monospaced: true, tint: .red.opacity(0.85), systemImage: "xmark.circle")
-        case "pending", "in_progress":
-            if isLive { CircularProgress(size: 11) }
+            DetailBadge(text: "FAILED", monospaced: true, tint: Theme.danger, systemImage: "xmark.circle")
         default:
             EmptyView()
         }
@@ -171,19 +174,19 @@ struct ToolGroupRow: View {
             } label: {
                 HStack(spacing: 8) {
                     ActivityIcon(systemImage: "square.stack.3d.up")
-                    Text(title).layoutPriority(1)
+                    // Its title shimmers while one of its calls runs (MOT-03).
+                    ShimmerText(title, isLive: isLive && tools.contains { $0.status == "pending" || $0.status == "in_progress" })
+                        .layoutPriority(1)
                     if !expanded { DetailBadge(text: overview) }
                     Image(systemName: "chevron.right")
                         .font(.rocky(10, weight: .semibold))
                         .foregroundStyle(.tertiary)
                         .rotationEffect(.degrees(expanded ? 90 : 0))
-                    if isLive, tools.contains(where: { $0.status == "pending" || $0.status == "in_progress" }) {
-                        CircularProgress(size: 11)
-                    }
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .clickable()
             if expanded {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(tools) { ToolCallRow(item: $0, isLive: isLive) }
@@ -222,6 +225,7 @@ struct ThoughtRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .clickable()
             .help(expanded ? "Hide the thinking" : "Show the thinking")
             if expanded {
                 Text(item.text)
@@ -257,18 +261,20 @@ struct UserMessageRow: View {
     }
 }
 
-/// At the end of the conversation while the agent works: the progress arc and how long the turn has run.
-struct ThinkingRow: View {
+/// At the end of the conversation while the agent works (MOT-03): "Working", shimmering, and how long the turn has
+/// run. Not "Thinking", which is the label of the agent's thoughts (`ThoughtRow`).
+struct WorkingRow: View {
     let startedAt: Date?
 
     var body: some View {
         HStack(spacing: 8) {
-            CircularProgress()
+            ShimmerText("Working")
             if let startedAt {
                 TimelineView(.periodic(from: startedAt, by: 1)) { context in
+                    // In the code font, so the time reads apart from the label (user decision, 2026-09-23).
                     Text(verbatim: Self.elapsed(from: startedAt, to: context.date))
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
+                        .font(.rocky(12, design: .monospaced))
+                        .foregroundStyle(Theme.textTertiary)
                 }
             }
         }

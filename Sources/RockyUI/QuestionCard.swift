@@ -46,12 +46,14 @@ struct QuestionCard: View {
             HStack {
                 Button("Skip") { answer(.skipped) }
                     .buttonStyle(.plain)
+                    .clickable()
                     .foregroundStyle(.secondary)
                     .help("Go on without answering")
                 Spacer()
                 if index > 0 {
                     Button("Back") { index -= 1 }
                         .buttonStyle(.plain)
+                        .clickable()
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 10)
                 }
@@ -88,6 +90,7 @@ struct QuestionCard: View {
                     .background(Color.white.opacity(position == index ? 0.12 : 0.04), in: Capsule())
                 }
                 .buttonStyle(.plain)
+                .clickable()
             }
         }
     }
@@ -102,6 +105,7 @@ struct QuestionCard: View {
                 .background(isEnabled ? Color.white : Color.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 7))
         }
         .buttonStyle(.plain)
+        .clickable()
         .disabled(!isEnabled)
     }
 

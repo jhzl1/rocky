@@ -130,6 +130,7 @@ struct MenuButton<Label: View, Content: View>: View {
             label(presenter?.isOpen(id) ?? false)
         }
         .buttonStyle(.plain)
+        .clickable()
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { newFrame in
             frame = newFrame
             presenter?.move(id, to: newFrame)
@@ -165,25 +166,25 @@ struct MenuItem: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
                 if let detail {
-                    Text(detail).font(.rocky(10)).foregroundStyle(.tertiary).lineLimit(1)
+                    Text(detail).font(.rocky(10)).foregroundStyle(Theme.textTertiary).lineLimit(1)
                 }
             }
             Spacer(minLength: 12)
             if let shortcut {
-                Text(shortcut).foregroundStyle(.tertiary)
+                Text(shortcut).foregroundStyle(Theme.textTertiary)
             }
             if isChecked {
                 Image(systemName: "checkmark").font(.rocky(10, weight: .semibold))
             }
         }
-        .foregroundStyle(isDestructive ? Color.red : Color.primary)
+        .foregroundStyle(isDestructive ? Theme.danger : Theme.textPrimary)
     }
 
     @ViewBuilder
     private var iconView: some View {
         switch icon {
         case .none: Color.clear.frame(height: 1)
-        case .symbol(let name): Image(systemName: name).foregroundStyle(isDestructive ? Color.red : Color.secondary)
+        case .symbol(let name): Image(systemName: name).foregroundStyle(isDestructive ? Theme.danger : Theme.textSecondary)
         case .agent(let agent): AgentIcon(agent: agent, size: 14)
         }
     }
@@ -209,6 +210,7 @@ struct PanelRow<Content: View>: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .clickable()
         .onHover { hovering = $0 }
     }
 }

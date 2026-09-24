@@ -1,0 +1,214 @@
+import AppKit
+import RockyKit
+import SwiftUI
+
+/// A workspace in the sidebar (ROW-01): one 28-point line with the status glyph, the task title and a trailing slot
+/// that holds, in order of precedence, the hover actions (ROW-05) and the ⌘ hint (KBD-01). Diff stats will go there
+/// too (OUT-01, not built). The branch and the workspace name are in the tooltip; the branch also leads the top bar.
+struct SidebarRow: View {
+    let workspace: Workspace
+    let title: String
+    /// The workspace name stands in for a task title (ROW-02), so it is drawn dimmer.
+    let titleIsFallback: Bool
+    let status: WorkspaceStatus
+    let isSelected: Bool
+    /// The list has keyboard focus and this is its selected row: the focus ring shows, and so do the hover actions
+    /// (ROW-05, KBD-01).
+    let hasKeyboardFocus: Bool
+    /// "⌘1"…"⌘9" while ⌘ is held (KBD-01).
+    let shortcutHint: String?
+    let onSelect: () -> Void
+    let onRemove: () -> Void
+
+    @State private var hovering = false
+    @Environment(MenuPresenter.self) private var presenter: MenuPresenter?
+
+    /// Remove workspace and More: two 22-point buttons 2 apart.
+    private static let actionsWidth: CGFloat = 22 + 2 + 22
+
+    private var moreMenuId: String { "workspace-more-\(workspace.id)" }
+
+    /// Also while its More menu is open, so the button that opened it does not fade out from under the menu.
+    private var showsActions: Bool {
+        hovering || hasKeyboardFocus || presenter?.isOpen(moreMenuId) == true
+    }
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 8) {
+                WorkspaceStatusGlyph(status: status, size: 14)
+                    .frame(width: Zoom.shared(16), height: Zoom.shared(16))
+                Text(title)
+                    .font(.rocky(13))
+                    .foregroundStyle(titleIsFallback ? Theme.textSecondary : Theme.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if let shortcutHint, !showsActions {
+                    Text(shortcutHint)
+                        .font(.rocky(11))
+                        .foregroundStyle(Theme.textTertiary)
+                }
+            }
+            .padding(.leading, 24)
+            // The hover actions sit 4 from the right edge; the title stops 8 before them.
+            .padding(.trailing, showsActions ? 4 + Zoom.shared(Self.actionsWidth) + 8 : 8)
+            .frame(height: Zoom.shared(28))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(SidebarRowButtonStyle())
+        .clickable()
+        .accessibilityLabel("\(title), \(status.accessibilityName)")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityAction(named: "Remove Workspace…", onRemove)
+        .accessibilityAction(named: "Open in Finder", openInFinder)
+        .accessibilityAction(named: "Copy Branch Name", copyBranch)
+        .overlay(alignment: .trailing) {
+            actions
+        }
+        .background(
+            isSelected ? Theme.fillSelected : hovering ? Theme.fillHover : Color.clear,
+            in: RoundedRectangle(cornerRadius: 7)
+        )
+        .overlay {
+            // KBD-01: keyboard focus only, 2 points inside the row's radius.
+            RoundedRectangle(cornerRadius: 7)
+                .strokeBorder(Theme.accent, lineWidth: 2)
+                .opacity(hasKeyboardFocus ? 1 : 0)
+                .allowsHitTesting(false)
+        }
+        .onHover { inside in withAnimation(Theme.Motion.hover) { hovering = inside } }
+        .help(tooltip)
+        .rockyContextMenu(id: "workspace-\(workspace.id)") { menuItems }
+    }
+
+    /// ROW-05: they replace the trailing slot and fade in 120 ms.
+    private var actions: some View {
+        HStack(spacing: 2) {
+            Button(action: onRemove) {
+                Label("Remove workspace", systemImage: "archivebox")
+            }
+            .buttonStyle(RockyIconButtonStyle(size: 22))
+            .help("Remove workspace…")
+            MenuButton(id: moreMenuId, placement: .belowTrailing, width: 220) { isOpen in
+                SidebarMenuIcon(systemImage: "ellipsis", label: "More actions", isOpen: isOpen)
+            } content: {
+                menuItems
+            }
+            .help("More")
+        }
+        .font(.rocky(12))
+        .padding(.trailing, 4)
+        .opacity(showsActions ? 1 : 0)
+        .allowsHitTesting(showsActions)
+        .accessibilityHidden(!showsActions)
+        .animation(Theme.Motion.hover, value: showsActions)
+    }
+
+    /// The same menu for More and a right-click (ROW-05).
+    @ViewBuilder
+    private var menuItems: some View {
+        MenuItem(title: "Open in Finder", icon: .symbol("folder"), action: openInFinder)
+        MenuItem(title: "Copy Branch Name", icon: .symbol("doc.on.doc"), action: copyBranch)
+        MenuDivider()
+        MenuItem(title: "Remove Workspace…", icon: .symbol("archivebox"), isDestructive: true, action: onRemove)
+    }
+
+    /// Title; "branch · workspace name" (the name is otherwise only in the path); the failure in the error state
+    /// (ROW-01).
+    private var tooltip: String {
+        var lines = [title, "\(workspace.branch) · \(workspace.name)"]
+        if case .failed(let message) = status { lines.append(message) }
+        return lines.joined(separator: "\n")
+    }
+
+    private func openInFinder() {
+        _ = NSWorkspace.shared.open(URL(fileURLWithPath: workspace.path, isDirectory: true))
+    }
+
+    private func copyBranch() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(workspace.branch, forType: .string)
+    }
+}
+
+/// The row's own look is drawn by `SidebarRow`: no pressed dimming (CUR-02 gives rows only hover and selection).
+private struct SidebarRowButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+    }
+}
+
+/// A workspace's state as one glyph (ROW-03): 14 points in a row, 12 in a folded repository's header (SB-04). The
+/// state is carried by the shape as well as the color: dot with a halo, triangle, spinner, dot, branch (A11Y-01).
+struct WorkspaceStatusGlyph: View {
+    let status: WorkspaceStatus
+    var size: CGFloat = 14
+
+    var body: some View {
+        switch status {
+        case .needsYou:
+            // An 8-point dot with a 3-point halo at 20 %.
+            Circle()
+                .fill(Theme.attention.opacity(0.2))
+                .frame(width: Zoom.shared(14), height: Zoom.shared(14))
+                .overlay {
+                    Circle().fill(Theme.attention).frame(width: Zoom.shared(8), height: Zoom.shared(8))
+                }
+        case .failed:
+            symbol("exclamationmark.triangle", color: Theme.danger)
+        case .working:
+            CircularProgress(size: size, tint: Theme.textPrimary)
+        case .unread:
+            Circle()
+                .fill(Theme.accent)
+                .frame(width: Zoom.shared(7), height: Zoom.shared(7))
+        case .idle:
+            symbol("arrow.triangle.branch", color: Theme.textTertiary)
+        }
+    }
+
+    private func symbol(_ name: String, color: Color) -> some View {
+        Image(systemName: name)
+            .resizable()
+            .scaledToFit()
+            .foregroundStyle(color)
+            .frame(width: Zoom.shared(size), height: Zoom.shared(size))
+    }
+}
+
+/// The label of an icon button that opens a Rocky menu (`MenuButton` draws a plain button, so the look is here):
+/// `RockyIconButtonStyle`'s colors and fills, lit while its menu is open.
+struct SidebarMenuIcon: View {
+    let systemImage: String
+    let label: String
+    var size: CGFloat = 22
+    let isOpen: Bool
+    @State private var hovering = false
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .foregroundStyle(hovering || isOpen ? Theme.textPrimary : Theme.textSecondary)
+            .frame(width: Zoom.shared(size), height: Zoom.shared(size))
+            .background(
+                isOpen ? Theme.fillPressed : hovering ? Theme.fillIconHover : Color.clear,
+                in: RoundedRectangle(cornerRadius: size >= 28 ? 6 : size >= 22 ? 5 : 4)
+            )
+            .contentShape(Rectangle())
+            .onHover { inside in withAnimation(Theme.Motion.hover) { hovering = inside } }
+            .accessibilityLabel(label)
+    }
+}
+
+extension WorkspaceStatus {
+    /// What VoiceOver reads after a row's title (A11Y-01).
+    var accessibilityName: String {
+        switch self {
+        case .needsYou: "Needs you"
+        case .failed: "Error"
+        case .working: "Working"
+        case .unread: "Unread reply"
+        case .idle: "Idle"
+        }
+    }
+}
