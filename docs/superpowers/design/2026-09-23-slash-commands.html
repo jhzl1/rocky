@@ -102,6 +102,8 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
 .working { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
 .elapsed { font: 12px var(--mono); color: var(--text-3); }
 .turn-footer { display: flex; align-items: center; gap: 8px; font-size: 10.5px; color: var(--text-2); }
+/* M2.5's end of a turn the user stopped, simplified */
+.interrupted { align-self: flex-start; padding: 4px 8px; border: 1px solid var(--hairline); border-radius: 6px; font: 11px var(--mono); text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-2); }
 .chat-empty { margin-top: 70px; text-align: center; color: var(--text-3); font-size: 13px; }
 .enter { animation: enter var(--dur-enter) var(--ease-out) both; }
 @keyframes enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
@@ -121,6 +123,19 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
 .editor .ghost { position: absolute; inset: 0; color: transparent; pointer-events: none; }
 .editor .ghost .hint { color: var(--text-3); }
 .composer-bar { display: flex; align-items: center; gap: 8px; }
+/* CMD-08: terminal commands. The strip joins the top of the message box; the terminal sits above both. */
+.term-inline { height: 224px; margin-bottom: 8px; display: flex; flex-direction: column; border-radius: 10px; border: 1px solid var(--composer-border); background: #16181C; overflow: hidden; animation: enter 220ms var(--ease-out) both; }
+.term-head { height: 28px; flex-shrink: 0; display: flex; align-items: center; gap: 6px; padding: 0 4px 0 12px; border-bottom: 1px solid var(--hairline); font-size: 11px; color: var(--text-3); }
+.term-body { flex-grow: 1; overflow: auto; padding: 8px 12px; font: 12px/1.5 var(--mono); color: #D5D8DC; white-space: pre; }
+.term-body .sel { color: var(--accent); }
+.term-strip { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 6px 6px 6px 14px; border: 1px solid var(--composer-border); border-bottom: 0; border-radius: 12px 12px 0 0; background: var(--composer); font-size: 12.5px; color: var(--text-2); }
+.term-strip code { font-size: 12px; color: var(--text); background: none; padding: 0; }
+.composer-col.has-strip .composer { border-top-left-radius: 0; border-top-right-radius: 0; border-top-color: var(--hairline); }
+.t-btn { height: 24px; display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; border-radius: 6px; font-size: 12px; color: var(--text); background: rgba(255,255,255,0.08); white-space: nowrap; }
+.t-btn:hover { background: rgba(255,255,255,0.12); }
+.t-btn.plain { background: none; color: var(--text-2); } .t-btn.plain:hover { background: rgba(255,255,255,0.06); color: var(--text); }
+.x-btn { width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; color: var(--text-3); }
+.x-btn:hover { background: rgba(255,255,255,0.06); color: var(--text); }
 .model-btn { height: 26px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border-radius: 6px; font-size: 12px; color: var(--text-2); }
 .icon-btn { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r-btn); color: var(--text-2); transition: background var(--dur-fast), color var(--dur-fast); }
 .icon-btn:hover { background: var(--fill-icon-hover); color: var(--text); }
@@ -207,6 +222,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
         <div class="composer-wrap">
           <div class="composer-col" id="composerCol">
             <div class="popup" id="popup" data-req="CMD-01" role="listbox" aria-label="Commands" hidden></div>
+            <div id="termSlot"></div>
             <div class="composer">
               <div class="editor">
                 <div class="ghost" id="ghost" aria-hidden="true"></div>
@@ -228,7 +244,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
 
 <aside class="spec" id="spec">
   <h1>Requirements</h1>
-  <p>Plan: <code>docs/superpowers/plans/2026-09-23-m2.6-slash-commands.md</code>. Scope: the slash commands the conversation's agent announces over ACP, offered in the message box. Rocky adds no commands of its own.</p>
+  <p>Plan: <code>docs/superpowers/plans/2026-09-23-m2.6-slash-commands.md</code>. Scope: the slash commands the conversation's agent announces over ACP, offered in the message box. Rocky adds no commands of its own; it only brings back six of Claude's terminal commands, which open an embedded terminal (CMD-08).</p>
   <p>Labels: <span class="scope tech">Technical</span> = protocol and model facts the implementation must follow; <span class="scope in">In scope</span> = behavior and UI.</p>
 
   <!-- ============================== ACP ============================== -->
@@ -285,7 +301,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
       <tr><th></th><th>Claude Code (claude-agent-acp 0.81.0)</th><th>OpenCode 1.18.32</th></tr>
       <tr><td>Source</td><td><code>query.supportedCommands()</code>: built-in commands, skills, <code>.claude/commands</code>, MCP prompts</td><td>its <code>commands</code> (built-in and custom)</td></tr>
       <tr><td>Fields</td><td><code>name</code>, <code>description</code>, <code>input.hint</code> from <code>argumentHint</code> (arrays joined with spaces), else <code>null</code></td><td><code>name</code>, <code>description</code> only (no <code>input</code>)</td></tr>
-      <tr><td>Filtered out</td><td>clear, cost, keybindings-help, login, logout, output-style:new, release-notes, todos, and the CLI's terminal-bound commands</td><td>none</td></tr>
+      <tr><td>Filtered out</td><td>clear, cost, keybindings-help, login, logout, output-style:new, release-notes, todos, and the CLI's terminal-bound commands (six of those come back in Rocky as terminal commands, CMD-08)</td><td>none</td></tr>
       <tr><td>MCP</td><td>"server:cmd (MCP)" becomes <code>mcp:server:cmd</code>; the adapter turns <code>/mcp:server:cmd args</code> back when it receives the prompt</td><td>n/a</td></tr>
       <tr><td>Local-only</td><td><code>/context</code>, <code>/heapdump</code>, <code>/extra-usage</code> answer without replaying the user message</td><td>n/a</td></tr>
       <tr><td>Runs as</td><td>the prompt text goes to the SDK, which runs the slash command</td><td>matches the name and calls <code>session.command({ command, arguments })</code></td></tr>
@@ -360,9 +376,9 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
   public static func rank(_ commands: [SlashCommand], query: String) -> [SlashCommand]
 }</pre>
     <dl>
-      <dt>Order</dt><dd>Case-insensitive. Empty query: the announced order. Otherwise, in tiers, each tier in announced order: (1) name starts with the query; (2) a segment of the name starts with it (segments split on <code>:</code>, <code>-</code>, <code>_</code>: "rev" finds <code>security-review</code>, "tri" finds <code>mcp:linear:triage</code>); (3) the name contains it; (4) the description contains it. Nothing else matches.</dd>
+      <dt>Order</dt><dd>Case-insensitive. Empty query: the announced order. Otherwise, in tiers, each tier in announced order: (0) the name equals the query, so "/mcp" + Return runs <code>mcp</code> and not <code>mcp:linear:triage</code> (added 2026-09-23 with CMD-08); (1) name starts with the query; (2) a segment of the name starts with it (segments split on <code>:</code>, <code>-</code>, <code>_</code>: "rev" finds <code>security-review</code>, "tri" finds <code>mcp:linear:triage</code>); (3) the name contains it; (4) the description contains it. Nothing else matches.</dd>
       <dt>Highlight</dt><dd>The matched part of the name is drawn in <code>accent</code> (tiers 1–3).</dd>
-      <dt>Tests</dt><dd>Each tier; ties keep announced order; a query matching only descriptions; a 300-command list ranks in under 5 ms.</dd>
+      <dt>Tests</dt><dd>Each tier, the exact name first; ties keep announced order; a query matching only descriptions; a 300-command list ranks in under 5 ms.</dd>
     </dl>
   </section>
 
@@ -428,6 +444,30 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
   <section class="req" id="REQ-CMD-07">
     <header><code class="id">CMD-07</code><h3>Finding the feature</h3><span class="scope in">In scope</span></header>
     <p>The message box's "+" menu gains "Commands" with the hint "/": it inserts "/" at the start of an empty message (or selects the whole message's start when it has text and puts "/" there) and opens the popup. The placeholder stays as today.</p>
+  </section>
+
+  <section class="req" id="REQ-CMD-08">
+    <header><code class="id">CMD-08</code><h3>Terminal commands, like Conductor</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Why</dt><dd>Claude's terminal-only commands answer over ACP with one line ("Use /mcp in the terminal for details"). Conductor runs them in an embedded terminal instead (extracted from its code by dev-1). User decision, 2026-09-23: "hazlo igual que Conductor".</dd>
+      <dt>Which</dt><dd>Claude Code conversations only, a fixed list: <code>mcp</code>, <code>agents</code>, <code>hooks</code>, <code>memory</code>, <code>permissions</code>, <code>plugins</code>. Rocky adds any of them the agent did not announce to the popup's list; their descriptions end in "(opens terminal)". OpenCode conversations are unchanged.</dd>
+      <dt>Fixed list</dt><dd>Hardcoded, the same six as Conductor (user decision, 2026-09-23). Nothing Rocky can read marks them: the SDK's <code>SlashCommand</code> has only name, description, argument hint, aliases and <code>builtin</code>, and the CLI's <code>terminal_slash_commands</code> (system/init) lists a different set (exit, color, statusline, reload-plugins, doctor). Known in the bundled CLI 2.1.280: <code>/agents</code> answers "(removed)", and <code>/plugins</code> is an alias of <code>/plugin</code>; both stay as Conductor has them. <code>/doctor</code> is not added.</dd>
+      <dt>Trigger</dt><dd>Picking one in the popup (Return or click), or sending a message whose first token is one of them. It never reaches the agent: the message box clears, attachments included, and the strip appears.</dd>
+      <dt>Strip</dt><dd>Joined to the top of the message box: same fill and border, its top corners rounded, and the box's top edge becomes a <code>hairline</code> divider under it. 38 pt min height, padding 6 / 14, 12.5 <code>textSecondary</code> with the command in 12 mono <code>textPrimary</code>. Stages:
+        <table>
+          <tr><th>Stage</th><th>Text</th><th>Controls</th></tr>
+          <tr><td>pending</td><td>Run <code>/mcp</code> in the embedded terminal</td><td>[terminal glyph "Open terminal"] ×</td></tr>
+          <tr><td>running</td><td>Complete <code>/mcp</code> below, then click Done</td><td>×</td></tr>
+          <tr><td>done</td><td>Terminal command finished. Refresh to use the updated config here</td><td>[Refresh] ×</td></tr>
+        </table></dd>
+      <dt>Terminal</dt><dd>Open terminal shows it above the strip, 8 pt apart: 224 pt tall, radius 10, 1 pt border, the terminal's background, entering like a chat row (220 ms, from 6 pt below). Header 28 pt: 11 pt <code>textTertiary</code> "Starting /mcp…" → "Running /mcp." → "Finished /mcp.", then Done (plain text button) and ×. It runs Rocky's bundled Claude Code executable directly, not typed into a shell, with the command (and any arguments) as its argument, in the worktree, with the workspace environment (the repository's <code>CLAUDE_CONFIG_DIR</code> included), and without resuming the chat's session. The process exit is the "finished" signal (a Rocky departure: Conductor types it into a shell). Terminal view and process: M2.5's <code>PTYSession</code> and terminal view.</dd>
+      <dt>Done</dt><dd>Done (terminal header) stops the process if it still runs, closes the terminal and moves the strip to done. The process exiting by itself sets the header to "Finished /mcp." and the strip to done; the terminal stays until Done or ×.</dd>
+      <dt>Refresh</dt><dd>Restarts the conversation's agent, resuming the same session, so it rereads the MCP and plugin configuration and sends a new command list; then the strip goes. Disabled while a turn runs. No "Configuration refreshed." toast: the toast system comes with M2.7 (Rocky departure, for now).</dd>
+      <dt>×</dt><dd>On the strip: removes it and stops the terminal if one runs. On the terminal header: stops the process and closes the terminal; the strip goes back to pending.</dd>
+      <dt>State</dt><dd>Nothing is stored: the strip and the terminal live in the conversation's view, and a relaunch forgets them.</dd>
+      <dt>Keys</dt><dd>While the terminal has focus, every key goes to it, Esc included: ChatView's key monitor skips then, so Esc never cancels the turn or closes the strip (Rocky departure).</dd>
+      <dt>Try it</dt><dd>Type "/mcp" and press Return, then Open terminal, Done, Refresh.</dd>
+    </dl>
   </section>
 
   <h2>Titles and accessibility</h2>
@@ -502,6 +542,12 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
     C('find-skills', 'Discover and install agent skills'),
     C('mcp:linear:triage', 'Triage new Linear issues assigned to you', '<team>'),
   ];
+  // CMD-08: Claude's terminal commands, added by Rocky; they open the embedded terminal instead of reaching the agent.
+  const TERMINAL = {
+    mcp: 'Manage MCP servers', agents: 'Manage agent configurations', hooks: 'Manage hook configurations for tool events',
+    memory: 'Edit Claude memory files', permissions: 'Manage allow and deny tool permission rules', plugins: 'Manage plugins',
+  };
+  for (const [name, d] of Object.entries(TERMINAL)) CLAUDE.push({ name, description: `${d} (opens terminal)`, inputHint: null, terminal: true });
   const OPENCODE = [
     C('init', 'create/update AGENTS.md'),
     C('review', 'review changes [commit|branch|pr], defaults to uncommitted'),
@@ -540,16 +586,17 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
   function rank(commands, query) {
     const q = query.toLowerCase();
     if (!q) return commands.map((c) => ({ c, at: -1 }));
-    const tiers = [[], [], [], []];
+    const tiers = [[], [], [], [], []];
     for (const c of commands) {
       const n = c.name.toLowerCase();
-      if (n.startsWith(q)) { tiers[0].push({ c, at: 0 }); continue; }
+      if (n === q) { tiers[0].push({ c, at: 0 }); continue; }   // KIT-03 tier 0: the exact name
+      if (n.startsWith(q)) { tiers[1].push({ c, at: 0 }); continue; }
       let seg = -1; let pos = 0;
       for (const part of n.split(/([:\-_])/)) { if (!/[:\-_]/.test(part) && part.startsWith(q)) { seg = pos; break; } pos += part.length; }
-      if (seg >= 0) { tiers[1].push({ c, at: seg }); continue; }
+      if (seg >= 0) { tiers[2].push({ c, at: seg }); continue; }
       const i = n.indexOf(q);
-      if (i >= 0) { tiers[2].push({ c, at: i }); continue; }
-      if (c.description.toLowerCase().includes(q)) tiers[3].push({ c, at: -1 });
+      if (i >= 0) { tiers[3].push({ c, at: i }); continue; }
+      if (c.description.toLowerCase().includes(q)) tiers[4].push({ c, at: -1 });
     }
     return tiers.flat();
   }
@@ -610,6 +657,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
     const r = pop.rows[i]; if (!r) return;
     const cmd = r.c;
     const rest = input.value.slice(tokenOf(input.value).length).replace(/^\s+/, '');
+    if (cmd.terminal && how !== 'tab') { closePopup(); startTerminalCommand(cmd.name); return; }   // CMD-08
     if (how === 'return' && !cmd.inputHint && !rest) {
       input.value = '/' + cmd.name; closePopup(); send(); return;
     }
@@ -631,6 +679,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
     if (it.kind === 'user') return `<div class="msg-user${e}">${userHTML(it.text, c)}</div>`;
     if (it.kind === 'agent') return `<div class="msg-agent${e}" data-item="${it.id}">${esc(it.text).replace(/`([^`]+)`/g, '<code>$1</code>')}</div>`;
     if (it.kind === 'tool') return `<div class="tool${e}" data-item="${it.id}"><span class="tool-icon">${I.terminal}</span><span class="${it.live ? 'shimmer' : ''}" style="${it.live ? '' : 'color:var(--text)'}">${esc(it.label)}</span><span class="badge">${esc(it.detail)}</span></div>`;
+    if (it.kind === 'interrupted') return `<div class="interrupted${e}">Interrupted by user</div>`;
     if (it.kind === 'footer') return `<div class="turn-footer${e}"><span class="agent sm ${it.agent}">${it.agent === 'claude' ? 'C' : 'O'}</span><span>${esc(it.text)}</span></div>`;
     return '';
   }
@@ -644,6 +693,49 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
     $('#tabs').innerHTML = convs.map((c) => `<div class="tab-wrap${c.id === active ? ' selected' : ''}"><button class="tab" data-conv="${c.id}">${c.turn ? spinner(12) : `<span class="agent ${c.agent}">${c.agent === 'claude' ? 'C' : 'O'}</span>`}<span class="t-label">${esc(c.title || 'New conversation')}</span></button></div>`).join('');
     $('#rowTitle').textContent = convs.find((x) => x.title).title;
   }
+  // ---------- CMD-08: the strip and the embedded terminal ----------
+  const X = '<svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>';
+  const MCP_SCREEN = ['Manage MCP servers', '', '  <span class="sel">❯ 1. linear   ✔ connected</span>', '    2. github   ✔ connected', '    3. figma    ✘ failed · 2 tools', '', 'Enter to view · a to add · Esc to exit'];
+  function startTerminalCommand(name) {
+    const c = conv();
+    input.value = ''; ghostCmd = null; renderGhost(); syncSend();   // clears the message box, attachments included
+    c.term = { name, stage: 'pending', open: false, head: '' };
+    renderTerm();
+  }
+  function renderTerm() {
+    const c = conv(); const t = c.term; const slot = $('#termSlot'); const col = $('#composerCol');
+    col.classList.toggle('has-strip', Boolean(t));
+    if (!t) { slot.innerHTML = ''; return; }
+    const cmd = `<code>/${esc(t.name)}</code>`;
+    const strip = t.stage === 'pending' ? `<span class="grow">Run ${cmd} in the embedded terminal</span><button class="t-btn" data-t="open">${I.terminal}Open terminal</button><button class="x-btn" data-t="close" aria-label="Dismiss">${X}</button>`
+      : t.stage === 'running' ? `<span class="grow">Complete ${cmd} below, then click Done</span><button class="x-btn" data-t="close" aria-label="Dismiss">${X}</button>`
+      : `<span class="grow">Terminal command finished. Refresh to use the updated config here</span><button class="t-btn" data-t="refresh" ${c.turn ? 'disabled' : ''}>Refresh</button><button class="x-btn" data-t="close" aria-label="Dismiss">${X}</button>`;
+    const term = t.open ? `<div class="term-inline${t.entered ? '' : ''}" data-req="CMD-08"><div class="term-head"><span class="grow">${esc(t.head)}</span><button class="t-btn plain" data-t="done">Done</button><button class="x-btn" data-t="kill" aria-label="Stop and close">${X}</button></div><div class="term-body" tabindex="0">${t.head === `Starting /${esc(t.name)}…` ? '' : (t.name === 'mcp' ? MCP_SCREEN.join('\n') : `/${esc(t.name)}\n\n(Claude Code's own screen for /${esc(t.name)})\n\nEsc to exit`)}</div></div>` : '';
+    slot.innerHTML = term + `<div class="term-strip" data-req="CMD-08">${strip}</div>`;
+  }
+  $('#termSlot').addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-t]'); if (!b || b.disabled) return;
+    const c = conv(); const t = c.term; if (!t) return;
+    switch (b.dataset.t) {
+      case 'open':
+        t.open = true; t.stage = 'running'; t.head = `Starting /${t.name}…`; renderTerm();
+        await wait(700); if (c.term !== t || !t.open) return;
+        t.head = `Running /${t.name}.`; renderTerm(); $('.term-body')?.focus(); break;
+      case 'done': t.open = false; t.stage = 'done'; renderTerm(); break;
+      case 'kill': t.open = false; t.stage = 'pending'; renderTerm(); break;
+      case 'close': c.term = null; renderTerm(); break;
+      case 'refresh': c.term = null; renderTerm(); toast('Restarted Claude Code (session/load): it rereads its config and sends a new command list.'); break;
+      default: break;
+    }
+  });
+  // CMD-08: keys go to the focused terminal; Esc there quits the CLI, which is the "finished" signal.
+  $('#termSlot').addEventListener('keydown', (e) => {
+    const c = conv(); const t = c.term;
+    if (!t || !t.open || !e.target.closest('.term-body')) return;
+    e.stopPropagation();
+    if (e.key === 'Escape') { e.preventDefault(); t.head = `Finished /${t.name}.`; t.stage = 'done'; renderTerm(); }
+  });
+
   function renderComposer() {
     const c = conv();
     input.placeholder = `Ask ${AGENT[c.agent]} to make changes…`;
@@ -668,14 +760,18 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
   // TITLE-01: a command never names the conversation.
   function isCommand(text, c) { const m = text.match(/^\/(\S+)/); return Boolean(m && c.commands.some((x) => x.name === m[1])); }
   // M2.5's queue, simplified: while a turn runs, a sent message waits after "Working".
-  const queuedHTML = (c) => (c.queue || []).map((t) => `<div class="msg-queued"><div class="q-body">${userHTML(t, c)}</div><span class="q-cap">Queued</span></div>`).join('');
+  const queuedHTML = (c) => ((c.queue || []).length ? `<div class="msg-queued">${c.queue.map((t) => `<div class="q-body">${userHTML(t, c)}</div>`).join('')}<span class="q-cap">${c.queueHeld ? 'On hold until your next message' : 'Queued'}</span></div>` : '');
   function renderQueue(c) { if (c.id !== active) return; chatCol.querySelectorAll('.msg-queued').forEach((e) => e.remove()); chatCol.insertAdjacentHTML('beforeend', queuedHTML(c)); $('#chat').scrollTop = $('#chat').scrollHeight; }
   async function send(queuedText, target) {
     const c = target || conv();
     const text = queuedText || input.value.trim();
     if (!text) return;
+    const termName = tokenOf(text).slice(1);
+    if (!queuedText && c.agent === 'claude' && text.startsWith('/') && TERMINAL[termName]) { startTerminalCommand(termName); return; }   // CMD-08: never reaches the agent
     if (!queuedText) { input.value = ''; ghostCmd = null; renderGhost(); closePopup(); syncSend(); }
     if (c.turn) { (c.queue = c.queue || []).push(text); renderQueue(c); return; }
+    // M2.5: a new message goes out first, as its own turn; the held ones follow after it, oldest first.
+    if (c.queueHeld && !queuedText) { c.queueHeld = false; renderQueue(c); }
     if (!c.title && !isCommand(text, c)) c.title = text.slice(0, 40) + (text.length > 40 ? '…' : '');
     append(c, { id: uid(), kind: 'user', text });
     const turn = { started: Date.now() };
@@ -724,8 +820,18 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
   popup.addEventListener('mousemove', (e) => { const b = e.target.closest('.cmd'); if (b && Number(b.dataset.i) !== pop.sel) { pop.sel = Number(b.dataset.i); popup.querySelectorAll('.cmd').forEach((x, i) => { x.classList.toggle('sel', i === pop.sel); x.setAttribute('aria-selected', String(i === pop.sel)); }); } });
   popup.addEventListener('mousedown', (e) => e.preventDefault());       // keep focus in the text box
   popup.addEventListener('click', (e) => { const b = e.target.closest('.cmd'); if (b) choose(Number(b.dataset.i), 'return'); });
-  $('#tabs').addEventListener('click', (e) => { const b = e.target.closest('[data-conv]'); if (!b) return; active = b.dataset.conv; input.value = ''; ghostCmd = null; renderGhost(); closePopup(); renderTabs(); renderChat(); renderComposer(); input.focus(); });
-  $('#sendBtn').addEventListener('click', () => { const c = conv(); if (c.turn) { c.turn = null; const w = $('#working'); if (w) w.remove(); renderTabs(); syncSend(); toast('Stopped the turn (session/cancel).'); return; } send(); });
+  $('#tabs').addEventListener('click', (e) => { const b = e.target.closest('[data-conv]'); if (!b) return; active = b.dataset.conv; input.value = ''; ghostCmd = null; renderGhost(); closePopup(); renderTerm(); renderTabs(); renderChat(); renderComposer(); input.focus(); });
+  $('#sendBtn').addEventListener('click', () => {
+    const c = conv();
+    if (!c.turn) { send(); return; }
+    const secs = Math.max(1, Math.round((Date.now() - c.turn.started) / 1000));
+    c.turn = null;   // session/cancel
+    const w = $('#working'); if (w) w.remove();
+    append(c, { id: uid(), kind: 'interrupted' });
+    append(c, { id: uid(), kind: 'footer', agent: c.agent, text: `${AGENT[c.agent]} · ${secs}s · ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` });
+    if (c.queue && c.queue.length) c.queueHeld = true;
+    renderQueue(c); renderTabs(); syncSend();
+  });
   document.addEventListener('mousedown', (e) => { if (menuEl && !menuEl.contains(e.target)) closeMenu(); });
 
   // CMD-07: "+" menu
