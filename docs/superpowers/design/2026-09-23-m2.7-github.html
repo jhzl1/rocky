@@ -1,0 +1,1017 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rocky · GitHub panel spec</title>
+<!--
+==========================================================================================================
+HOW TO READ THIS FILE (for the agent that implements it)
+==========================================================================================================
+Visual, behavioral and technical source of truth for
+  docs/superpowers/plans/2026-09-23-m2.7-github.md   (dev-1 writes it from this file's requirement ids)
+
+- M2.7 runs after M2.5 and before M3. It adds the right panel with its pull request header and its Checks tab,
+  the GitHub account per repository (with GH_TOKEN for every workspace process), pull request state, checks,
+  deployments, comments, merge, and the actions that go through the agent (create the PR, commit and push,
+  fix errors, resolve conflicts, comments to the chat). M3 later adds the Changes tab to the same panel.
+- Visual target: Conductor's right panel. Its behavior comes from dev-1's extraction of Conductor's bundled
+  frontend (0.87.3, 2026-09-23): header states and their order, labels, actions, git status rows, deployments,
+  checks and comments. Colors and sizes are translated to Rocky's tokens (M2.5 TOK-01); where Rocky deviates on
+  purpose, the requirement says so.
+- Requirement ids: PNL (panel), HDR (header), PRB (title and body), GST (git status), DEP, CHK, REV (comments),
+  AGT (agent actions), ACC and ENV (account, token), PR (data, merge, refresh), ROW-07, SET, ERR, KBD, OUT.
+  ACC-01, PR-* and ROW-07 move here from M3.
+- Every workspace in the mock's sidebar is in a different header state; select them. When the mock and a
+  requirement's text disagree, the text wins.
+==========================================================================================================
+-->
+<style>
+:root {
+  --page: #131519; --bg: #23272E; --sidebar: #1E2127; --panel: #1A1D22; --composer: #2A2F37; --composer-border: rgba(255,255,255,0.10);
+  --hairline: rgba(255,255,255,0.08); --hairline-soft: rgba(255,255,255,0.06); --panel-bar: rgba(255,255,255,0.03);
+  --text: #E6E8EB; --text-2: #A3A9B1; --text-3: #858C95; --sep: #5C636C;
+  --fill-hover: rgba(255,255,255,0.04); --fill-selected: rgba(255,255,255,0.08); --fill-control: rgba(255,255,255,0.05);
+  --fill-icon-hover: rgba(255,255,255,0.06); --fill-button: rgba(255,255,255,0.08); --fill-button-hover: rgba(255,255,255,0.12);
+  --accent: #78BDF5; --attention: #E8A94B; --danger: #F0876A; --success: #7CC08A; --merged: #B48CF2;
+  --titlebar: 38px; --row: 28px; --r-row: 7px; --r-btn: 6px;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --dur-fast: 120ms; --dur-base: 150ms; --dur-enter: 220ms; --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--page); color: var(--text); font: 13px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; -webkit-font-smoothing: antialiased; display: flex; overflow: hidden; }
+[hidden] { display: none !important; }
+button { font: inherit; color: inherit; background: none; border: 0; margin: 0; padding: 0; text-align: left; cursor: pointer; }
+button:disabled { cursor: default; }
+input, textarea { font: inherit; color: inherit; }
+svg { display: block; flex-shrink: 0; }
+code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 4px; }
+.grow { flex-grow: 1; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.stage { flex: 1 0 auto; overflow: auto; padding: 20px 24px 48px; }
+.doc-title { width: 1240px; margin: 0 0 4px; font-size: 18px; font-weight: 600; }
+.doc-sub { width: 1240px; margin: 0 0 14px; color: var(--text-2); font-size: 12.5px; line-height: 1.5; }
+.demo { width: 1240px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
+.demo-label { font-size: 10.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.07em; margin-right: 4px; }
+.demo button { height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.14); color: var(--text-2); font-size: 12px; }
+.demo button:hover { color: var(--text); border-color: rgba(255,255,255,0.3); }
+.demo button[aria-pressed="true"] { background: rgba(120,189,245,0.14); border-color: rgba(120,189,245,0.55); color: var(--text); }
+
+/* window + M2.5 shell (simplified) */
+.window { --pnl-w: 350px; position: relative; width: 1240px; height: 820px; display: flex; background: var(--bg); border-radius: 10px; overflow: hidden; box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 24px 60px rgba(0,0,0,0.45); }
+.lights { display: inline-flex; gap: 8px; } .light { width: 12px; height: 12px; border-radius: 50%; }
+.light.close { background: #FF5F57; } .light.min { background: #FEBC2E; } .light.zoom { background: #28C840; }
+.icon-btn { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r-btn); color: var(--text-2); flex-shrink: 0; transition: background var(--dur-fast), color var(--dur-fast); }
+.icon-btn:hover { background: var(--fill-icon-hover); color: var(--text); }
+.icon-btn.sm { width: 22px; height: 22px; border-radius: 5px; }
+.ghost-btn { height: 22px; display: inline-flex; align-items: center; gap: 5px; padding: 0 7px; border-radius: 5px; color: var(--text-2); font-size: 12px; white-space: nowrap; flex-shrink: 0; transition: background var(--dur-fast), color var(--dur-fast); }
+.ghost-btn:hover:not(:disabled) { background: var(--fill-icon-hover); color: var(--text); }
+.ghost-btn:disabled { opacity: 0.45; }
+.outline-btn { height: 22px; display: inline-flex; align-items: center; padding: 0 7px; border-radius: 5px; border: 1px solid rgba(255,255,255,0.14); background: var(--panel); color: var(--text); font-size: 12px; white-space: nowrap; flex-shrink: 0; transition: border-color var(--dur-fast); }
+.outline-btn:hover { border-color: rgba(255,255,255,0.28); }
+
+.sidebar { width: 236px; flex-shrink: 0; display: flex; flex-direction: column; background: var(--sidebar); border-right: 1px solid var(--hairline); }
+.sb-top { height: var(--titlebar); display: flex; align-items: center; padding: 0 16px; }
+.sb-list { flex-grow: 1; overflow-y: auto; padding: 4px 8px; display: flex; flex-direction: column; gap: 2px; }
+.repo { height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 8px; margin-top: 8px; font-weight: 600; flex-shrink: 0; }
+.monogram { width: 16px; height: 16px; border-radius: 4px; color: #fff; font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.row-wrap { border-radius: var(--r-row); flex-shrink: 0; transition: background var(--dur-fast); }
+.row-wrap:hover { background: var(--fill-hover); } .row-wrap.selected { background: var(--fill-selected); }
+.row { width: 100%; height: var(--row); display: flex; align-items: center; gap: 8px; padding: 0 8px 0 24px; }
+.glyph { width: 16px; height: 16px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+.row-title { flex-grow: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-title.dim { color: var(--text-3); }
+.c-success { color: var(--success); display: flex; } .c-danger { color: var(--danger); display: flex; } .c-attention { color: var(--attention); display: flex; }
+.c-merged { color: var(--merged); display: flex; } .c-muted { color: var(--text-3); display: flex; } .c-2 { color: var(--text-2); display: flex; }
+
+.main { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; }
+.topbar { height: var(--titlebar); flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 0 12px 0 16px; }
+.crumb { color: var(--text-2); } .br { font: 12px var(--mono); }
+.port { font: 11px var(--mono); color: var(--text-3); }
+.run { height: 26px; display: flex; align-items: center; gap: 6px; padding: 0 10px; border-radius: var(--r-btn); background: var(--fill-button); font-size: 12.5px; font-weight: 500; }
+.pnl-toggle { height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border-radius: var(--r-btn); color: var(--text-2); font: 12px var(--mono); transition: background var(--dur-fast), color var(--dur-fast); }
+.pnl-toggle:hover { background: var(--fill-icon-hover); color: var(--text); }
+.pnl-toggle.on { background: var(--fill-selected); color: var(--text); }
+.body { flex-grow: 1; min-height: 0; display: flex; }
+.center { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; }
+.tabs { height: 34px; flex-shrink: 0; display: flex; align-items: stretch; padding: 0 10px; border-bottom: 1px solid var(--hairline); }
+.tab-wrap { position: relative; display: flex; align-items: center; }
+.tab-wrap.selected::before { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--text); }
+.tab { height: 100%; display: flex; align-items: center; gap: 7px; padding: 0 12px 0 10px; font-size: 12.5px; }
+.agent { width: 14px; height: 14px; border-radius: 4px; font-size: 9px; font-weight: 700; display: flex; align-items: center; justify-content: center; color: #1E2127; background: #D97757; flex-shrink: 0; }
+.agent.sm { width: 12px; height: 12px; font-size: 8px; border-radius: 3px; }
+.chat { flex-grow: 1; min-height: 0; overflow-y: auto; padding: 20px 24px 12px; display: flex; flex-direction: column; align-items: center; }
+.col { width: 100%; max-width: 660px; display: flex; flex-direction: column; gap: 14px; font-size: 14px; }
+.msg-user { align-self: flex-end; max-width: 520px; padding: 10px 14px; border-radius: 12px; background: rgba(255,255,255,0.06); line-height: 1.5; white-space: pre-wrap; }
+.msg-user .attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.file-badge { height: 22px; display: inline-flex; align-items: center; gap: 5px; padding: 0 7px; border-radius: 5px; background: rgba(255,255,255,0.07); font-size: 12px; }
+.msg-agent { line-height: 1.6; color: #D5D8DC; white-space: pre-wrap; }
+.msg-agent code, .msg-user code { font-size: 12.5px; }
+.working { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
+.elapsed { font: 12px var(--mono); color: var(--text-3); }
+.turn-footer { display: flex; align-items: center; gap: 8px; font-size: 10.5px; color: var(--text-2); }
+.enter { animation: enter var(--dur-enter) var(--ease-out) both; }
+@keyframes enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.composer-wrap { flex-shrink: 0; display: flex; justify-content: center; padding: 8px 24px 14px; }
+.composer { width: 100%; max-width: 620px; border-radius: 12px; background: var(--composer); border: 1px solid var(--composer-border); padding: 12px 14px; color: var(--text-3); font-size: 14px; display: flex; align-items: center; }
+.composer .c-send { margin-left: auto; width: 28px; height: 28px; border-radius: 7px; background: rgba(255,255,255,0.1); display: flex; align-items: center; justify-content: center; color: var(--text-2); }
+.pbar { height: 32px; flex-shrink: 0; display: flex; align-items: center; gap: 6px; padding: 0 8px; background: var(--panel-bar); border-top: 1px solid var(--hairline); font-size: 12px; color: var(--text-2); }
+.sdot { width: 6px; height: 6px; border-radius: 50%; } .sdot.done { background: var(--text-3); }
+.spinner { animation: spin 0.9s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
+.shimmer { color: transparent; background: linear-gradient(90deg, var(--text-2) 0%, var(--text-2) 30%, var(--text) 50%, var(--text-2) 70%, var(--text-2) 100%); background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; animation: shimmer 2.1s linear infinite; }
+@keyframes shimmer { 0% { background-position: 100% 0; } 76% { background-position: 0% 0; } 100% { background-position: 0% 0; } }
+
+/* ---------- PNL ---------- */
+.vline { width: 1px; flex-shrink: 0; background: var(--hairline); position: relative; }
+.vline.grab::before { content: ""; position: absolute; top: 0; bottom: 0; left: -4px; right: -4px; cursor: col-resize; z-index: 3; }
+.window.pnl-closed .rpanel, .window.pnl-closed #pnlLine { display: none; }
+.rpanel { width: var(--pnl-w); flex-shrink: 0; display: flex; flex-direction: column; background: var(--sidebar); min-height: 0; position: relative; }
+/* HDR: 40 pt, tint by group */
+.hdr { --tone: var(--text); --tint: transparent; height: 40px; flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 0 8px; background: var(--tint); border-bottom: 1px solid var(--hairline); transition: background var(--dur-base); }
+.hdr.in_sync { --tone: var(--success); --tint: rgba(124,192,138,0.13); }
+.hdr.out_of_sync { --tone: var(--text); --tint: rgba(255,255,255,0.05); }
+.hdr.queued { --tone: var(--attention); --tint: rgba(232,169,75,0.12); }
+.hdr.merged { --tone: var(--merged); --tint: rgba(180,140,242,0.13); }
+.hdr.no_pr, .hdr.loading { --tone: var(--text); --tint: transparent; }
+.hdr.loading .hdr-label { color: var(--text-3); }
+.pill { height: 24px; display: inline-flex; align-items: stretch; border-radius: 5px; border: 1px solid rgba(255,255,255,0.14); font: 500 12px -apple-system, BlinkMacSystemFont, sans-serif; color: var(--text); flex-shrink: 0; overflow: hidden; }
+.hdr.in_sync .pill { color: var(--success); border-color: rgba(124,192,138,0.25); }
+.hdr.merged .pill { color: var(--merged); border-color: rgba(180,140,242,0.3); }
+.pill button { display: flex; align-items: center; gap: 4px; padding: 0 8px; transition: background var(--dur-fast); }
+.pill button:hover { background: rgba(255,255,255,0.06); }
+.pill .ext { padding: 0 4px; border-left: 1px solid rgba(255,255,255,0.14); }
+.hdr.in_sync .pill .ext { border-left-color: rgba(124,192,138,0.25); }
+.hdr-label { flex-grow: 1; min-width: 0; display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; color: var(--tone); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hdr-label span { overflow: hidden; text-overflow: ellipsis; }
+.hdr-label.anim { animation: lbl 150ms var(--ease-out); }
+@keyframes lbl { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
+.hbtn { height: 24px; display: inline-flex; align-items: center; gap: 5px; padding: 0 9px; border-radius: 5px; background: var(--text); color: #14161A; font-size: 12px; font-weight: 500; white-space: nowrap; flex-shrink: 0; transition: filter var(--dur-fast), background var(--dur-fast); }
+.hbtn:hover:not(:disabled) { filter: brightness(0.92); }
+.hbtn:disabled { opacity: 0.45; }
+.hbtn.merge { background: var(--success); color: #10251A; }
+.hbtn.archive { background: var(--merged); color: #1E1530; }
+.hbtn.confirm { background: var(--attention); color: #2A1C06; }
+.split .hbtn.merge:last-child { border-left-color: rgba(16,37,26,0.3); }
+.hbtn.outline { background: var(--panel); color: var(--text); border: 1px solid rgba(255,255,255,0.14); }
+.split { display: inline-flex; flex-shrink: 0; }
+.split .hbtn:first-child { border-radius: 5px 0 0 5px; }
+.split .hbtn:last-child { width: 22px; padding: 0; justify-content: center; border-radius: 0 5px 5px 0; border-left: 1px solid rgba(20,22,26,0.25); }
+.badge-q { height: 22px; display: inline-flex; align-items: center; padding: 0 8px; border-radius: 5px; background: rgba(232,169,75,0.18); color: var(--attention); font-size: 12px; font-weight: 500; }
+/* tabs: pills */
+.ptabs { flex-shrink: 0; display: flex; align-items: center; gap: 4px; padding: 8px; border-bottom: 1px solid var(--hairline-soft); }
+.ptab { height: 26px; display: inline-flex; align-items: center; gap: 5px; padding: 0 9px; border-radius: 6px; font-size: 12.5px; color: var(--text-2); transition: background var(--dur-fast), color var(--dur-fast); }
+.ptab:hover:not(:disabled) { background: var(--fill-hover); color: var(--text); }
+.ptab.sel { background: var(--fill-selected); color: var(--text); }
+.ptab:disabled { color: var(--text-3); }
+.ptab .n { font: 11px var(--mono); color: var(--text-3); }
+.pbody { flex-grow: 1; min-height: 0; overflow-y: auto; padding: 6px 0 16px; }
+.pr-edit { padding: 6px 12px 8px 18px; display: flex; flex-direction: column; gap: 6px; }
+.pr-edit input, .pr-edit textarea { width: 100%; background: transparent; border: 1px solid transparent; border-radius: 5px; padding: 3px 5px; margin-left: -6px; outline: none; transition: border-color var(--dur-fast), background var(--dur-fast); }
+.pr-edit input { font-size: 13px; font-weight: 500; color: var(--text); }
+.pr-edit textarea { font-size: 12px; line-height: 1.5; color: var(--text-2); resize: none; min-height: 40px; max-height: 180px; overflow-y: auto; }
+.pr-edit input:hover, .pr-edit textarea:hover { border-color: var(--hairline); }
+.pr-edit input:focus, .pr-edit textarea:focus { border-color: rgba(120,189,245,0.5); background: rgba(0,0,0,0.15); }
+.pr-edit .row-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.sec-head { height: 30px; display: flex; align-items: center; gap: 6px; padding: 0 12px 0 18px; margin-top: 4px; }
+.sec-title { font-size: 12px; font-weight: 500; color: var(--text-3); }
+.sec-sum { font: 11px var(--mono); color: var(--text-3); }
+.srow { height: 30px; display: flex; align-items: center; gap: 6px; margin: 0 8px; padding: 0 4px 0 12px; border-radius: 7px; font-size: 13px; transition: background var(--dur-fast); }
+.srow:hover { background: var(--fill-hover); }
+.srow .txt { flex-grow: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lead { width: 12px; height: 12px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+.circ { width: 8px; height: 8px; border-radius: 50%; }
+.circ.success { background: var(--success); } .circ.danger { background: var(--danger); } .circ.attention { background: var(--attention); } .circ.muted { background: var(--text-3); } .circ.merged { background: var(--merged); }
+.circ.hollow { background: transparent; border: 1.5px solid var(--text-3); }
+.crow { position: relative; height: 28px; display: flex; align-items: center; gap: 6px; margin: 0 8px; padding: 0 4px 0 12px; border-radius: 7px; font-size: 12.5px; transition: background var(--dur-fast); }
+.crow:hover { background: var(--fill-hover); }
+.crow .name { flex-grow: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.crow .dur { font: 11px var(--mono); color: var(--text-3); }
+.crow .ext { width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; color: var(--text-3); border-radius: 4px; }
+.crow .ext:hover { color: var(--text); background: var(--fill-icon-hover); }
+.crow .hover-acts { display: none; gap: 4px; }
+.crow:hover .hover-acts { display: flex; }
+.crow:hover .cm-meta { display: none; }
+.prov { color: var(--text-3); display: flex; }
+.avatar { width: 16px; height: 16px; border-radius: 50%; background: #4C7BD9; color: #fff; font-size: 8px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.cm-who { font-weight: 500; flex-shrink: 0; }
+.cm-where { font: 11px var(--mono); color: var(--text-2); flex-grow: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pfoot { flex-shrink: 0; height: 34px; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 18px; border-top: 1px solid var(--hairline); font-size: 11.5px; color: var(--text-3); }
+.nopr { padding: 10px 18px 4px; font-size: 12.5px; color: var(--text-2); line-height: 1.5; }
+.nopr strong { color: var(--text); font-weight: 500; }
+.menu { position: absolute; z-index: 30; min-width: 200px; padding: 5px; border-radius: 9px; background: var(--panel); box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 10px 30px rgba(0,0,0,0.5); }
+.menu-item { width: 100%; height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-radius: 6px; font-size: 13px; }
+.menu-item:hover:not(:disabled) { background: rgba(255,255,255,0.07); }
+.menu-item.tall { height: auto; align-items: flex-start; padding: 6px 8px; }
+.menu-item:disabled { opacity: 0.45; }
+.m-check { width: 14px; flex-shrink: 0; color: var(--text); }
+.m-text { display: flex; flex-direction: column; gap: 2px; }
+.m-desc { font-size: 11.5px; color: var(--text-3); }
+.toast { position: absolute; left: 50%; top: 52px; z-index: 60; transform: translateX(-50%); padding: 8px 12px; border-radius: 8px; background: var(--panel); box-shadow: 0 0 0 1px rgba(255,255,255,0.1), 0 8px 24px rgba(0,0,0,0.45); font-size: 12px; color: var(--text-2); opacity: 0; pointer-events: none; transition: opacity var(--dur-base); white-space: nowrap; }
+.toast.show { opacity: 1; }
+
+.spec-on .window [data-req] { outline: 1px dashed rgba(120,189,245,0.6); outline-offset: -1px; position: relative; }
+.spec-on .window [data-req]::after { content: attr(data-req); position: absolute; top: 1px; right: 1px; z-index: 40; padding: 2px 4px; border-radius: 3px; background: var(--accent); color: #0E1116; font: 600 9px/1 var(--mono); pointer-events: none; }
+.spec-on .window [data-scope="out"] { outline: 1px dashed rgba(232,169,75,0.85); outline-offset: -1px; }
+
+/* spec */
+.spec { flex: 0 1 480px; min-width: 340px; overflow-y: auto; overflow-x: hidden; background: #16181C; border-left: 1px solid var(--hairline); padding: 22px 24px 80px; font-size: 12.5px; line-height: 1.55; color: var(--text-2); }
+.spec h1 { margin: 0 0 6px; font-size: 16px; color: var(--text); }
+.spec h2 { margin: 30px 0 8px; font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); }
+.spec p { margin: 6px 0; } .spec strong { color: var(--text); font-weight: 600; } .spec code { overflow-wrap: anywhere; }
+.spec pre { margin: 6px 0; padding: 8px 10px; border-radius: 6px; background: rgba(0,0,0,0.28); font: 11px/1.55 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+.req { margin: 0 -12px 6px; padding: 12px 12px 10px; border: 1px solid transparent; border-radius: 8px; transition: background 0.3s, border-color 0.3s; scroll-margin-top: 12px; }
+.req.flash { background: rgba(120,189,245,0.08); border-color: rgba(120,189,245,0.4); }
+.req > header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.req .id { font: 600 10.5px var(--mono); color: var(--accent); background: none; padding: 0; }
+.req h3 { flex-grow: 1; margin: 0; font-size: 13px; font-weight: 600; color: var(--text); }
+.scope { font-size: 10px; padding: 1px 6px; border-radius: 4px; border: 1px solid; white-space: nowrap; }
+.scope.in { color: var(--success); border-color: rgba(124,192,138,0.4); } .scope.out { color: var(--attention); border-color: rgba(232,169,75,0.5); }
+.scope.tech { color: var(--accent); border-color: rgba(120,189,245,0.45); }
+.req dl { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 5px 10px; margin: 8px 0 0; }
+.req dt { padding-top: 1px; font-size: 11px; color: var(--text-3); } .req dd { margin: 0; }
+.req ul, .req ol { margin: 2px 0 0; padding-left: 18px; } .req li { margin: 2px 0; }
+.spec table { width: 100%; border-collapse: collapse; margin: 6px 0; font-size: 11.5px; }
+.spec th { text-align: left; font-weight: 600; color: var(--text-3); padding: 4px 6px 4px 0; border-bottom: 1px solid var(--hairline); }
+.spec td { padding: 4px 6px 4px 0; border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: top; }
+.tone { display: inline-block; padding: 0 5px; border-radius: 4px; font-size: 10.5px; font-weight: 600; white-space: nowrap; }
+.tone.in_sync { background: rgba(124,192,138,0.13); color: var(--success); } .tone.out_of_sync { background: rgba(255,255,255,0.07); color: var(--text); }
+.tone.queued { background: rgba(232,169,75,0.12); color: var(--attention); } .tone.merged { background: rgba(180,140,242,0.13); color: var(--merged); }
+.tone.no_pr { background: transparent; color: var(--text-2); border: 1px solid var(--hairline); }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <h1 class="doc-title">Rocky · GitHub panel (M2.7)</h1>
+  <p class="doc-sub">Conductor's right panel in Rocky: a header tinted by the pull request's state with one primary action, and a Checks tab with the editable title and body, Git status, deployments, checks and comments. <strong>Each workspace in the sidebar is in a different state</strong>; select them. Actions marked "agent" send a prompt to the workspace's conversation.</p>
+  <div class="demo" aria-label="Demo controls">
+    <span class="demo-label">Demo controls, not part of Rocky</span>
+    <button type="button" id="demoWorking" aria-pressed="false">Agent working here</button>
+    <button type="button" id="demoPins" aria-pressed="false">Requirement pins</button>
+  </div>
+
+  <div class="window" id="win">
+    <nav class="sidebar" aria-label="Workspaces">
+      <div class="sb-top"><span class="lights"><span class="light close"></span><span class="light min"></span><span class="light zoom"></span></span></div>
+      <div class="sb-list" id="sbList"></div>
+    </nav>
+    <main class="main">
+      <header class="topbar" id="topbar"></header>
+      <div class="body">
+        <div class="center">
+          <div class="tabs" id="tabs"></div>
+          <div class="chat" id="chat"><div class="col" id="chatCol"></div></div>
+          <div class="composer-wrap"><div class="composer">Ask Claude Code to make changes…<span class="c-send" data-icon="arrowUp"></span></div></div>
+          <div class="pbar"><span class="sdot done"></span>Setup<span class="grow"></span></div>
+        </div>
+        <div class="vline grab" id="pnlLine" data-req="PNL-01"></div>
+        <aside class="rpanel" id="rpanel" aria-label="Pull request"></aside>
+      </div>
+    </main>
+  </div>
+</div>
+
+<aside class="spec" id="spec">
+  <h1>Requirements</h1>
+  <p>Plan: <code>docs/superpowers/plans/2026-09-23-m2.7-github.md</code>. After M2.5, before M3. Labels: <span class="scope tech">Technical</span> for protocol, data and process facts; <span class="scope in">In scope</span> for behavior and UI.</p>
+  <p><strong>User decisions (2026-09-23), relayed by dev-1:</strong> Conductor's right panel as the visual; the agent creates the pull request, Rocky does not ("El problema no es quien crea el PR, sino la visualización"); the repository's account reaches agents and terminals now (from M4); all GitHub reads over <code>URLSession</code> GraphQL on Rocky's refresh schedule, never Conductor's 5 s and never a <code>gh</code> process per refresh; notifications are M2.5's.</p>
+
+  <!-- ============================== PANEL ============================== -->
+  <h2>Panel</h2>
+  <section class="req" id="REQ-PNL-01">
+    <header><code class="id">PNL-01</code><h3>The right panel</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Layout</dt><dd>A column at the right of the window, under the top bar, next to the tabs, the conversation and the terminal panel. Background <code>sidebar</code>. Width 350, range 280–480, 1 pt <code>hairline</code> divider with a 9 pt grab area, persisted (<code>rightPanelWidth</code>). Open state global and persisted (<code>rightPanelOpen</code>, default open).</dd>
+      <dt>Parts</dt><dd>Header (HDR), tab row (PNL-03), the tab's content (scrolls), footer (PR-07). One right panel only: M3's Changes becomes its tab.</dd>
+    </dl>
+  </section>
+  <section class="req" id="REQ-PNL-02">
+    <header><code class="id">PNL-02</code><h3>Toggle in the top bar</h3><span class="scope in">In scope</span></header>
+    <p>Before Open, 28 pt (M2.5 moved the ports into the Open menu): with a pull request, its glyph in the header's tone + "#4525" (12 mono) + the checks glyph; without one, <code>sidebar.right</code> alone. Open: <code>fillSelected</code>. ⌘⇧G. Tooltip "Pull request #4525 · Ready to merge" / "Show the GitHub panel". It replaces M3's planned Changes toggle and PR chip.</p>
+  </section>
+  <section class="req" id="REQ-PNL-03">
+    <header><code class="id">PNL-03</code><h3>Tabs</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Layout</dt><dd>Conductor's: pill buttons in an 8 pt padded row with 4 pt gaps, 26 pt, radius 6, 12.5 <code>textSecondary</code>; hover <code>fillHover</code>; selected <code>fillSelected</code> and <code>textPrimary</code>. Counts in 11 mono <code>textTertiary</code>. Target row: "All files · Changes 5 · Checks". Remembered per workspace.</dd>
+      <dt>M2.7</dt><dd>Ships <strong>Checks</strong> only; the row shows it alone. "Changes N" arrives with M3; "All files" (the worktree's file tree) is not planned yet; Conductor's right-side "Review" button is not planned (dev-1's extraction did not cover what it does). The mock draws the missing tabs dashed.</dd>
+    </dl>
+  </section>
+
+  <!-- ============================== HEADER ============================== -->
+  <h2>Header</h2>
+  <section class="req" id="REQ-HDR-01">
+    <header><code class="id">HDR-01</code><h3>Header bar</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Layout</dt><dd>40 pt, padding 8, gap 8, <code>hairline</code> below. Left the pill (HDR-03), then the label (13 medium, with a spinner where the state moves), then one action on the right: a 24 pt button, 12 medium, radius 5. The button never shrinks; the label truncates with an ellipsis and its tooltip carries the full text ("Add all comments to chat" leaves "PR change…" at 350 pt).</dd>
+      <dt>Tint</dt><dd>By state group, Conductor's groups translated to Rocky tokens:
+        <table>
+          <tr><th>Group</th><th>Background</th><th>Label</th></tr>
+          <tr><td><span class="tone in_sync">in_sync</span></td><td><code>success</code> 13 %</td><td><code>success</code></td></tr>
+          <tr><td><span class="tone out_of_sync">out_of_sync</span></td><td>white 5 % (Conductor's warm "highlight"; Rocky has no warm neutral)</td><td><code>textPrimary</code></td></tr>
+          <tr><td><span class="tone queued">queued</span></td><td><code>attention</code> 12 %</td><td><code>attention</code></td></tr>
+          <tr><td><span class="tone merged">merged</span></td><td><code>merged</code> 13 %</td><td><code>merged</code></td></tr>
+          <tr><td><span class="tone no_pr">no_pr / loading</span></td><td>none (the panel's <code>sidebar</code>)</td><td><code>textPrimary</code>; loading <code>textTertiary</code></td></tr>
+        </table>
+        Problems are <em>not</em> red: Conductor keeps failing checks, conflicts and requested changes in the neutral out_of_sync group; the red lives in the check and dot icons.</dd>
+      <dt>Buttons</dt><dd>Merge: <code>success</code> fill, dark text (Conductor uses white text on a darker green; Rocky's lighter <code>success</code> needs dark text for contrast). Archive: <code>merged</code> fill. The other actions: <code>textPrimary</code> fill, dark text (Conductor's "highlight-foreground"). Outline: <code>panel</code> with a 1 pt white 14 % border.</dd>
+      <dt>Motion</dt><dd>The label slides in from 2 pt below with a fade, 150 ms, when it changes; the tint cross-fades in 150 ms.</dd>
+      <dt>Token</dt><dd>M2.7 adds <code>merged</code> (#B48CF2) to <code>Theme</code>; M3's TOK-10 used to add it, and M2.7 lands first.</dd>
+    </dl>
+  </section>
+  <section class="req" id="REQ-HDR-02">
+    <header><code class="id">HDR-02</code><h3>States, in priority order</h3><span class="scope in">In scope</span></header>
+    <p>The first that applies wins. Conductor's order and labels; the group column is Rocky's mapping.</p>
+    <table>
+      <tr><th>State</th><th>Group</th><th>Label</th><th>Action</th></tr>
+      <tr><td>merged</td><td><span class="tone merged">merged</span></td><td>Merged</td><td>Archive (PR-06)</td></tr>
+      <tr><td>queued_to_merge</td><td><span class="tone queued">queued</span></td><td>by <code>mergeQueueEntry.state</code>: AWAITING_CHECKS "Merge queue checks pending" · UNMERGEABLE "Merge queue blocked" · LOCKED "Merge queue locked" · else "Queued to merge"</td><td>static "Queued" badge</td></tr>
+      <tr><td>working</td><td><span class="tone no_pr">loading</span></td><td>Working… (spinner)</td><td>none</td></tr>
+      <tr><td>create_pr</td><td><span class="tone no_pr">no_pr</span></td><td>(none)</td><td>split "Create PR" (AGT-01)</td></tr>
+      <tr><td>commit_and_push</td><td><span class="tone out_of_sync">out_of_sync</span></td><td>Uncommitted changes</td><td>Commit and push (AGT-02)</td></tr>
+      <tr><td>incompatible</td><td><span class="tone out_of_sync">out_of_sync</span></td><td>Incompatible with remote · Remote branch was rebased</td><td>Resolve (AGT-06)</td></tr>
+      <tr><td>pull</td><td><span class="tone out_of_sync">out_of_sync</span></td><td>Behind by N commits</td><td>Pull (GST-03)</td></tr>
+      <tr><td>push</td><td><span class="tone out_of_sync">out_of_sync</span></td><td>Ahead by N commits</td><td>Push (GST-03)</td></tr>
+      <tr><td>merge_conflicts</td><td><span class="tone out_of_sync">out_of_sync</span></td><td>Merge conflicts</td><td>Resolve (AGT-04)</td></tr>
+      <tr><td>changes_requested</td><td><span class="tone out_of_sync">out_of_sync</span></td><td>PR changes requested</td><td>Add all comments to chat (AGT-05)</td></tr>
+      <tr><td>draft_pr</td><td><span class="tone out_of_sync">out_of_sync</span></td><td>Draft PR open</td><td>outline Ready for review (PR-08)</td></tr>
+      <tr><td>checks_failing</td><td><span class="tone out_of_sync">out_of_sync</span></td><td>N / M checks failed, K pending (only when <code>mergeStateStatus</code> is not UNSTABLE)</td><td>Fix errors (AGT-03) when a failed check has a details URL; else View checks (opens <code>&lt;pr url&gt;/checks</code> in the browser)</td></tr>
+      <tr><td>checks_pending</td><td><span class="tone queued">queued</span></td><td>N checks pending…</td><td>none (Conductor's Automerge: OUT-30)</td></tr>
+      <tr><td>review_required</td><td><span class="tone out_of_sync">out_of_sync</span></td><td>PR review required</td><td>none (Conductor's Approve PR: OUT-30)</td></tr>
+      <tr><td>blocked</td><td><span class="tone out_of_sync">out_of_sync</span></td><td>Blocked from merging</td><td>none</td></tr>
+      <tr><td>loading_pr</td><td><span class="tone no_pr">loading</span></td><td>Checking mergeability…</td><td>none</td></tr>
+      <tr><td>ready_to_merge</td><td><span class="tone in_sync">in_sync</span></td><td>Ready to merge · "N optional checks failed" when UNSTABLE with failed checks</td><td>split Squash / Merge / Rebase (PR-05)</td></tr>
+      <tr><td>unable_to_merge</td><td><span class="tone out_of_sync">out_of_sync</span></td><td>Unable to merge · "Unable to merge · behind development" for BEHIND</td><td>none</td></tr>
+    </table>
+    <dl>
+      <dt>Notes</dt><dd>Rocky puts working before create_pr (Conductor has it after), so clicking Create PR shows "Working…" instead of an empty header. A closed (unmerged) pull request falls back to create_pr. With no pull request and nothing to put in one (branch equal to its base, nothing uncommitted), Rocky shows the label "No changes yet" and no action (Rocky's addition). "Behind/Ahead by N" compare the branch with its own remote branch; "behind the base" is a Git status row (GST-02), not a header state.</dd>
+      <dt>Queue</dt><dd>Only <code>mergeQueueEntry</code> makes queued_to_merge. An enabled <code>autoMergeRequest</code> does not: auto-merge is Conductor's Automerge (OUT-30).</dd>
+      <dt>Optional</dt><dd>GitHub's UNSTABLE means "mergeable with non-passing commit status": whatever failed does not block. So failed checks make checks_failing only when <code>mergeStateStatus</code> is not UNSTABLE; with UNSTABLE the state is ready_to_merge and the label counts them as optional. No <code>isRequired</code> query needed.</dd>
+      <dt>Merge state</dt><dd><code>mergeStateStatus</code> → state, after the rows above: CLEAN, UNSTABLE, HAS_HOOKS → ready_to_merge · BLOCKED → review_required when a review is required, else blocked · UNKNOWN → loading_pr · BEHIND → unable_to_merge. DIRTY and DRAFT are caught earlier (merge_conflicts, draft_pr).</dd>
+      <dt>Kit</dt><dd>Pure <code>PullRequestHeader.state(pr:local:agentWorking:) -&gt; HeaderState</code> in RockyKit; a test per row and for overlaps (uncommitted and conflicts → commit_and_push; failing checks and draft → draft_pr).</dd>
+    </dl>
+  </section>
+  <section class="req" id="REQ-HDR-03">
+    <header><code class="id">HDR-03</code><h3>The pull request pill</h3><span class="scope in">In scope</span></header>
+    <p>24 pt, 12 medium, 1 pt border (white 14 %), radius 5, two segments. Left: "#4525", opens the Checks tab (Rocky's in-app view of the PR); ⌘-click opens it in the browser. Right, after a divider: ↗ (12 pt), opens it in the browser. In in_sync the text is <code>success</code> and the border <code>success</code> at 25 %; in merged, <code>merged</code>. Absent with no pull request.</p>
+  </section>
+
+  <!-- ============================== CHECKS TAB ============================== -->
+  <h2>Checks tab (order: title, body, Git status, Deployments, Checks, Comments)</h2>
+  <section class="req" id="REQ-PRB-01">
+    <header><code class="id">PRB-01</code><h3>Title and body, editable</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Layout</dt><dd>Title: a borderless text field, 13 medium, looks like text until hovered (1 pt <code>hairline</code>) or focused (<code>accent</code> ring at 50 %). Body: a plain-text area, not rendered markdown (Conductor's too), 12 <code>textSecondary</code>, 2 lines at rest, grows to 180 pt, then scrolls. Padding 18 left.</dd>
+      <dt>Saving</dt><dd>When either differs from GitHub, "Discard" and "Save" (22 pt) appear under the body. Save: GraphQL <code>updatePullRequest(input: {pullRequestId, title, body})</code>, then refresh. Discard restores. A refresh never overwrites unsaved text.</dd>
+      <dt>No PR</dt><dd>In place of both: "<strong>No pull request yet.</strong> Create PR asks Claude Code to commit, push and open it with <code>gh pr create</code>."</dd>
+    </dl>
+  </section>
+  <section class="req" id="REQ-GST-01">
+    <header><code class="id">GST-01</code><h3>Git status rows</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Row</dt><dd>30 pt, inset 8, padding 12 left, radius 7, hover <code>fillHover</code>: a 12 pt leading circle (an 8 pt dot in the row's color), the text 13, and a ghost 22 pt action on the right (12 <code>textSecondary</code>).</dd>
+      <dt>Rows</dt><dd>
+        <table>
+          <tr><th>Row (dot)</th><th>Action</th></tr>
+          <tr><td>Merge conflicts detected (<code>danger</code>)</td><td>Resolve (AGT-04)</td></tr>
+          <tr><td>Incompatible with remote (<code>danger</code>)</td><td>Resolve (AGT-06)</td></tr>
+          <tr><td>N uncommitted changes (<code>attention</code>)</td><td>Commit and push (AGT-02)</td></tr>
+          <tr><td>N commits behind remote (<code>attention</code>)</td><td>Pull (GST-03)</td></tr>
+          <tr><td>N commits ahead of remote (<code>attention</code>)</td><td>Push (GST-03)</td></tr>
+          <tr><td>N commits behind development (<code>attention</code>)</td><td>Pull (GST-02)</td></tr>
+          <tr><td>No PR open (<code>textTertiary</code>)</td><td>Create PR (AGT-01)</td></tr>
+          <tr><td>PR is in draft (<code>textTertiary</code>)</td><td>Ready for review (PR-08)</td></tr>
+          <tr><td>Waiting for PR review (<code>textTertiary</code>)</td><td>none</td></tr>
+          <tr><td>PR changes requested (<code>danger</code>)</td><td>Add all comments to chat (AGT-05)</td></tr>
+          <tr><td>Ready to merge (<code>success</code>)</td><td>the merge button, same method and confirmation as the header (PR-05)</td></tr>
+        </table>
+        A merged PR shows only "Merged into development" (<code>merged</code> dot), no action. Otherwise, with none of the rows: "Up to date with development" (<code>success</code>), no action.</dd>
+      <dt>Source</dt><dd>Local: <code>git status --porcelain=v2 --branch</code> (uncommitted, ahead/behind the upstream) on PR-07's triggers. Remote: behind/ahead of the base from GraphQL <code>compare</code> (PR-01); the pull request fields for the rest. No <code>git fetch</code> on a timer.</dd>
+      <dt>Upstream</dt><dd>When the PR's <code>headRefOid</code> (PR-01) differs from <code>refs/remotes/origin/&lt;branch&gt;</code>, Rocky runs <code>git fetch origin &lt;branch&gt;</code> once, so ahead/behind the upstream are current. Without a PR, the last fetch's numbers stand.</dd>
+      <dt>Incompatible</dt><dd>Ahead of and behind the upstream at once. Labelled "Remote branch was rebased" when that fetch was a forced update (the tracking ref's last reflog entry, <code>git reflog -1 --format=%gs refs/remotes/origin/&lt;branch&gt;</code>, contains "forced-update"); else "Incompatible with remote". So pull means behind only, and push means ahead only.</dd>
+    </dl>
+  </section>
+  <section class="req" id="REQ-GST-02">
+    <header><code class="id">GST-02</code><h3>Pull from the base</h3><span class="scope tech">Technical</span></header>
+    <p>Conductor's order, run by Rocky with the workspace environment:</p>
+    <ol>
+      <li>Uncommitted changes: send the agent "Commit your changes, then bring in origin/development and push." (Rocky's wording; Conductor's is not known).</li>
+      <li>Else <code>git fetch origin development</code>.</li>
+      <li>Only behind (no commits of its own): <code>git merge --ff-only origin/development</code>; toast "Pulled latest changes. You're up to date!".</li>
+      <li>Diverged: send the agent, depending on <code>git config pull.rebase</code>: "Merge origin/development into this branch. Then push." or "Rebase this branch onto origin/development. Then push --force-with-lease."</li>
+    </ol>
+    <p>Rocky itself never creates a merge commit here and never force-pushes.</p>
+  </section>
+  <section class="req" id="REQ-GST-03">
+    <header><code class="id">GST-03</code><h3>Pull and push against the branch's remote</h3><span class="scope tech">Technical</span></header>
+    <p>Pull ("Behind by N"): <code>git pull</code>; disabled with uncommitted changes (tooltip "Commit or discard the changes first"). Push ("Ahead by N"): <code>git push</code> (<code>-u origin HEAD</code> without an upstream). Both with the workspace environment, so <code>GH_TOKEN</code> (ENV-01) signs HTTPS. Push rejected as non-fast-forward: "The remote has new commits. Pull first." Never <code>--force</code> from Rocky.</p>
+  </section>
+  <section class="req" id="REQ-DEP-01">
+    <header><code class="id">DEP-01</code><h3>Deployments</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Rows</dt><dd>28 pt: a 12 pt status icon, the provider mark (GitHub; Vercel's for <code>.vercel.app</code> URLs), the name (the <code>.vercel.app</code> URL's slug, else the environment), ↗ (14 pt). The row and ↗ open <code>environmentUrl</code>.</dd>
+      <dt>Icons</dt><dd>SUCCESS check <code>success</code> ("Deployed") · FAILURE / ERROR cross <code>danger</code> · IN_PROGRESS dot <code>attention</code> ("Deploying") · QUEUED / PENDING / WAITING dot <code>textTertiary</code> · anything else hollow dot ("Inactive"). The word goes in the tooltip.</dd>
+      <dt>Dedupe</dt><dd>Only the latest deployment per environment (a Rocky choice: Conductor lists every deployment of every push, which repeats names).</dd>
+      <dt>Source</dt><dd><code>deployments(first: 20, orderBy: {field: CREATED_AT, direction: DESC})</code> with <code>environment</code>, <code>state</code>, <code>latestStatus { state environmentUrl }</code>.</dd>
+    </dl>
+  </section>
+  <section class="req" id="REQ-CHK-01">
+    <header><code class="id">CHK-01</code><h3>Checks</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Rows</dt><dd>28 pt: status icon, provider mark (Vercel if the URL contains "vercel", else GitHub), name (truncated), duration (11 mono <code>textTertiary</code>), ↗ (14 pt, <code>detailsUrl ?? targetUrl</code>). No per-row buttons.</dd>
+      <dt>Icons</dt><dd>Running: <code>attention</code> spinner · FAILURE, ERROR, CANCELLED, TIMED_OUT, ACTION_REQUIRED: cross <code>danger</code> · SUCCESS, NEUTRAL, SKIPPED: check <code>success</code> · anything else: dot <code>textTertiary</code>.</dd>
+      <dt>Duration</dt><dd><code>completedAt − startedAt</code> as "1h 4m", "3m" or "45s"; while running "&lt;1m" or "3m", updated every 10 s only while the panel is visible and the window is key.</dd>
+      <dt>Order</dt><dd>Failed first, then running, then the API's order.</dd>
+      <dt>Header</dt><dd>"Checks" and, when any failed, "Re-run" (CHK-02) and "Fix errors" (AGT-03) as ghost buttons.</dd>
+      <dt>Source</dt><dd>The last commit's <code>statusCheckRollup.contexts(first: 100)</code>: <code>CheckRun</code> (name, status, conclusion, startedAt, completedAt, detailsUrl, databaseId, checkSuite.workflowRun.databaseId) and <code>StatusContext</code> (context, state, targetUrl).</dd>
+    </dl>
+  </section>
+  <section class="req" id="REQ-CHK-02">
+    <header><code class="id">CHK-02</code><h3>Re-run failed jobs</h3><span class="scope tech">Technical</span></header>
+    <p>Conductor runs <code>gh run rerun --failed</code>; Rocky calls the same endpoint over <code>URLSession</code>: <code>POST /repos/{owner}/{repo}/actions/runs/{run_id}/rerun-failed-jobs</code> for each distinct workflow run of the failed check runs, then refreshes (checks go back to running). Status contexts from other CI systems cannot be re-run from Rocky; the button ignores them.</p>
+  </section>
+  <section class="req" id="REQ-REV-01">
+    <header><code class="id">REV-01</code><h3>Comments</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Section</dt><dd>"Comments" with "Add all to chat" (AGT-05) on the right. Only pending comments: review threads not resolved and not outdated (one row per thread), the conversation's comments, and the body of each reviewer's latest review when it requests changes and is not empty. Hidden when empty.</dd>
+      <dt>Row</dt><dd>28 pt: a status icon (empty; a <code>success</code> check once added to the chat), a 16 pt avatar (initials; Rocky loads no remote images), the author (medium), then "src/ocr/retry.ts:42" for a thread, "review" for a review body, or the body's first 50 characters for a conversation comment (11 mono <code>textSecondary</code>). Hover replaces the location with "Hide" (ghost) and "Add to chat" (outline). Tooltip: the full text. "Hide" removes it from the list for this pull request (kept in the store with the PR state, PR-07).</dd>
+      <dt>Source</dt><dd>GraphQL <code>reviewThreads(first: 50) { isResolved isOutdated path line comments(first: 20) { author { login } body } }</code>, <code>comments(last: 50)</code> and <code>latestReviews(first: 20) { author { login } state body }</code>, fetched with the PR only while the section is visible.</dd>
+      <dt>Later</dt><dd>GitHub's review threads inside M3's diff, with resolve, edit and delete (Conductor's diff comment card), are not planned yet.</dd>
+    </dl>
+  </section>
+
+  <!-- ============================== AGENT ACTIONS ============================== -->
+  <h2>Actions through the agent</h2>
+  <section class="req" id="REQ-AGT-00">
+    <header><code class="id">AGT-00</code><h3>How agent actions work</h3><span class="scope tech">Technical</span></header>
+    <dl>
+      <dt>Rule</dt><dd>One prompt, as if typed, to the workspace's <strong>selected conversation</strong> (its agent starts if needed; the workspace shows that conversation). Files go as Rocky attachments (<code>resource_link</code>). The agent runs with the repository's <code>GH_TOKEN</code> (ENV-01).</dd>
+      <dt>Disabled</dt><dd>While that conversation's turn runs the header shows "Working…" (HDR-02) and the panel's agent buttons are disabled with the tooltip "The agent is working"; with the agent stopped on an error: "Restart the agent first".</dd>
+      <dt>After</dt><dd>When that turn ends, Rocky refreshes the PR (PR-07).</dd>
+      <dt>Kit</dt><dd>Pure builders (<code>AgentPrompts.createPullRequest(base:draft:)</code>…), each with a test for its exact text.</dd>
+    </dl>
+  </section>
+  <section class="req" id="REQ-AGT-01">
+    <header><code class="id">AGT-01</code><h3>Create PR (split button)</h3><span class="scope in">In scope</span></header>
+<pre>Create a pull request for this branch. First commit any uncommitted changes and push with `git push -u origin HEAD`. Then run `gh pr create --base development` with a title under 80 characters and a description of at most five sentences. If the repository has a pull request template, fill it in.</pre>
+    <p>The menu part (chevron) offers "Create draft PR" (the same text with <code>--draft</code>) and "Create PR manually" (opens GitHub's compare page, <code>https://github.com/{owner}/{repo}/compare/{base}...{branch}?expand=1</code>, in the browser). Rocky's wording of Conductor's instructions (commit and <code>push -u</code> first; title under 80 characters; under five sentences; the template).</p>
+  </section>
+  <section class="req" id="REQ-AGT-02">
+    <header><code class="id">AGT-02</code><h3>Commit and push</h3><span class="scope in">In scope</span></header>
+<pre>Commit and push all changes.</pre>
+  </section>
+  <section class="req" id="REQ-AGT-03">
+    <header><code class="id">AGT-03</code><h3>Fix errors</h3><span class="scope tech">Technical</span></header>
+<pre>Fix the failing CI actions. I've attached the failure logs.</pre>
+    <dl>
+      <dt>Logs</dt><dd>For each failed GitHub Actions check run: <code>GET /repos/{owner}/{repo}/actions/jobs/{databaseId}/logs</code> (it redirects to the log), the last 1000 lines, saved to <code>~/Library/Application Support/Rocky/ci-logs/&lt;workspace id&gt;/&lt;check name&gt;.log</code> (outside the worktree; the workspace's old logs are deleted first) and attached.</dd>
+      <dt>No logs</dt><dd>After the first line, a blank line, then one line per check without a log: "<code>&lt;check name&gt;: &lt;annotation message&gt;</code>" for each annotation of a job that never started (<code>GET /repos/{owner}/{repo}/check-runs/{id}/annotations</code>), "<code>&lt;check name&gt;: &lt;url&gt;</code>" for other CI systems.</dd>
+    </dl>
+  </section>
+  <section class="req" id="REQ-AGT-04">
+    <header><code class="id">AGT-04</code><h3>Resolve conflicts</h3><span class="scope in">In scope</span></header>
+    <p>Depending on <code>git config pull.rebase</code> in the worktree:</p>
+<pre>Rebase your branch onto the remote branch (origin/development) and resolve the conflicts. Then push with `git push --force-with-lease`.</pre>
+<pre>Merge the remote branch (origin/development) into your branch and resolve the conflicts. Then commit and push your changes.</pre>
+  </section>
+  <section class="req" id="REQ-AGT-05">
+    <header><code class="id">AGT-05</code><h3>Comments to the chat</h3><span class="scope in">In scope</span></header>
+<pre>Review comments on pull request #4512:
+
+1. ana on src/ocr/retry.ts, line 42
+&gt; Use exponential backoff instead of a fixed delay.
+&gt; jhzl: Would a jitter help too?
+&gt; ana: Yes, add full jitter.
+
+2. ana (conversation)
+&gt; Please add a test for the timeout path.
+
+3. ana (review)
+&gt; Split the retry policy out of the OCR client.
+
+Address each comment and say what you changed for each number.</pre>
+    <p>A thread's first comment is quoted as is; each reply follows as "&gt; login: text". A review body is an item "(review)". Multi-line bodies keep "&gt; " on every line.</p>
+    <p>"Add all to chat" sends every pending comment; a row's "Add to chat" only it; both mark them added (the row's check). Rocky's format matches M3's review prompt (CMT-05); Conductor wraps them in a <code>&lt;system-instruction&gt;</code> block instead.</p>
+  </section>
+  <section class="req" id="REQ-AGT-06">
+    <header><code class="id">AGT-06</code><h3>Incompatible with the remote</h3><span class="scope in">In scope</span></header>
+<pre>Resolve branch incompatibility with remote.</pre>
+    <p>When the local branch and its remote branch diverged because the remote was rebased or force-pushed ("Remote branch was rebased"), or history is otherwise incompatible.</p>
+  </section>
+
+  <!-- ============================== ACCOUNT ============================== -->
+  <h2>Account and token</h2>
+  <section class="req" id="REQ-ACC-01">
+    <header><code class="id">ACC-01</code><h3>GitHub account per repository</h3><span class="scope tech">Technical</span></header>
+    <dl>
+      <dt>Accounts</dt><dd>Logins from <code>gh auth status</code>; a token per login from <code>gh auth token --user &lt;login&gt;</code>, once per launch on first need, in memory only, never stored or logged.</dd>
+      <dt>Binding</dt><dd>Repository setting "GitHub account" (the next free migration: <code>repo.githubLogin</code>); default the login equal to the remote's owner, else gh's active account. Owner and name from <code>git remote get-url origin</code> (https, <code>git@host:o/n.git</code>, SSH aliases like <code>github-celes</code>).</dd>
+      <dt>Shown</dt><dd>Panel footer; the repository settings sheet has the picker. Its first entry is "Automatic (jhzl1)", naming the login the default resolves to; choosing it stores nil.</dd>
+      <dt>Errors</dt><dd>"GitHub access required" in the header (loading group) and <code>gh auth login --hostname github.com</code> in the tab.</dd>
+    </dl>
+  </section>
+  <section class="req" id="REQ-ENV-01">
+    <header><code class="id">ENV-01</code><h3>GH_TOKEN for every workspace process</h3><span class="scope tech">Technical</span></header>
+    <p>From M4 (spec Section 2, step 3, the token only). Agents, terminals and scripts of a workspace get <code>GH_TOKEN</code> = the repository account's token, the account layer of <code>WorkspaceEnvironment</code>, which comes last, as spec Section 3 says ("later wins": login env &lt; repository variables &lt; account variables). So the account's token wins over a repository variable named <code>GH_TOKEN</code>. (Corrected 2026-09-23: an earlier version put it before repository variables, against the spec.) The agent's <code>gh</code> and HTTPS <code>git</code> act as that account (M0: <code>gh auth git-credential</code> honors <code>GH_TOKEN</code>; push itself was never exercised, so verify it). An account change applies to new processes (M2 rule); the settings sheet says "Restart the conversation's agent to use the new account". <code>GIT_AUTHOR_*</code>, SSH keys and the Claude instance per account stay in M4.</p>
+  </section>
+
+  <!-- ============================== DATA ============================== -->
+  <h2>Data, merge and refresh</h2>
+  <section class="req" id="REQ-PR-01">
+    <header><code class="id">PR-01</code><h3>The panel's query</h3><span class="scope tech">Technical</span></header>
+<pre>repository(owner:, name:) {
+  id squashMergeAllowed rebaseMergeAllowed mergeCommitAllowed viewerDefaultMergeMethod
+  defaultBranchRef { name }
+  pullRequests(headRefName: $branch, states: [OPEN, MERGED], first: 1,
+               orderBy: {field: CREATED_AT, direction: DESC}) { nodes {
+    id number url title body isDraft state mergedAt baseRefName headRefName headRefOid
+    mergeable mergeStateStatus reviewDecision canBeRebased
+    reviewRequests(first: 10) { totalCount }
+    autoMergeRequest { enabledAt } mergeQueueEntry { state }
+    commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
+      ... on CheckRun { name status conclusion startedAt completedAt detailsUrl databaseId
+                        checkSuite { workflowRun { databaseId } } }
+      ... on StatusContext { context state targetUrl } } } } } } }
+    deployments(first: 20, orderBy: {field: CREATED_AT, direction: DESC}) {
+      nodes { environment state latestStatus { state environmentUrl } } }
+  } }
+  ref(qualifiedName: $base) { compare(headRef: $branch) { aheadBy behindBy } }
+}</pre>
+    <p>Conductor's fields (looked up by <code>headRefName</code> with OPEN and MERGED) plus the compare, the workflow run ids, <code>headRefOid</code> (GST-01's upstream fetch) and <code>defaultBranchRef</code>. <code>$base</code> is the workspace's <code>baseRef</code>, else <code>defaultBranchRef.name</code> (workspaces made before M2 have no <code>baseRef</code>); the same base names "development" in every label and prompt. Comments (REV-01) are a second query. <strong>Verify every field against GitHub's schema before coding.</strong></p>
+  </section>
+  <section class="req" id="REQ-PR-05">
+    <header><code class="id">PR-05</code><h3>Merge, with a choice of method</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Methods</dt><dd>Only those the repository allows (<code>squashMergeAllowed</code>, <code>mergeCommitAllowed</code>, <code>rebaseMergeAllowed</code>). One allowed: a plain button. Two or three: a split button; its chevron opens the menu. (User decision, 2026-09-23: choose among the allowed methods. Conductor uses only the first.)</dd>
+      <dt>Default</dt><dd><code>viewerDefaultMergeMethod</code> when allowed: GitHub's last method this viewer used on the repository, else the repository's default. Otherwise the first allowed in the order squash, rebase, merge. A pick from the menu stays the workspace's method until Rocky quits. GitHub records the merge itself, so the next default follows it, and Rocky stores nothing.</dd>
+      <dt>Button</dt><dd>24 pt, <code>success</code> fill (HDR-01), short label by method: "Squash", "Merge", "Rebase"; tooltip "Squash and merge into development".</dd>
+      <dt>Menu</dt><dd>Rocky's menu (<code>MenuButton</code> / <code>MenuItem</code>). One item per allowed method, with a check on the current method and a second line (11.5 <code>textTertiary</code>): <strong>Squash and merge</strong> "Combine all commits into one commit on development" · <strong>Rebase and merge</strong> "Replay each commit onto development, no merge commit" · <strong>Create a merge commit</strong> "Keep every commit and add a merge commit" (the order squash, rebase, merge). Rebase is disabled when <code>canBeRebased</code> is false: "GitHub can't rebase this branch cleanly".</dd>
+      <dt>Confirm</dt><dd>Two clicks: the first turns the button into "Confirm squash" / "Confirm merge" / "Confirm rebase" (<code>attention</code>) for 4 s (a Rocky choice; Conductor merges on one click). Picking another method cancels the confirmation.</dd>
+      <dt>Does</dt><dd>GraphQL <code>mergePullRequest(input: {pullRequestId, mergeMethod: SQUASH | MERGE | REBASE})</code>; "Merging…" with a spinner; errors under the header. The Git status row "Ready to merge" (GST-01) carries the same button, sharing its method and its confirmation.</dd>
+      <dt>Kit</dt><dd>Pure <code>MergeMethods.available(repository:) -&gt; [MergeMethod]</code> and <code>MergeMethods.initial(available:viewerDefault:) -&gt; MergeMethod</code>, each with tests (one allowed; the viewer's default not allowed; the order squash, rebase, merge).</dd>
+    </dl>
+  </section>
+  <section class="req" id="REQ-PR-06">
+    <header><code class="id">PR-06</code><h3>After the merge</h3><span class="scope in">In scope</span></header>
+    <p>Header merged with Archive: today's remove flow (archive script, worktree removal, branch kept). No confirmation when the worktree is clean. With uncommitted changes or untracked files it asks: "tokyo has 3 uncommitted changes. Archive anyway?" (Cancel / Archive). With SET-01 on, Rocky runs it when it sees the merge, but skips a worktree with uncommitted changes and says "tokyo merged but has uncommitted changes; not archived". Rocky never deletes the remote branch. (Conductor also offers "Continue"; its label and meaning are unconfirmed, so it is not built.)</p>
+  </section>
+  <section class="req" id="REQ-PR-07">
+    <header><code class="id">PR-07</code><h3>Refreshing without draining the battery</h3><span class="scope tech">Technical</span></header>
+    <dl>
+      <dt>Rules</dt><dd>Selected workspace only, window key only. Immediately on selection, when the window becomes key, after a Rocky action (merge, push, pull, ready, save, re-run), and when an agent turn in that workspace ends; then 30, 60, 120, 300 s while nothing changes; back to 30 s while checks or deployments run or after any change. The local <code>git status</code> (GST-01) runs on the same triggers.</dd>
+      <dt>Stored</dt><dd>The last state per workspace (the next free migration: <code>prNumber, prUrl, prState, prHeaderState, prChecks, prUpdatedAt</code>, and hidden comment ids), shown for other workspaces and after relaunch.</dd>
+      <dt>Footer</dt><dd>"jhzl1 · Updated 12s ago" and refresh; offline "No internet connection · updated 5m ago".</dd>
+      <dt>Kit</dt><dd><code>GitHubClient</code>, pure <code>PollSchedule</code> (30, 60, 120, 300, 300; reset on change; 30 while running).</dd>
+    </dl>
+  </section>
+  <section class="req" id="REQ-PR-08">
+    <header><code class="id">PR-08</code><h3>Ready for review</h3><span class="scope in">In scope</span></header>
+    <p>Conductor runs <code>gh pr ready</code>; Rocky calls GraphQL <code>markPullRequestReadyForReview(pullRequestId:)</code>, then refreshes. No confirmation.</p>
+  </section>
+  <section class="req" id="REQ-ROW-07">
+    <header><code class="id">ROW-07</code><h3>Pull request glyphs in the sidebar</h3><span class="scope in">In scope</span></header>
+    <p>From M3. After Unread in M2.5's order: <strong>pull request</strong>, the glyph colored by the checks (<code>success</code> passed, <code>attention</code> running, <code>danger</code> failed or conflicts, <code>textSecondary</code> draft), then <strong>merged</strong> (<code>merged</code> glyph, title <code>textTertiary</code>), then Idle. From the stored state (PR-07). <code>WorkspaceStatus</code> gains <code>pullRequest(tone:)</code> and <code>merged</code>.</p>
+  </section>
+  <section class="req" id="REQ-SET-01">
+    <header><code class="id">SET-01</code><h3>Archive on merge</h3><span class="scope in">In scope</span></header>
+    <p>A switch in a new "GitHub" section of Settings (M2.5's panel), after "Terminal": "Archive a workspace when its pull request merges", default off (Conductor's <code>archive_on_merge</code>). On: when Rocky sees a merge it runs PR-06's flow and shows "Archived tokyo".</p>
+  </section>
+  <section class="req" id="REQ-ERR-01">
+    <header><code class="id">ERR-01</code><h3>Errors and loading labels</h3><span class="scope in">In scope</span></header>
+    <p>Header labels, loading group: "Loading PR info…", "Checking mergeability…", "Couldn’t load PR info", "GitHub access required", "PR info unavailable" (origin is not a GitHub remote, or GitHub answers NOT_FOUND for the repository), "No internet connection". Details under the header (12, <code>danger</code>) with Retry. Git failures show the last lines of stderr in a toast; offline keeps the last state.</p>
+  </section>
+  <section class="req" id="REQ-KBD-03">
+    <header><code class="id">KBD-03</code><h3>Keyboard</h3><span class="scope in">In scope</span></header>
+    <p>⌘⇧G shows and hides the panel. M3 adds ⌘⇧C for its Changes tab. No collision with M2, M2.5 or M2.6.</p>
+  </section>
+
+  <h2>Out of scope</h2>
+  <section class="req" id="REQ-OUT-30">
+    <header><code class="id">OUT-30</code><h3>Not in M2.7</h3><span class="scope out">Later</span></header>
+    <p>A Rocky form to create the PR (the agent does it) · the Changes tab (M3) · the All files tab · Conductor's Desktop and Summary tabs · Automerge, Approve PR and merge queue actions (their state shows in the label only) · "Continue" after merge · Vercel's "View logs" · resolving, editing or deleting review threads (not planned) · Conductor's "Review" button · notifications (M2.5) · <code>GIT_AUTHOR_*</code>, SSH keys and the Claude instance per account (M4).</p>
+  </section>
+</aside>
+
+<script>
+/* Demo behavior. States and data are canned; the requirements on the right are what matters. */
+(() => {
+  'use strict';
+  const $ = (s) => document.querySelector(s);
+  const win = $('#win');
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const md = (s) => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>');
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  let seq = 0; const uid = () => 'i' + (++seq);
+
+  const svg = (s, body, w) => `<svg width="${s}" height="${s}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+  const spinner = (s) => `<svg class="spinner" width="${s}" height="${s}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" role="img" aria-label="Running"><circle cx="8" cy="8" r="5.5" stroke-opacity="0.22"/><path d="M8 2.5a5.5 5.5 0 0 1 5.5 5.5"/></svg>`;
+  const I = {
+    branch: svg(14, '<circle cx="4.5" cy="3.5" r="1.6"/><circle cx="4.5" cy="12.5" r="1.6"/><circle cx="11.5" cy="4.5" r="1.6"/><path d="M4.5 5.1v5.8M11.5 6.1c0 3-3.2 3.1-6.2 4.7"/>', 1.4),
+    pr: (s) => svg(s, '<circle cx="4.5" cy="3.5" r="1.6"/><circle cx="4.5" cy="12.5" r="1.6"/><circle cx="11.5" cy="12.5" r="1.6"/><path d="M4.5 5.1v5.8M11.5 10.9V6.5a2 2 0 0 0-2-2H7.5M9 3L7.5 4.5 9 6"/>', 1.4),
+    merge: (s) => svg(s, '<circle cx="4.5" cy="3.5" r="1.6"/><circle cx="4.5" cy="12.5" r="1.6"/><circle cx="11.5" cy="8.5" r="1.6"/><path d="M4.5 5.1v5.8M4.5 5.1c0 2.4 2.2 3.4 5.4 3.4"/>', 1.4),
+    check: (s) => svg(s, '<path d="M3.5 8.5l3 3 6-7"/>', 2.3),
+    cross: (s) => svg(s, '<path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/>', 2),
+    ext: (s) => svg(s, '<path d="M9.5 2.5h4v4M13.5 2.5L7 9M12 9.5V12a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 12V5.5A1.5 1.5 0 0 1 4 4h2.5"/>', 1.4),
+    chev: svg(10, '<path d="M3.5 6l4.5 4.5L12.5 6"/>', 2),
+    sidebarRight: svg(15, '<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2.25"/><path d="M9.75 2.75v10.5"/>', 1.3),
+    refresh: svg(13, '<path d="M13 8a5 5 0 1 1-1.5-3.5M13 2.5v3h-3"/>', 1.4),
+    play: '<svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 2.75v10.5L13 8z" fill="currentColor"/></svg>',
+    open: svg(15, '<path d="M9.5 2.5h4v4M13.5 2.5L8 8M12 9.5V12a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 12V5.5A1.5 1.5 0 0 1 4 4h2.5"/>', 1.3),
+    file: svg(12, '<path d="M4 1.75h5.25L12.5 5v9.25H4z"/><path d="M9.25 1.75V5h3.25"/>', 1.4),
+    arrowUp: svg(13, '<path d="M8 13V3.5M3.75 7.5L8 3.25l4.25 4.25"/>', 2.2),
+    github: '<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 .5a7.5 7.5 0 0 0-2.37 14.62c.37.07.51-.16.51-.36v-1.3c-2.08.46-2.52-.88-2.52-.88-.34-.87-.83-1.1-.83-1.1-.68-.46.05-.45.05-.45.75.05 1.15.77 1.15.77.67 1.14 1.75.81 2.18.62.07-.48.26-.81.47-1-1.66-.19-3.41-.83-3.41-3.7 0-.82.29-1.49.77-2.01-.08-.19-.33-.95.07-1.98 0 0 .63-.2 2.06.77a7.1 7.1 0 0 1 3.75 0c1.43-.97 2.06-.77 2.06-.77.4 1.03.15 1.79.07 1.98.48.52.77 1.19.77 2.01 0 2.88-1.75 3.51-3.42 3.7.27.23.51.69.51 1.39v2.06c0 .2.14.44.52.36A7.5 7.5 0 0 0 8 .5z"/></svg>',
+    vercel: '<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 2l6.5 11.5h-13z"/></svg>',
+  };
+  document.querySelectorAll('[data-icon]').forEach((el) => el.insertAdjacentHTML('afterbegin', I[el.dataset.icon]));
+
+  // ---------- data: every workspace in a different header state ----------
+  const CK = (name, state, dur, url = 'github') => ({ name, state, dur, url });
+  const PASS = () => [CK('lint', 'SUCCESS', '41s'), CK('typecheck', 'SUCCESS', '1m'), CK('unit', 'SUCCESS', '3m'), CK('build', 'SUCCESS', '2m'), CK('Vercel – celes-web', 'SUCCESS', '1m', 'vercel')];
+  const L = (o) => ({ uncommitted: 0, ahead: 0, behindRemote: 0, behindBase: 0, ownCommits: 3, incompatible: false, ...o });
+  const P = (o) => ({ state: 'OPEN', isDraft: false, canBeRebased: true, mergeState: 'CLEAN', review: 'REVIEW_REQUIRED', reviewRequests: 0, threads: [], deployments: [], checks: PASS(), updated: Date.now() - 12000, ...o });
+  const workspaces = [
+    { id: 'w1', repo: 'celes', title: 'OpenAPI export for providers', branch: 'jhzl/openapi-export', local: L({ uncommitted: 2, ownCommits: 3 }), pr: null },
+    { id: 'w2', repo: 'celes', title: 'Fix invoice rounding', branch: 'jhzl/invoice-rounding', local: L({}), pr: P({ number: 4521, title: 'Round invoice totals half-up', body: 'Invoice totals were truncated instead of rounded. Rounds half-up to two decimals and adds tests for the .005 boundary.', mergeState: 'BLOCKED', review: 'APPROVED', checks: [CK('lint', 'SUCCESS', '38s'), CK('typecheck', 'SUCCESS', '1m'), CK('unit', 'FAILURE', '2m'), CK('build', 'SUCCESS', '2m'), CK('e2e / chromium', 'FAILURE', '7m'), CK('e2e / webkit', 'RUNNING', '<1m')], deployments: [{ env: 'Preview', url: 'https://celes-web-git-invoice.vercel.app', state: 'SUCCESS' }] }) },
+    { id: 'w3', repo: 'celes', title: 'List repo PRs by author', branch: 'jhzl/list-prs', local: L({}), pr: P({ number: 4525, title: 'List open pull requests grouped by author', body: 'Adds `prs:list`, which prints the open pull requests of a repository grouped by author, newest first. Grouping lives in groupByAuthor(). Closes #212.', review: 'APPROVED', deployments: [{ env: 'Preview', url: 'https://celes-web-git-list-prs.vercel.app', state: 'SUCCESS' }, { env: 'storybook', url: 'https://storybook.example.dev', state: 'SUCCESS' }] }) },
+    { id: 'w4', repo: 'celes', title: 'Refactor ACP handshake', branch: 'jhzl/acp-handshake', local: L({ behindBase: 5 }), pr: P({ number: 4518, title: 'Retry the ACP handshake once', body: 'Retries initialize once when the adapter exits during it.', mergeState: 'DIRTY', checks: PASS().slice(0, 4) }) },
+    { id: 'w5', repo: 'celes', title: 'Health check endpoint', branch: 'jhzl/health-check', local: L({}), pr: P({ number: 4530, title: 'Add /health', body: 'Work in progress: /health returns 200 with the build hash.', isDraft: true, mergeState: 'DRAFT', checks: PASS().slice(0, 2) }) },
+    { id: 'w6', repo: 'veritas', title: 'Retry OCR on timeouts', branch: 'jhzl/ocr-retry', local: L({}), pr: P({ number: 4512, title: 'Retry OCR when the provider times out', body: 'Retries up to three times with a fixed delay.', mergeState: 'BLOCKED', review: 'CHANGES_REQUESTED', threads: [{ who: 'ana', where: 'src/ocr/retry.ts:42', body: 'Use exponential backoff instead of a fixed delay.', replies: [['jhzl', 'Would a jitter help too?'], ['ana', 'Yes, add full jitter.']], added: false }, { who: 'ana', where: null, body: 'Please add a test for the timeout path. The current tests only cover the happy path.', added: false }, { who: 'ana', where: null, review: true, body: 'Split the retry policy out of the OCR client.', added: false }] }) },
+    { id: 'w7', repo: 'veritas', title: 'Parse scanned invoices', branch: 'jhzl/scanned-invoices', local: L({}), pr: P({ number: 4527, title: 'Parse totals from scanned invoices', body: 'Extracts totals with the OCR provider and matches them against the fixtures.', mergeState: 'BLOCKED', review: 'APPROVED', checks: [CK('lint', 'SUCCESS', '39s'), CK('typecheck', 'SUCCESS', '1m'), CK('unit', 'RUNNING', '1m'), CK('build', 'RUNNING', '<1m'), CK('e2e / chromium', 'QUEUED', '')], deployments: [{ env: 'Preview', url: 'https://veritas-git-invoices.vercel.app', state: 'IN_PROGRESS' }] }) },
+    { id: 'w8', repo: 'veritas', title: 'Collapse the empty terminal panel', branch: 'jhzl/terminal-panel', local: L({ uncommitted: 3 }), pr: P({ number: 4533, title: 'Collapse the terminal panel while it is empty', body: 'The panel shows only its bar until something runs.', checks: PASS().slice(0, 3) }) },
+    { id: 'w9', repo: 'veritas', title: 'Scanned invoice fixtures', branch: 'jhzl/fixtures', local: L({}), pr: P({ number: 4520, state: 'MERGED', title: 'Add scanned invoice fixtures', body: 'Twelve anonymized invoices for the OCR tests.', review: 'APPROVED', checks: PASS().slice(0, 3), deployments: [{ env: 'production', url: 'https://veritas.example.com', state: 'SUCCESS' }] }) },
+    { id: 'w10', repo: 'veritas', title: 'Export audit log', branch: 'jhzl/audit-log', local: L({ ahead: 1 }), pr: P({ number: 4536, title: 'Export the audit log as CSV', body: 'Adds a CSV export to the audit log page.' }) },
+    { id: 'w11', repo: 'veritas', title: 'Rename billing tables', branch: 'jhzl/billing-rename', local: L({}), pr: P({ number: 4537, title: 'Rename the billing tables', body: 'Renames invoices_v2 to invoices and updates the queries.', mergeState: 'BLOCKED', review: 'REVIEW_REQUIRED', reviewRequests: 1 }) },
+  ];
+  workspaces.forEach((w) => { w.turn = null; w.items = []; if (w.pr) { w.pr.editTitle = w.pr.title; w.pr.editBody = w.pr.body; } });
+  const repos = { celes: { name: 'celes-platform', color: '#4C7BD9', allow: ['SQUASH', 'MERGE', 'REBASE'], viewerDefault: 'SQUASH' }, veritas: { name: 'veritas', color: '#8E6BE0', allow: ['SQUASH', 'MERGE'], viewerDefault: 'MERGE' } };
+  const state = { selected: 'w3', panelOpen: true, confirmMerge: null, lastLabel: {}, method: {} };
+  const METHOD = {
+    SQUASH: { short: 'Squash', confirm: 'Confirm squash', menu: 'Squash and merge', desc: 'Combine all commits into one commit on development', done: 'Squash-merged' },
+    MERGE: { short: 'Merge', confirm: 'Confirm merge', menu: 'Create a merge commit', desc: 'Keep every commit and add a merge commit', done: 'Merged (merge commit)' },
+    REBASE: { short: 'Rebase', confirm: 'Confirm rebase', menu: 'Rebase and merge', desc: 'Replay each commit onto development, no merge commit', done: 'Rebased and merged' },
+  };
+  const allowedOf = (w) => ['SQUASH', 'REBASE', 'MERGE'].filter((m) => repos[w.repo].allow.includes(m));
+  const methodOf = (w) => { const a = allowedOf(w); if (state.method[w.id] && a.includes(state.method[w.id])) return state.method[w.id]; return a.includes(repos[w.repo].viewerDefault) ? repos[w.repo].viewerDefault : a[0]; };
+  const wsOf = (id) => workspaces.find((w) => w.id === id);
+  const sel = () => wsOf(state.selected);
+  const BASE = 'development';
+  const FAILED = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED']);
+  const counts = (pr) => { const c = { failed: 0, pending: 0, ok: 0 }; pr.checks.forEach((k) => { if (FAILED.has(k.state)) c.failed++; else if (['RUNNING', 'QUEUED', 'PENDING', 'IN_PROGRESS'].includes(k.state)) c.pending++; else c.ok++; }); return c; };
+
+  // ---------- HDR-02 ----------
+  function headerState(w) {
+    const pr = w.pr; const l = w.local;
+    if (pr && pr.state === 'MERGED') return 'merged';
+    if (w.turn) return 'working';
+    if (!pr || pr.state === 'CLOSED') return l.uncommitted || l.ownCommits ? 'create_pr' : 'no_changes';
+    if (l.uncommitted) return 'commit_and_push';
+    if (l.incompatible) return 'incompatible';
+    if (l.behindRemote) return 'pull';
+    if (l.ahead) return 'push';
+    if (pr.mergeState === 'DIRTY') return 'merge_conflicts';
+    if (pr.review === 'CHANGES_REQUESTED') return 'changes_requested';
+    if (pr.isDraft) return 'draft_pr';
+    const c = counts(pr);
+    if (c.failed && pr.mergeState !== 'UNSTABLE') return 'checks_failing';
+    if (c.pending) return 'checks_pending';
+    if (pr.mergeState === 'BLOCKED' && pr.review === 'REVIEW_REQUIRED') return 'review_required';
+    if (pr.mergeState === 'BLOCKED') return 'blocked';
+    if (pr.mergeState === 'UNKNOWN') return 'loading_pr';
+    if (pr.mergeState === 'CLEAN' || pr.mergeState === 'UNSTABLE') return 'ready_to_merge';
+    return 'unable_to_merge';
+  }
+  function header(w) {
+    const st = headerState(w); const pr = w.pr; const l = w.local; const busy = Boolean(w.turn);
+    const B = (label, action, cls = '', extra = {}) => ({ label, action, cls, ...extra });
+    const c = pr ? counts(pr) : null;
+    switch (st) {
+      case 'merged': return { group: 'merged', label: 'Merged', btn: B('Archive', 'archive', 'archive') };
+      case 'no_changes': return { group: 'no_pr', label: 'No changes yet' };
+      case 'create_pr': return { group: 'no_pr', label: '', split: true };
+      case 'working': return { group: 'loading', label: 'Working…', spin: true };
+      case 'commit_and_push': return { group: 'out_of_sync', label: 'Uncommitted changes', btn: B('Commit and push', 'agent-commit', '', { agent: true }) };
+      case 'incompatible': return { group: 'out_of_sync', label: 'Incompatible with remote', btn: B('Resolve', 'agent-incompatible', '', { agent: true }) };
+      case 'pull': return { group: 'out_of_sync', label: `Behind by ${l.behindRemote} commits`, btn: B('Pull', 'pull-remote') };
+      case 'push': return { group: 'out_of_sync', label: `Ahead by ${l.ahead} commit${l.ahead > 1 ? 's' : ''}`, btn: B('Push', 'push') };
+      case 'merge_conflicts': return { group: 'out_of_sync', label: 'Merge conflicts', btn: B('Resolve', 'agent-conflicts', '', { agent: true }) };
+      case 'changes_requested': return { group: 'out_of_sync', label: 'PR changes requested', btn: B('Add all comments to chat', 'agent-comments', '', { agent: true }) };
+      case 'draft_pr': return { group: 'out_of_sync', label: 'Draft PR open', btn: B('Ready for review', 'ready', 'outline') };
+      case 'checks_failing': return { group: 'out_of_sync', label: `${c.failed} / ${pr.checks.length} checks failed${c.pending ? `, ${c.pending} pending` : ''}`, btn: B('Fix errors', 'agent-ci', '', { agent: true }) };
+      case 'checks_pending': return { group: 'queued', label: `${c.pending} checks pending…`, spin: true };
+      case 'review_required': return { group: 'out_of_sync', label: 'PR review required' };
+      case 'blocked': return { group: 'out_of_sync', label: 'Blocked from merging' };
+      case 'loading_pr': return { group: 'loading', label: 'Checking mergeability…', spin: true };
+      case 'ready_to_merge': { const m = METHOD[methodOf(w)]; const conf = state.confirmMerge === w.id; return { group: 'in_sync', label: pr.mergeState === 'UNSTABLE' && counts(pr).failed ? `${counts(pr).failed} optional check${counts(pr).failed > 1 ? 's' : ''} failed` : 'Ready to merge', btn: B(conf ? m.confirm : m.short, 'merge', conf ? 'confirm' : 'merge'), mergeSplit: allowedOf(w).length > 1 }; }
+      default: return { group: 'out_of_sync', label: 'Unable to merge' };
+    }
+    void busy;
+  }
+  const glyphClass = (w) => {
+    const pr = w.pr; if (!pr) return null;
+    if (pr.state === 'MERGED') return 'c-merged';
+    if (pr.isDraft) return 'c-2';
+    const c = counts(pr);
+    if (c.failed || pr.mergeState === 'DIRTY') return 'c-danger';
+    if (c.pending) return 'c-attention';
+    return 'c-success';
+  };
+
+  // ---------- sidebar (ROW-07) ----------
+  function renderSidebar() {
+    let html = ''; let pinned = false;
+    for (const rid of Object.keys(repos)) {
+      html += `<div class="repo"><span class="monogram" style="background:${repos[rid].color}">${repos[rid].name[0].toUpperCase()}</span>${esc(repos[rid].name)}</div>`;
+      for (const w of workspaces.filter((x) => x.repo === rid)) {
+        let g;
+        if (w.turn) g = spinner(14);
+        else if (w.pr && w.pr.state === 'MERGED') g = `<span class="c-merged">${I.merge(14)}</span>`;
+        else if (w.pr) g = `<span class="${glyphClass(w)}">${I.pr(14)}</span>`;
+        else g = `<span class="c-muted">${I.branch}</span>`;
+        const pin = !pinned && w.pr ? (pinned = true, ' data-req="ROW-07"') : '';
+        html += `<div class="row-wrap${w.id === state.selected ? ' selected' : ''}"><button class="row" data-action="select" data-ws="${w.id}" title="${esc(headerState(w))}"><span class="glyph"${pin}>${g}</span><span class="row-title${w.pr && w.pr.state === 'MERGED' ? ' dim' : ''}">${esc(w.title)}</span></button></div>`;
+      }
+    }
+    $('#sbList').innerHTML = html;
+  }
+
+  // ---------- top bar (PNL-02) ----------
+  function checksGlyph(pr, s) { const c = counts(pr); return c.failed ? `<span class="c-danger">${I.cross(s)}</span>` : c.pending ? `<span class="c-attention">${spinner(s)}</span>` : `<span class="c-success">${I.check(s)}</span>`; }
+  function renderTopbar() {
+    const w = sel(); const pr = w.pr;
+    const merged = pr && pr.state === 'MERGED';
+    const toggle = pr ? `<span class="${glyphClass(w)}">${merged ? I.merge(13) : I.pr(13)}</span>#${pr.number}${merged ? '' : checksGlyph(pr, 12)}` : I.sidebarRight;
+    const tip = pr ? `Pull request #${pr.number} · ${header(w).label || 'No pull request'}` : 'Show the GitHub panel';
+    $('#topbar').innerHTML = `<span class="crumb">${esc(repos[w.repo].name)}</span><span style="color:var(--sep)">/</span><span class="br">${esc(w.branch)}</span><span class="grow"></span>` +
+      `<button class="pnl-toggle${state.panelOpen ? ' on' : ''}" data-action="toggle-panel" data-req="PNL-02" title="${esc(tip)} (⌘⇧G)" aria-label="${esc(tip)}">${toggle}</button>` +
+      `<button class="icon-btn" aria-label="Open in">${I.open}</button><button class="run">${I.play}<span>Run</span></button>`;
+    win.classList.toggle('pnl-closed', !state.panelOpen);
+  }
+
+  // ---------- conversation ----------
+  function itemHTML(it, fresh) {
+    const e = fresh ? ' enter' : '';
+    if (it.kind === 'user') return `<div class="msg-user${e}">${md(it.text)}${it.files ? `<div class="attachments">${it.files.map((f) => `<span class="file-badge">${I.file}${esc(f)}</span>`).join('')}</div>` : ''}</div>`;
+    if (it.kind === 'agent') return `<div class="msg-agent${e}">${md(it.text)}</div>`;
+    if (it.kind === 'footer') return `<div class="turn-footer${e}"><span class="agent sm">C</span><span>${esc(it.text)}</span></div>`;
+    return '';
+  }
+  function renderCenter() {
+    const w = sel();
+    $('#tabs').innerHTML = `<div class="tab-wrap selected"><button class="tab">${w.turn ? spinner(12) : '<span class="agent">C</span>'}<span>${esc(w.title)}</span></button></div>`;
+    const html = w.items.map((it) => itemHTML(it, false)).join('') + (w.turn ? '<div class="working" id="working"><span class="shimmer">Working</span><span class="elapsed">0s</span></div>' : '');
+    $('#chatCol').innerHTML = html || `<p style="color:var(--text-3);text-align:center;margin-top:80px;font-size:13px">The conversation for “${esc(w.title)}”. Agent actions from the panel land here.</p>`;
+    $('#chat').scrollTop = $('#chat').scrollHeight;
+  }
+  function append(w, it) {
+    w.items.push(it);
+    if (w.id !== state.selected) return;
+    const p = $('#chatCol p'); if (p) p.remove();
+    const wk = $('#working');
+    if (wk) wk.insertAdjacentHTML('beforebegin', itemHTML(it, true)); else $('#chatCol').insertAdjacentHTML('beforeend', itemHTML(it, true));
+    $('#chat').scrollTop = $('#chat').scrollHeight;
+  }
+
+  // ---------- panel ----------
+  const ago = (t) => { const s = Math.max(1, Math.floor((Date.now() - t) / 1000)); return s < 60 ? `${s}s ago` : `${Math.floor(s / 60)}m ago`; };
+  function statusRows(w) {
+    const pr = w.pr; const l = w.local; const busy = Boolean(w.turn); const rows = [];
+    const ag = (label, action) => `<button class="ghost-btn" data-action="${action}" ${busy ? 'disabled title="The agent is working"' : ''}>${label}</button>`;
+    const R = (dot, text, act = '') => rows.push({ dot, text, act });
+    if (pr && pr.state === 'MERGED') { R('merged', `Merged into ${BASE}`); return rows; }
+    if (pr && pr.mergeState === 'DIRTY') R('danger', 'Merge conflicts detected', ag('Resolve', 'agent-conflicts'));
+    if (l.incompatible) R('danger', 'Incompatible with remote', ag('Resolve', 'agent-incompatible'));
+    if (l.uncommitted) R('attention', `${l.uncommitted} uncommitted changes`, ag('Commit and push', 'agent-commit'));
+    if (l.behindRemote) R('attention', `${l.behindRemote} commits behind remote`, `<button class="ghost-btn" data-action="pull-remote" ${l.uncommitted ? 'disabled title="Commit or discard the changes first"' : ''}>Pull</button>`);
+    if (l.ahead) R('attention', `${l.ahead} commit${l.ahead > 1 ? 's' : ''} ahead of remote`, '<button class="ghost-btn" data-action="push" data-req="GST-03">Push</button>');
+    if (l.behindBase) R('attention', `${l.behindBase} commits behind ${BASE}`, `<button class="ghost-btn" data-action="pull-base" data-req="GST-02" ${busy ? 'disabled' : ''}>Pull</button>`);
+    if (!pr) R('muted', 'No PR open', ag('Create PR', 'agent-create'));
+    if (pr && pr.isDraft) R('muted', 'PR is in draft', '<button class="ghost-btn" data-action="ready">Ready for review</button>');
+    if (pr && pr.review === 'REVIEW_REQUIRED' && !pr.isDraft && pr.mergeState === 'BLOCKED') R('muted', 'Waiting for PR review');
+    if (pr && pr.review === 'CHANGES_REQUESTED') R('danger', 'PR changes requested', ag('Add all comments to chat', 'agent-comments'));
+    if (pr && headerState(w) === 'ready_to_merge') R('success', 'Ready to merge', `<button class="ghost-btn" data-action="merge" title="${METHOD[methodOf(w)].menu} into ${BASE}">${state.confirmMerge === w.id ? METHOD[methodOf(w)].confirm : METHOD[methodOf(w)].short}</button>`);
+    if (!rows.length) R('success', `Up to date with ${BASE}`);
+    return rows;
+  }
+  function checkIcon(st) {
+    if (['RUNNING', 'IN_PROGRESS'].includes(st)) return `<span class="lead c-attention">${spinner(12)}</span>`;
+    if (FAILED.has(st)) return `<span class="lead c-danger">${I.cross(12)}</span>`;
+    if (['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(st)) return `<span class="lead c-success">${I.check(12)}</span>`;
+    return '<span class="lead"><span class="circ muted"></span></span>';
+  }
+  function depIcon(st) {
+    if (st === 'SUCCESS') return `<span class="lead c-success" title="Deployed">${I.check(12)}</span>`;
+    if (st === 'FAILURE' || st === 'ERROR') return `<span class="lead c-danger" title="Failed">${I.cross(12)}</span>`;
+    if (st === 'IN_PROGRESS') return '<span class="lead" title="Deploying"><span class="circ attention"></span></span>';
+    if (['QUEUED', 'PENDING', 'WAITING'].includes(st)) return '<span class="lead" title="Queued"><span class="circ muted"></span></span>';
+    return '<span class="lead" title="Inactive"><span class="circ hollow"></span></span>';
+  }
+  const depName = (d) => { const m = d.url && d.url.match(/^https:\/\/([^.]+)\.vercel\.app/); return m ? m[1] : d.env; };
+  function renderPanel(animateLabel) {
+    const w = sel(); const pr = w.pr; const h = header(w); const busy = Boolean(w.turn);
+    let action = '';
+    if (h.split) action = `<span class="split" data-req="AGT-01"><button class="hbtn" data-action="agent-create" ${busy ? 'disabled title="The agent is working"' : ''}>Create PR</button><button class="hbtn" data-action="create-menu" aria-label="More ways to create" ${busy ? 'disabled' : ''}>${I.chev}</button></span>`;
+    else if (h.btn && h.btn.action === 'merge') {
+      const main = `<button class="hbtn ${h.btn.cls}" data-action="merge" title="${METHOD[methodOf(w)].menu} into ${BASE}">${h.btn.label}</button>`;
+      action = h.mergeSplit ? `<span class="split" data-req="PR-05">${main}<button class="hbtn ${h.btn.cls}" data-action="merge-menu" aria-label="Merge method">${I.chev}</button></span>` : main;
+    }
+    else if (h.btn) action = `<button class="hbtn ${h.btn.cls}" data-action="${h.btn.action}" ${h.btn.agent && busy ? 'disabled title="The agent is working"' : ''}>${h.btn.label}</button>`;
+    const pill = pr ? `<span class="pill" data-req="HDR-03"><button data-action="pill-left" title="Show the pull request (⌘-click: open on GitHub)">#${pr.number}</button><button class="ext" data-action="view" aria-label="Open on GitHub">${I.ext(12)}</button></span>` : '';
+    const labelChanged = animateLabel && state.lastLabel[w.id] !== h.label;
+    state.lastLabel[w.id] = h.label;
+    const hdr = `<div class="hdr ${h.group}" data-req="HDR-01">${pill}<span class="hdr-label${labelChanged ? ' anim' : ''}" data-req="HDR-02" title="${esc(h.label)}">${h.spin ? spinner(13) : ''}<span>${esc(h.label)}</span></span>${action}</div>`;
+    const tabs = `<div class="ptabs" data-req="PNL-03"><button class="ptab" disabled data-scope="out" title="The worktree's file tree: not planned yet">All files</button><button class="ptab" disabled data-scope="out" title="Arrives with M3">Changes <span class="n">5</span></button><button class="ptab sel">Checks</button></div>`;
+    let body = '';
+    if (!pr) body += `<div class="nopr" data-req="PRB-01"><strong>No pull request yet.</strong> Create PR asks Claude Code to commit, push and open it with <code>gh pr create</code>.</div>`;
+    else {
+      const dirty = pr.editTitle !== pr.title || pr.editBody !== pr.body;
+      body += `<div class="pr-edit" data-req="PRB-01"><input id="prTitle" value="${esc(pr.editTitle)}" aria-label="Pull request title"><textarea id="prBody" rows="2" aria-label="Pull request description">${esc(pr.editBody)}</textarea>` +
+        (dirty ? '<div class="row-actions"><button class="ghost-btn" data-action="discard-edit">Discard</button><button class="outline-btn" data-action="save-edit">Save</button></div>' : '') + '</div>';
+    }
+    body += `<div data-req="GST-01"><div class="sec-head"><span class="sec-title">Git status</span></div>` + statusRows(w).map((r) => `<div class="srow"><span class="lead"><span class="circ ${r.dot}"></span></span><span class="txt">${esc(r.text)}</span>${r.act}</div>`).join('') + '</div>';
+    if (pr && pr.deployments.length) {
+      const latest = []; const seen = new Set();
+      for (const d of pr.deployments) { if (!seen.has(d.env)) { seen.add(d.env); latest.push(d); } }
+      body += `<div data-req="DEP-01"><div class="sec-head"><span class="sec-title">Deployments</span></div>` + latest.map((d) => `<div class="crow">${depIcon(d.state)}<span class="prov">${/vercel/.test(d.url) ? I.vercel : I.github}</span><span class="name">${esc(depName(d))}</span><button class="ext" data-action="view" aria-label="Open ${esc(depName(d))}">${I.ext(14)}</button></div>`).join('') + '</div>';
+    }
+    if (pr) {
+      const c = counts(pr);
+      const ordered = [...pr.checks.filter((k) => FAILED.has(k.state)), ...pr.checks.filter((k) => ['RUNNING', 'IN_PROGRESS'].includes(k.state)), ...pr.checks.filter((k) => !FAILED.has(k.state) && !['RUNNING', 'IN_PROGRESS'].includes(k.state))];
+      body += `<div data-req="CHK-01"><div class="sec-head"><span class="sec-title">Checks</span><span class="grow"></span>${c.failed ? `<button class="ghost-btn" data-action="rerun" data-req="CHK-02">Re-run</button><button class="ghost-btn" data-action="agent-ci" data-req="AGT-03" ${busy ? 'disabled title="The agent is working"' : ''}>Fix errors</button>` : ''}</div>` +
+        ordered.map((k) => `<div class="crow">${checkIcon(k.state)}<span class="prov">${k.url === 'vercel' ? I.vercel : I.github}</span><span class="name">${esc(k.name)}</span><span class="dur">${esc(k.dur)}</span><button class="ext" data-action="view" aria-label="Open ${esc(k.name)}">${I.ext(14)}</button></div>`).join('') + '</div>';
+    }
+    const pending = pr ? pr.threads.filter((t) => !t.hidden) : [];
+    if (pending.length) {
+      body += `<div data-req="REV-01"><div class="sec-head"><span class="sec-title">Comments</span><span class="grow"></span><button class="ghost-btn" data-action="agent-comments" ${busy ? 'disabled title="The agent is working"' : ''}>Add all to chat</button></div>` +
+        pr.threads.map((t, i) => t.hidden ? '' : `<div class="crow" title="${esc(t.body)}"><span class="lead ${t.added ? 'c-success' : ''}">${t.added ? I.check(12) : ''}</span><span class="avatar">${t.who.slice(0, 2).toUpperCase()}</span><span class="cm-who">${esc(t.who)}</span><span class="cm-where cm-meta">${esc(t.where || (t.review ? 'review' : t.body.slice(0, 50)))}</span><span class="grow hover-acts"></span><span class="hover-acts"><button class="ghost-btn" data-action="hide-comment" data-i="${i}">Hide</button><button class="outline-btn" data-action="agent-comment" data-i="${i}" ${busy ? 'disabled' : ''}>Add to chat</button></span></div>`).join('') + '</div>';
+    }
+    const foot = `<div class="pfoot" data-req="PR-07"><span data-req="ACC-01">jhzl1</span><span>·</span><span>${pr ? `Updated ${ago(pr.updated)}` : 'No pull request'}</span><span class="grow"></span><button class="icon-btn sm" data-action="refresh" aria-label="Refresh" title="Refresh">${I.refresh}</button></div>`;
+    $('#rpanel').innerHTML = hdr + tabs + `<div class="pbody">${body}</div>` + foot;
+    const tb = $('#prTitle'); const bb = $('#prBody');
+    if (bb) { const fit = () => { bb.style.height = 'auto'; bb.style.height = `${Math.min(180, bb.scrollHeight)}px`; }; fit(); bb.addEventListener('input', () => { pr.editBody = bb.value; fit(); syncEdit(); }); }
+    if (tb) tb.addEventListener('input', () => { pr.editTitle = tb.value; syncEdit(); });
+  }
+  function syncEdit() {
+    const pr = sel().pr; const box = $('.pr-edit'); if (!box) return;
+    const dirty = pr.editTitle !== pr.title || pr.editBody !== pr.body;
+    const acts = box.querySelector('.row-actions');
+    if (dirty && !acts) box.insertAdjacentHTML('beforeend', '<div class="row-actions"><button class="ghost-btn" data-action="discard-edit">Discard</button><button class="outline-btn" data-action="save-edit">Save</button></div>');
+    if (!dirty && acts) acts.remove();
+  }
+  function renderAll(animate) { renderSidebar(); renderTopbar(); renderCenter(); renderPanel(animate); }
+
+  // ---------- AGT prompts ----------
+  function prompt(kind, w, i) {
+    const pr = w.pr;
+    switch (kind) {
+      case 'create': return { text: `Create a pull request for this branch. First commit any uncommitted changes and push with \`git push -u origin HEAD\`. Then run \`gh pr create --base ${BASE}\` with a title under 80 characters and a description of at most five sentences. If the repository has a pull request template, fill it in.` };
+      case 'create-draft': return { text: `Create a draft pull request for this branch. First commit any uncommitted changes and push with \`git push -u origin HEAD\`. Then run \`gh pr create --draft --base ${BASE}\` with a title under 80 characters and a description of at most five sentences. If the repository has a pull request template, fill it in.` };
+      case 'commit': return { text: 'Commit and push all changes.' };
+      case 'incompatible': return { text: 'Resolve branch incompatibility with remote.' };
+      case 'ci': { const f = pr.checks.filter((k) => FAILED.has(k.state)); return { text: 'Fix the failing CI actions. I\'ve attached the failure logs.', files: f.map((k) => `${k.name.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '')}.log`) }; }
+      case 'conflicts': return { text: `Rebase your branch onto the remote branch (origin/${BASE}) and resolve the conflicts. Then push with \`git push --force-with-lease\`.` };
+      case 'diverged': return { text: `Merge origin/${BASE} into this branch. Then push.` };
+      case 'comments': { const list = i === undefined ? pr.threads.filter((t) => !t.hidden) : [pr.threads[i]]; return { text: `Review comments on pull request #${pr.number}:\n\n` + list.map((t, n) => `${n + 1}. ${t.who}${t.where ? ` on ${t.where.replace(/:(\d+)$/, ', line $1')}` : t.review ? ' (review)' : ' (conversation)'}\n> ${t.body}${(t.replies || []).map(([who, body]) => `\n> ${who}: ${body}`).join('')}`).join('\n\n') + '\n\nAddress each comment and say what you changed for each number.' }; }
+      default: return { text: '' };
+    }
+  }
+  async function runAgent(w, kind, i) {
+    if (w.turn) return;
+    const p = prompt(kind, w, i);
+    if (kind === 'comments') (i === undefined ? w.pr.threads.filter((t) => !t.hidden) : [w.pr.threads[i]]).forEach((t) => { t.added = true; });
+    append(w, { id: uid(), kind: 'user', text: p.text, files: p.files && p.files.length ? p.files : null });
+    const started = Date.now();
+    w.turn = started; state.confirmMerge = null;
+    renderSidebar(); renderPanel(true); renderTopbar();
+    if (w.id === state.selected) renderCenter();
+    await wait(2300);
+    let reply = 'Done.';
+    const pr = w.pr;
+    if (kind === 'create' || kind === 'create-draft') { w.local = L({ ownCommits: 3 }); w.pr = P({ number: 4538, title: 'Emit OpenAPI 3.1 from the router', body: 'Adds buildDocument(), which walks the router and writes openapi.json, and a test that validates the document.', isDraft: kind === 'create-draft', mergeState: kind === 'create-draft' ? 'DRAFT' : 'BLOCKED', checks: [CK('lint', 'QUEUED', ''), CK('typecheck', 'QUEUED', ''), CK('unit', 'QUEUED', '')], updated: Date.now() }); w.pr.editTitle = w.pr.title; w.pr.editBody = w.pr.body; reply = `Committed the two files, pushed \`${w.branch}\` and opened pull request #4538 against ${BASE}.`; runChecks(w); }
+    if (kind === 'commit') { w.local.uncommitted = 0; reply = 'Committed the three files and pushed. The pull request has the new commit.'; }
+    if (kind === 'ci') { pr.checks.forEach((k) => { if (FAILED.has(k.state)) { k.state = 'RUNNING'; k.dur = '<1m'; } }); reply = 'unit compared floats exactly and e2e waited for a removed selector. Fixed both and pushed.'; runChecks(w); }
+    if (kind === 'conflicts' || kind === 'diverged') { if (pr) pr.mergeState = 'CLEAN'; w.local.behindBase = 0; reply = kind === 'conflicts' ? `Rebased onto origin/${BASE}, resolved the conflict in \`src/acp.ts\`, the tests pass, and pushed with --force-with-lease.` : `Merged origin/${BASE} and pushed.`; }
+    if (kind === 'comments') { if (pr.threads.every((t) => t.added || t.hidden)) { pr.review = 'REVIEW_REQUIRED'; } reply = '1. `retry()` now backs off exponentially (1 s, 2 s, 4 s).\n2. Added `retry.test.ts` for the timeout path. Pushed.'; }
+    if (kind === 'incompatible') { w.local.incompatible = false; reply = 'The remote was rebased; reset onto it and re-applied the local commit. Pushed.'; }
+    if (w.pr) w.pr.updated = Date.now();
+    append(w, { id: uid(), kind: 'agent', text: reply });
+    append(w, { id: uid(), kind: 'footer', text: `Claude Code · ${Math.round((Date.now() - started) / 1000)}s · ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` });
+    w.turn = null;
+    const wk = $('#working'); if (wk && w.id === state.selected) wk.remove();
+    renderAll(true);
+  }
+  async function runChecks(w) {
+    await wait(600);
+    if (!w.pr) return;
+    w.pr.checks.forEach((k) => { if (k.state === 'QUEUED') { k.state = 'RUNNING'; k.dur = '<1m'; } });
+    if (w.id === state.selected) renderPanel(true); renderSidebar();
+    await wait(2600);
+    if (!w.pr) return;
+    w.pr.checks.forEach((k, n) => { if (k.state === 'RUNNING') { k.state = 'SUCCESS'; k.dur = ['40s', '1m', '3m', '2m', '6m'][n] || '1m'; } });
+    if (w.pr.mergeState === 'BLOCKED' && w.pr.review !== 'CHANGES_REQUESTED' && w.pr.review !== 'REVIEW_REQUIRED') w.pr.mergeState = 'CLEAN';
+    if (w.pr.mergeState === 'UNSTABLE') w.pr.mergeState = 'CLEAN';
+    w.pr.updated = Date.now();
+    renderAll(true);
+  }
+
+  // ---------- Rocky actions ----------
+  let confirmTimer = null;
+  async function merge(w) {
+    if (state.confirmMerge !== w.id) { state.confirmMerge = w.id; renderPanel(true); clearTimeout(confirmTimer); confirmTimer = setTimeout(() => { state.confirmMerge = null; renderPanel(true); }, 4000); return; }
+    clearTimeout(confirmTimer); state.confirmMerge = null;
+    const b = $('.hbtn'); if (b) { b.innerHTML = `${spinner(12)}Merging…`; b.disabled = true; }
+    await wait(900);
+    w.pr.state = 'MERGED'; w.pr.updated = Date.now();
+    renderAll(true); toast(`${METHOD[methodOf(w)].done} #${w.pr.number} into ${BASE}.`);
+  }
+  async function pullBase(w) {
+    if (w.local.uncommitted) { toast('Uncommitted changes: the agent takes it.'); runAgent(w, 'diverged'); return; }
+    toast(`git fetch origin ${BASE}…`);
+    await wait(700);
+    if (w.local.ownCommits) { toast('The branch diverged: sent to the agent.'); runAgent(w, w.pr && w.pr.mergeState === 'DIRTY' ? 'conflicts' : 'diverged'); return; }
+    w.local.behindBase = 0; renderAll(true); toast('Pulled latest changes. You\'re up to date!');
+  }
+
+  let menuEl = null;
+  function closeMenu() { if (menuEl) { menuEl.remove(); menuEl = null; } }
+  win.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-action]'); if (!b || !win.contains(b) || b.disabled) return;
+    const w = sel();
+    switch (b.dataset.action) {
+      case 'select': state.selected = b.dataset.ws; state.confirmMerge = null; closeMenu(); renderAll(false); break;
+      case 'toggle-panel': state.panelOpen = !state.panelOpen; renderTopbar(); break;
+      case 'agent-create': runAgent(w, 'create'); break;
+      case 'agent-commit': runAgent(w, 'commit'); break;
+      case 'agent-ci': runAgent(w, 'ci'); break;
+      case 'agent-conflicts': runAgent(w, 'conflicts'); break;
+      case 'agent-incompatible': runAgent(w, 'incompatible'); break;
+      case 'agent-comments': runAgent(w, 'comments'); break;
+      case 'agent-comment': runAgent(w, 'comments', Number(b.dataset.i)); break;
+      case 'hide-comment': w.pr.threads[Number(b.dataset.i)].hidden = true; renderPanel(false); break;
+      case 'merge-menu': {
+        closeMenu();
+        const cur = methodOf(w);
+        const m = document.createElement('div'); m.className = 'menu';
+        m.innerHTML = allowedOf(w).map((k) => { const off = k === 'REBASE' && !w.pr.canBeRebased; return `<button class="menu-item tall" data-k="${k}" ${off ? 'disabled title="GitHub can\'t rebase this branch cleanly"' : ''}><span class="m-check">${k === cur ? '✓' : ''}</span><span class="m-text"><span>${METHOD[k].menu}</span><span class="m-desc">${METHOD[k].desc}</span></span></button>`; }).join('');
+        $('#rpanel').appendChild(m);
+        const r = b.getBoundingClientRect(); const box = $('#rpanel').getBoundingClientRect();
+        m.style.top = `${r.bottom - box.top + 4}px`; m.style.right = '8px';
+        m.addEventListener('click', (ev) => { const it = ev.target.closest('.menu-item'); if (!it || it.disabled) return; closeMenu(); state.method[w.id] = it.dataset.k; state.confirmMerge = null; clearTimeout(confirmTimer); renderPanel(true); });
+        menuEl = m;
+        e.stopPropagation();
+        break;
+      }
+      case 'create-menu': {
+        closeMenu();
+        const m = document.createElement('div'); m.className = 'menu';
+        m.innerHTML = '<button class="menu-item" data-m="draft">Create draft PR</button><button class="menu-item" data-m="manual">Create PR manually</button>';
+        $('#rpanel').appendChild(m);
+        const r = b.getBoundingClientRect(); const box = $('#rpanel').getBoundingClientRect();
+        m.style.top = `${r.bottom - box.top + 4}px`; m.style.right = '8px';
+        m.addEventListener('click', (ev) => { const it = ev.target.closest('.menu-item'); if (!it) return; closeMenu(); if (it.dataset.m === 'draft') runAgent(w, 'create-draft'); else toast(`Opens github.com/…/compare/${BASE}...${w.branch}?expand=1 in the browser.`); });
+        menuEl = m;
+        e.stopPropagation();
+        break;
+      }
+      case 'merge': merge(w); break;
+      case 'ready': w.pr.isDraft = false; w.pr.mergeState = 'BLOCKED'; w.pr.updated = Date.now(); renderAll(true); toast('markPullRequestReadyForReview'); break;
+      case 'archive': toast('Runs today\'s remove flow (archive script, worktree removal, branch kept).'); break;
+      case 'view': toast('Opens it on GitHub in the browser.'); break;
+      case 'pill-left': if (e.metaKey) toast('⌘-click: opens it on GitHub in the browser.'); else { state.panelOpen = true; renderTopbar(); toast('Shows the Checks tab.'); } break;
+      case 'push': w.local.ahead = 0; renderAll(true); toast('git push, signed with GH_TOKEN.'); break;
+      case 'pull-remote': w.local.behindRemote = 0; renderAll(true); toast('git pull'); break;
+      case 'pull-base': pullBase(w); break;
+      case 'rerun': w.pr.checks.forEach((k) => { if (FAILED.has(k.state)) { k.state = 'QUEUED'; k.dur = ''; } }); renderAll(true); toast('POST …/actions/runs/{run_id}/rerun-failed-jobs'); runChecks(w); break;
+      case 'save-edit': w.pr.title = w.pr.editTitle; w.pr.body = w.pr.editBody; renderAll(false); toast('updatePullRequest(title, body)'); break;
+      case 'discard-edit': w.pr.editTitle = w.pr.title; w.pr.editBody = w.pr.body; renderPanel(false); break;
+      case 'refresh': if (w.pr) { w.pr.updated = Date.now(); renderPanel(false); } break;
+      default: break;
+    }
+  });
+  document.addEventListener('mousedown', (e) => { if (menuEl && !menuEl.contains(e.target)) closeMenu(); });
+  document.addEventListener('keydown', (e) => { if (e.metaKey && e.shiftKey && e.key.toLowerCase() === 'g') { e.preventDefault(); state.panelOpen = !state.panelOpen; renderTopbar(); } });
+  const line = $('#pnlLine');
+  line.addEventListener('pointerdown', (e) => {
+    e.preventDefault(); line.setPointerCapture(e.pointerId);
+    const x0 = e.clientX; const w0 = parseFloat(getComputedStyle(win).getPropertyValue('--pnl-w'));
+    const move = (ev) => win.style.setProperty('--pnl-w', `${Math.min(480, Math.max(280, w0 - (ev.clientX - x0)))}px`);
+    const up = () => { line.removeEventListener('pointermove', move); line.removeEventListener('pointerup', up); };
+    line.addEventListener('pointermove', move); line.addEventListener('pointerup', up);
+  });
+  let toastTimer = null;
+  function toast(msg) { let t = win.querySelector('.toast'); if (!t) { t = document.createElement('div'); t.className = 'toast'; win.appendChild(t); } t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2400); }
+  $('#demoWorking').addEventListener('click', (e) => { const w = sel(); w.turn = w.turn ? null : Date.now(); e.currentTarget.setAttribute('aria-pressed', String(Boolean(w.turn))); renderAll(true); });
+  $('#demoPins').addEventListener('click', (e) => { e.currentTarget.setAttribute('aria-pressed', String(document.body.classList.toggle('spec-on'))); });
+  document.addEventListener('click', (e) => {
+    if (!document.body.classList.contains('spec-on')) return;
+    const el = e.target.closest('[data-req]'); if (!el || !win.contains(el)) return;
+    const s = document.getElementById('REQ-' + el.dataset.req); if (!s) return;
+    s.scrollIntoView({ behavior: 'smooth', block: 'start' }); s.classList.add('flash'); setTimeout(() => s.classList.remove('flash'), 1400);
+  }, true);
+  setInterval(() => { const el = $('#working .elapsed'); const w = sel(); if (el && w.turn) el.textContent = `${Math.floor((Date.now() - w.turn) / 1000)}s`; }, 1000);
+
+  renderAll(false);
+})();
+</script>
+</body>
+</html>

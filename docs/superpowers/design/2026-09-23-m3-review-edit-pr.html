@@ -1,0 +1,1453 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rocky · Review and edit spec</title>
+<!--
+==========================================================================================================
+HOW TO READ THIS FILE (for the agent that implements it)
+==========================================================================================================
+Visual and behavioral source of truth for
+  docs/superpowers/plans/2026-09-23-m3-review-edit-pr.md
+
+- It builds on M2.5 (docs/superpowers/design/2026-09-23-sidebar-topbar.html) and M2.7
+  (docs/superpowers/design/2026-09-23-m2.7-github.html): the sidebar, top bar, tabs, chat and terminal panel are
+  M2.5's, and the right panel with its pull request header and Checks tab is M2.7's, all simplified here. Their
+  requirements live in those files. This file adds: the Changes tab of the right panel, diff tabs, line
+  comments, sending comments to the agent, the editor, commit and discard.
+- Revised 2026-09-23: the pull request part (GitHub account, create, checks, merge, sidebar glyphs; formerly
+  ACC-01, PR-01..07, ROW-07) moved to M2.7, and the Changes panel became the Changes tab of M2.7's panel.
+- Every requirement has an id (CHG-02, DIFF-02, CMT-04, EDIT-03…). The same id is on the element of the
+  mock (button "Requirement pins"), in the <section id="REQ-…"> on the right, and in the plan task.
+- Each requirement lists Values (points at 100 % zoom), SwiftUI/Kit (where and how in our code) and
+  Done when. When the mock and a requirement's text disagree, the text wins.
+- The mock's diff, highlighter and git are JavaScript stand-ins so the behavior can be tried. Rocky uses git and
+  a vendored Prism tokenizer (DIFF-04, GIT-01); do not port the JavaScript.
+- data-scope="out" marks what is drawn but not in scope.
+==========================================================================================================
+-->
+<style>
+:root {
+  /* M2.5 tokens (TOK-01 in the M2.5 file) */
+  --page: #131519; --bg: #23272E; --sidebar: #1E2127; --panel: #1A1D22; --composer: #2A2F37; --composer-border: rgba(255,255,255,0.10);
+  --hairline: rgba(255,255,255,0.08); --hairline-soft: rgba(255,255,255,0.06); --panel-bar: rgba(255,255,255,0.03);
+  --text: #E6E8EB; --text-2: #A3A9B1; --text-3: #858C95; --sep: #5C636C;
+  --fill-hover: rgba(255,255,255,0.04); --fill-selected: rgba(255,255,255,0.08); --fill-control: rgba(255,255,255,0.05);
+  --fill-icon-hover: rgba(255,255,255,0.06); --fill-pressed: rgba(255,255,255,0.10); --fill-button: rgba(255,255,255,0.08); --fill-button-hover: rgba(255,255,255,0.12);
+  --accent: #78BDF5; --attention: #E8A94B; --danger: #F0876A; --success: #7CC08A; --merged: #B48CF2; --diff-del: #E48A8A;
+  /* M3 tokens (TOK-10) */
+  --add-line: rgba(124,192,138,0.12); --add-gutter: rgba(124,192,138,0.20);
+  --del-line: rgba(240,135,106,0.12); --del-gutter: rgba(240,135,106,0.20);
+  --hunk: rgba(120,189,245,0.06); --range: rgba(120,189,245,0.14); --cur-line: rgba(255,255,255,0.03);
+  --syn-keyword: #C792EA; --syn-string: #A5D6A7; --syn-number: #F2A96B; --syn-comment: #7F848E; --syn-function: #7CB7F2; --syn-type: #E6C07B;
+  --titlebar: 38px; --row: 28px; --r-row: 7px; --r-btn: 6px; --code-line: 20px;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --dur-fast: 120ms; --dur-base: 150ms; --dur-enter: 220ms; --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--page); color: var(--text); font: 13px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; -webkit-font-smoothing: antialiased; display: flex; overflow: hidden; }
+[hidden] { display: none !important; }
+button { font: inherit; color: inherit; background: none; border: 0; margin: 0; padding: 0; text-align: left; cursor: pointer; }
+button:disabled { cursor: default; opacity: 0.45; }
+input, textarea { font: inherit; color: inherit; }
+svg { display: block; flex-shrink: 0; }
+code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 4px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.grow { flex-grow: 1; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* document chrome */
+.stage { flex: 1 0 auto; overflow: auto; padding: 20px 24px 48px; }
+.doc-title { width: 1200px; margin: 0 0 4px; font-size: 18px; font-weight: 600; }
+.doc-sub { width: 1200px; margin: 0 0 14px; color: var(--text-2); font-size: 12.5px; line-height: 1.5; }
+.demo { width: 1200px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
+.demo-label { font-size: 10.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.07em; margin-right: 4px; }
+.demo button { height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.14); color: var(--text-2); font-size: 12px; }
+.demo button:hover { color: var(--text); border-color: rgba(255,255,255,0.3); }
+.demo button[aria-pressed="true"] { background: rgba(120,189,245,0.14); border-color: rgba(120,189,245,0.55); color: var(--text); }
+
+/* window and M2.5 shell */
+.window { --sb-w: 240px; --pnl-w: 350px; position: relative; width: 1200px; height: 800px; display: flex; background: var(--bg); border-radius: 10px; overflow: hidden; box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 24px 60px rgba(0,0,0,0.45); }
+.lights { display: inline-flex; gap: 8px; } .light { width: 12px; height: 12px; border-radius: 50%; }
+.light.close { background: #FF5F57; } .light.min { background: #FEBC2E; } .light.zoom { background: #28C840; }
+.icon-btn { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r-btn); color: var(--text-2); flex-shrink: 0; transition: background var(--dur-fast), color var(--dur-fast), opacity var(--dur-fast); }
+.icon-btn:hover { background: var(--fill-icon-hover); color: var(--text); }
+.icon-btn:active { background: var(--fill-pressed); }
+.icon-btn.sm { width: 22px; height: 22px; border-radius: 5px; }
+.icon-btn.xs { width: 18px; height: 18px; border-radius: 4px; }
+.text-btn { height: 26px; display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; border-radius: var(--r-btn); color: var(--text-2); font-size: 12.5px; transition: background var(--dur-fast), color var(--dur-fast); }
+.text-btn:hover { background: var(--fill-icon-hover); color: var(--text); }
+.fill-btn { height: 26px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 10px; border-radius: var(--r-btn); background: var(--fill-button); font-size: 12.5px; font-weight: 500; transition: background var(--dur-fast); white-space: nowrap; }
+.fill-btn:hover:not(:disabled) { background: var(--fill-button-hover); }
+.fill-btn.primary { background: #FFFFFF; color: #111316; }
+.fill-btn.primary:hover:not(:disabled) { background: #DADDE1; }
+.fill-btn.merge { background: var(--success); color: #10251A; }
+.fill-btn.merge:hover:not(:disabled) { background: #93CFA0; }
+.fill-btn.confirm { background: var(--attention); color: #2A1C06; }
+.fill-btn.block { width: 100%; height: 30px; }
+
+.sidebar { width: var(--sb-w); flex-shrink: 0; display: flex; flex-direction: column; background: var(--sidebar); }
+.sb-top { height: var(--titlebar); display: flex; align-items: center; gap: 8px; padding: 0 10px 0 16px; flex-shrink: 0; }
+.sb-search { padding: 2px 10px 6px; }
+.search { height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-radius: var(--r-row); background: var(--fill-control); color: var(--text-3); font-size: 13px; }
+.sb-list { flex-grow: 1; overflow-y: auto; padding: 4px 8px; display: flex; flex-direction: column; gap: 2px; }
+.repo { height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 8px; margin-top: 10px; font-weight: 600; flex-shrink: 0; }
+.repo:first-child { margin-top: 4px; }
+.monogram { width: 16px; height: 16px; border-radius: 4px; color: #fff; font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.row-wrap { border-radius: var(--r-row); flex-shrink: 0; transition: background var(--dur-fast); }
+.row-wrap:hover { background: var(--fill-hover); } .row-wrap.selected { background: var(--fill-selected); }
+.row { width: 100%; height: var(--row); display: flex; align-items: center; gap: 8px; padding: 0 8px 0 24px; }
+.glyph { width: 16px; height: 16px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+.row-title { flex-grow: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-title.fallback { color: var(--text-2); } .row-title.dim { color: var(--text-3); }
+.diff-stat { font: 11px var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; flex-shrink: 0; }
+.diff-stat .a { color: var(--success); } .diff-stat .d { color: var(--diff-del); }
+.dot { display: block; border-radius: 50%; }
+.dot-needs { width: 8px; height: 8px; background: var(--attention); box-shadow: 0 0 0 3px rgba(232,169,75,0.2); }
+.dot-unread { width: 7px; height: 7px; background: var(--accent); }
+.c-success { color: var(--success); display: flex; } .c-danger { color: var(--danger); display: flex; } .c-attention { color: var(--attention); display: flex; }
+.c-merged { color: var(--merged); display: flex; } .c-muted { color: var(--text-3); display: flex; } .c-2 { color: var(--text-2); display: flex; }
+.sb-footer { height: 44px; flex-shrink: 0; display: flex; align-items: center; padding: 0 10px; border-top: 1px solid var(--hairline-soft); color: var(--text-2); gap: 8px; font-size: 13px; }
+.vline { width: 1px; flex-shrink: 0; background: var(--hairline); position: relative; }
+.vline.grab::before { content: ""; position: absolute; top: 0; bottom: 0; left: -4px; right: -4px; cursor: col-resize; z-index: 3; }
+
+.main { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; }
+.topbar { height: var(--titlebar); flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 0 12px 0 16px; border-bottom: 1px solid transparent; }
+.crumb-repo { color: var(--text-2); white-space: nowrap; } .crumb-sep { color: var(--sep); }
+.branch { height: 24px; display: flex; align-items: center; gap: 6px; padding: 0 6px; margin-left: -6px; border-radius: 5px; font: 12px var(--mono); white-space: nowrap; }
+.branch:hover { background: var(--fill-icon-hover); } .branch .b-icon { color: var(--text-3); display: flex; }
+.port { font: 11px var(--mono); color: var(--text-3); white-space: nowrap; }
+/* M2.7 PNL-02, simplified */
+.pnl-toggle { height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border-radius: var(--r-btn); color: var(--text-2); font: 12px var(--mono); transition: background var(--dur-fast), color var(--dur-fast); }
+.pnl-toggle:hover { background: var(--fill-icon-hover); color: var(--text); }
+.pnl-toggle.on { background: var(--fill-selected); color: var(--text); }
+.run { height: 26px; display: flex; align-items: center; gap: 6px; padding: 0 10px; border-radius: var(--r-btn); background: var(--fill-button); font-size: 12.5px; font-weight: 500; }
+.run:hover { background: var(--fill-button-hover); }
+
+.body { flex-grow: 1; min-height: 0; display: flex; }
+.center { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; }
+.tabs { height: 34px; flex-shrink: 0; display: flex; align-items: stretch; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--hairline); overflow: hidden; }
+.tab-wrap { position: relative; display: flex; align-items: center; padding-right: 6px; flex-shrink: 0; }
+.tab-wrap.selected::before { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--text); }
+.tab { height: 100%; max-width: 220px; display: flex; align-items: center; gap: 7px; padding: 0 4px 0 10px; font-size: 12.5px; color: var(--text-2); transition: color var(--dur-fast); }
+.tab-wrap:hover .tab, .tab-wrap.selected .tab { color: var(--text); }
+.t-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tab-close { width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; border-radius: 4px; color: var(--text-3); opacity: 0; transition: opacity var(--dur-fast), background var(--dur-fast); }
+.tab-wrap:hover .tab-close, .tab-wrap.selected .tab-close { opacity: 1; }
+.tab-close:hover { background: var(--fill-icon-hover); color: var(--text); }
+.tab-dirty { width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; }
+.tab-dirty::after { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--text-2); }
+.tab-wrap:hover .tab-dirty { display: none; }
+.tab-wrap .tab-close.dirty-hidden { display: none; }
+.tab-wrap:hover .tab-close.dirty-hidden { display: flex; }
+.agent { width: 14px; height: 14px; border-radius: 4px; font-size: 9px; font-weight: 700; display: flex; align-items: center; justify-content: center; color: #1E2127; flex-shrink: 0; }
+.agent.claude { background: #D97757; } .agent.opencode { background: #9BA1A9; }
+.status-letter { width: 14px; font: 600 11px var(--mono); text-align: center; flex-shrink: 0; }
+.st-A { color: var(--success); } .st-M { color: var(--attention); } .st-D { color: var(--danger); } .st-R { color: var(--text-2); }
+
+.content { flex-grow: 1; min-height: 0; display: flex; flex-direction: column; }
+.pbar { height: 32px; flex-shrink: 0; display: flex; align-items: center; gap: 6px; padding: 0 8px; background: var(--panel-bar); border-top: 1px solid var(--hairline); font-size: 12px; color: var(--text-2); }
+.sdot { width: 6px; height: 6px; border-radius: 50%; } .sdot.run { background: var(--success); } .sdot.done { background: var(--text-3); }
+
+/* chat (M2.5) */
+.chat { flex-grow: 1; min-height: 0; overflow-y: auto; padding: 20px 24px 12px; display: flex; flex-direction: column; align-items: center; }
+.col { width: 100%; max-width: 820px; display: flex; flex-direction: column; gap: 14px; font-size: 14px; }
+.msg-user { align-self: flex-end; max-width: 560px; padding: 10px 14px; border-radius: 12px; background: rgba(255,255,255,0.06); line-height: 1.5; white-space: pre-wrap; }
+.msg-user pre { margin: 6px 0; padding: 8px 10px; border-radius: 6px; background: rgba(0,0,0,0.25); font: 12px/1.5 var(--mono); white-space: pre-wrap; }
+.msg-agent { line-height: 1.6; color: #D5D8DC; }
+.tool { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
+.tool-icon { width: 18px; display: flex; justify-content: center; color: var(--text-2); }
+.file-badge { height: 22px; display: inline-flex; align-items: center; gap: 5px; padding: 0 7px; border-radius: 5px; background: rgba(255,255,255,0.05); font-size: 12px; transition: background var(--dur-fast); }
+.file-badge:hover { background: rgba(255,255,255,0.09); }
+.working { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
+.elapsed { font: 12px var(--mono); color: var(--text-3); }
+.turn-footer { display: flex; align-items: center; gap: 8px; font-size: 10.5px; color: var(--text-2); }
+.composer-wrap { flex-shrink: 0; display: flex; justify-content: center; padding: 8px 24px 14px; }
+.composer { width: 100%; max-width: 772px; border-radius: 12px; background: var(--composer); border: 1px solid var(--composer-border); padding: 12px 14px; color: var(--text-3); font-size: 14px; display: flex; align-items: center; }
+.composer .c-send { margin-left: auto; width: 28px; height: 28px; border-radius: 7px; background: rgba(255,255,255,0.1); display: flex; align-items: center; justify-content: center; color: var(--text-2); }
+.enter { animation: enter var(--dur-enter) var(--ease-out) both; }
+@keyframes enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.spinner { animation: spin 0.9s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
+.shimmer { color: transparent; background: linear-gradient(90deg, var(--text-2) 0%, var(--text-2) 30%, var(--text) 50%, var(--text-2) 70%, var(--text-2) 100%); background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; animation: shimmer 2.1s linear infinite; }
+@keyframes shimmer { 0% { background-position: 100% 0; } 76% { background-position: 0% 0; } 100% { background-position: 0% 0; } }
+
+/* ---------- DIFF: diff tab ---------- */
+.dv { flex-grow: 1; min-height: 0; display: flex; flex-direction: column; }
+.dv-head { height: 34px; flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 0 10px 0 14px; border-bottom: 1px solid var(--hairline); }
+.dv-path { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.dv-path .dir { color: var(--text-3); }
+.dv-edited { font-size: 11.5px; color: var(--text-2); }
+.seg { height: 24px; display: flex; padding: 2px; border-radius: var(--r-btn); background: var(--fill-control); flex-shrink: 0; }
+.seg button { height: 20px; padding: 0 10px; border-radius: 4px; font-size: 12px; color: var(--text-2); transition: background var(--dur-fast), color var(--dur-fast); }
+.seg button:hover { color: var(--text); }
+.seg button.on { background: var(--fill-selected); color: var(--text); }
+.banner { flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 7px 14px; font-size: 12.5px; border-bottom: 1px solid var(--hairline); }
+.banner.warn { background: rgba(232,169,75,0.10); color: #F0C987; }
+.banner.info { background: rgba(120,189,245,0.08); color: #B7D9F7; }
+.banner .grow + button { margin-left: 4px; }
+.dv-body { flex-grow: 1; min-height: 0; overflow: auto; position: relative; }
+.diff { min-width: max-content; padding: 6px 0 40px; font: 12px var(--mono); }
+.dl { display: flex; height: var(--code-line); line-height: var(--code-line); position: relative; }
+.dl .ln { width: 40px; flex-shrink: 0; padding-right: 8px; text-align: right; color: var(--text-3); user-select: none; cursor: pointer; font-variant-numeric: tabular-nums; }
+.dl .mk { width: 16px; flex-shrink: 0; text-align: center; user-select: none; color: var(--text-3); }
+.dl .src { padding-right: 24px; white-space: pre; }
+.dl.add { background: var(--add-line); } .dl.add .ln { background: var(--add-gutter); } .dl.add .mk { color: var(--success); }
+.dl.del { background: var(--del-line); } .dl.del .ln { background: var(--del-gutter); } .dl.del .mk { color: var(--danger); }
+.dl.sel { background: var(--range) !important; box-shadow: inset 3px 0 0 var(--accent); }
+.dl .cadd { position: absolute; left: 62px; top: 2px; width: 16px; height: 16px; border-radius: 4px; background: var(--accent); color: #0E1116; display: none; align-items: center; justify-content: center; z-index: 2; }
+.dl .cadd.old { left: 22px; }
+.dl:hover .cadd { display: flex; }
+.hunk { height: 26px; line-height: 26px; padding-left: 96px; background: var(--hunk); color: var(--text-3); font-size: 11.5px; user-select: none; }
+.gap { height: 26px; display: flex; align-items: center; gap: 6px; width: 100%; padding-left: 96px; color: var(--text-2); font: 12px -apple-system, BlinkMacSystemFont, sans-serif; transition: background var(--dur-fast); }
+.gap:hover { background: var(--fill-hover); color: var(--text); }
+.special { margin: 40px auto; max-width: 420px; text-align: center; color: var(--text-2); font-size: 13px; }
+.t-k { color: var(--syn-keyword); } .t-s { color: var(--syn-string); } .t-n { color: var(--syn-number); } .t-c { color: var(--syn-comment); } .t-f { color: var(--syn-function); } .t-t { color: var(--syn-type); }
+
+/* ---------- CMT: comments ---------- */
+.cmt-slot { padding: 6px 24px 8px 96px; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+.ccard, .ccomposer { max-width: 560px; border-radius: 8px; background: var(--composer); border: 1px solid var(--composer-border); }
+.ccard + .ccard { margin-top: 6px; }
+.ccard-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px 0 12px; font-size: 11.5px; color: var(--text-2); }
+.ccard-head .who { color: var(--text); font-weight: 600; font-size: 12px; }
+.ccard-actions { display: flex; gap: 2px; opacity: 0; transition: opacity var(--dur-fast); }
+.ccard:hover .ccard-actions { opacity: 1; }
+.cbody { padding: 4px 12px 10px; font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
+.cstate { height: 18px; display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; border-radius: 9px; font-size: 10.5px; border: 1px solid; }
+.cstate.pending { color: var(--attention); border-color: rgba(232,169,75,0.45); }
+.cstate.sent { color: var(--text-2); border-color: rgba(255,255,255,0.14); }
+.cstate.outdated { color: var(--text-3); border-color: rgba(255,255,255,0.1); }
+.ccomposer { padding: 10px 12px; }
+.cc-head { font-size: 11.5px; color: var(--text-2); margin-bottom: 6px; }
+.ccomposer textarea { width: 100%; min-height: 64px; resize: vertical; background: rgba(0,0,0,0.18); border: 1px solid var(--hairline); border-radius: 6px; padding: 8px 10px; font-size: 13px; line-height: 1.5; outline: none; color: var(--text); }
+.ccomposer textarea:focus { border-color: rgba(120,189,245,0.55); }
+.cc-actions { display: flex; justify-content: flex-end; align-items: center; gap: 6px; margin-top: 8px; }
+.cc-hint { margin-right: auto; font-size: 11px; color: var(--text-3); }
+.outdated-box { margin: 8px 24px 4px 96px; max-width: 560px; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+.outdated-box summary { cursor: pointer; font-size: 12px; color: var(--text-2); padding: 4px 0; }
+.outdated-box .ccard { opacity: 0.8; }
+
+/* ---------- EDIT: editor ---------- */
+.editor { flex-grow: 1; min-height: 0; overflow: auto; background: var(--bg); }
+.ed-inner { display: flex; min-width: max-content; min-height: 100%; }
+.ed-gutter { width: 56px; flex-shrink: 0; padding: 8px 0 40px; text-align: right; color: var(--text-3); font: 12.5px var(--mono); user-select: none; position: sticky; left: 0; background: var(--bg); z-index: 2; }
+.gl { position: relative; height: var(--code-line); line-height: var(--code-line); padding-right: 12px; font-variant-numeric: tabular-nums; }
+.gl.cur { color: var(--text); }
+.gl .bar { position: absolute; left: 4px; top: 0; bottom: 0; width: 3px; border-radius: 1px; }
+.gl .bar.add { background: var(--success); } .gl .bar.mod { background: var(--attention); }
+.gl .delmark { position: absolute; left: 3px; top: -4px; width: 0; height: 0; border-left: 5px solid var(--danger); border-top: 4px solid transparent; border-bottom: 4px solid transparent; }
+.ed-code { position: relative; flex-grow: 1; }
+.ed-cur { position: absolute; left: 0; right: 0; height: var(--code-line); background: var(--cur-line); pointer-events: none; }
+.ed-hl, .ed-input { margin: 0; padding: 8px 40px 40px 12px; font: 12.5px var(--mono); line-height: var(--code-line); white-space: pre; tab-size: 2; letter-spacing: 0; }
+.ed-hl { position: relative; color: #D5D8DC; pointer-events: none; min-height: 100%; }
+.ed-input { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; outline: none; resize: none; overflow: hidden; background: transparent; color: transparent; caret-color: var(--text); }
+.ed-input::selection { background: rgba(120,189,245,0.30); color: transparent; }
+
+/* ---------- M2.7 right panel (simplified: header and tab row) ---------- */
+.changes { width: var(--pnl-w); flex-shrink: 0; display: flex; flex-direction: column; background: var(--sidebar); min-height: 0; }
+.window.pnl-closed .changes, .window.pnl-closed #pnlLine { display: none; }
+.hdr { --tone: var(--text); --tint: transparent; height: 40px; flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 0 8px; background: var(--tint); border-bottom: 1px solid var(--hairline); }
+.hdr.in_sync { --tone: var(--success); --tint: rgba(124,192,138,0.13); }
+.hdr.out_of_sync { --tint: rgba(255,255,255,0.05); }
+.hdr.queued { --tone: var(--attention); --tint: rgba(232,169,75,0.12); }
+.hdr.merged { --tone: var(--merged); --tint: rgba(180,140,242,0.13); }
+.hdr.loading .hdr-label { color: var(--text-3); }
+.pill { height: 24px; display: inline-flex; align-items: center; padding: 0 8px; border-radius: 5px; border: 1px solid rgba(255,255,255,0.14); font-size: 12px; font-weight: 500; flex-shrink: 0; }
+.hdr.merged .pill { color: var(--merged); border-color: rgba(180,140,242,0.3); }
+.hdr-label { flex-grow: 1; min-width: 0; display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; color: var(--tone); white-space: nowrap; overflow: hidden; }
+.hdr-label span { overflow: hidden; text-overflow: ellipsis; }
+.hbtn { height: 24px; display: inline-flex; align-items: center; padding: 0 9px; border-radius: 5px; background: var(--text); color: #14161A; font-size: 12px; font-weight: 500; white-space: nowrap; flex-shrink: 0; }
+.hbtn:hover:not(:disabled) { filter: brightness(0.92); }
+.hbtn.archive { background: var(--merged); color: #1E1530; }
+.hbtn.merge { background: var(--success); color: #10251A; }
+.ptabs { flex-shrink: 0; display: flex; align-items: center; gap: 4px; padding: 8px; border-bottom: 1px solid var(--hairline-soft); }
+.ptab { height: 26px; display: inline-flex; align-items: center; gap: 5px; padding: 0 9px; border-radius: 6px; font-size: 12.5px; color: var(--text-2); transition: background var(--dur-fast), color var(--dur-fast); }
+.ptab:hover:not(:disabled) { background: var(--fill-hover); color: var(--text); }
+.ptab.sel { background: var(--fill-selected); color: var(--text); }
+.ptab:disabled { color: var(--text-3); opacity: 1; }
+.ptab .n { font: 11px var(--mono); color: var(--text-3); }
+.m27 { padding: 24px 18px; font-size: 12.5px; line-height: 1.5; color: var(--text-2); }
+
+/* ---------- CHG: the Changes tab ---------- */
+.chg-head { height: 30px; flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 0 6px 0 16px; }
+.chg-files { font-size: 12px; color: var(--text-2); }
+.chg-list { flex-grow: 1; min-height: 0; overflow-y: auto; padding: 0 8px 6px; }
+.chg-sec { height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 6px 0 8px; margin-top: 6px; font-size: 10.5px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-3); }
+.chg-sec:first-child { margin-top: 0; }
+.chg-sec .fill-btn { text-transform: none; letter-spacing: 0; height: 22px; font-size: 11.5px; padding: 0 8px; }
+.frow { position: relative; height: var(--row); display: flex; align-items: center; border-radius: var(--r-row); transition: background var(--dur-fast); }
+.frow:hover { background: var(--fill-hover); } .frow.selected { background: var(--fill-selected); }
+.frow-main { flex-grow: 1; min-width: 0; height: 100%; display: flex; align-items: center; gap: 8px; padding: 0 8px; }
+.fname { white-space: nowrap; font-size: 13px; }
+.fdir { flex-grow: 1; min-width: 0; font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+.frow-trail { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.ccount { display: flex; align-items: center; gap: 3px; font: 11px var(--mono); color: var(--text-2); }
+.frow-actions { position: absolute; right: 4px; top: 3px; display: flex; gap: 2px; opacity: 0; pointer-events: none; transition: opacity var(--dur-fast); background: var(--sidebar); border-radius: 5px; }
+.frow:hover .frow-actions { opacity: 1; pointer-events: auto; }
+.chg-empty { padding: 40px 20px; text-align: center; color: var(--text-2); font-size: 13px; }
+.chg-empty p { margin: 6px 0 0; color: var(--text-3); font-size: 12px; line-height: 1.5; }
+.chg-foot { flex-shrink: 0; border-top: 1px solid var(--hairline); }
+.cmt-bar { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--hairline); font-size: 12.5px; }
+.cmt-bar .note { color: var(--text-2); }
+
+.muted { color: var(--text-3); font-size: 11.5px; }
+
+/* sheets and menus */
+.scrim { position: absolute; inset: 0; background: rgba(0,0,0,0.32); z-index: 40; display: flex; justify-content: center; align-items: flex-start; }
+.sheet { width: 500px; margin-top: 38px; border-radius: 0 0 12px 12px; background: var(--panel); box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 18px 50px rgba(0,0,0,0.55); animation: sheet-in 200ms var(--ease-out); }
+.sheet.small { width: 400px; }
+@keyframes sheet-in { from { transform: translateY(-16px); opacity: 0; } to { transform: none; opacity: 1; } }
+.sheet-body { padding: 18px 20px 6px; display: flex; flex-direction: column; gap: 12px; }
+.sheet h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.sheet label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--text-2); }
+.sheet input[type=text], .sheet textarea { width: 100%; background: rgba(0,0,0,0.2); border: 1px solid var(--hairline); border-radius: 6px; padding: 7px 10px; font-size: 13px; color: var(--text); outline: none; resize: vertical; }
+.sheet input[type=text]:focus, .sheet textarea:focus { border-color: rgba(120,189,245,0.55); }
+.sheet .counter { align-self: flex-end; font: 11px var(--mono); color: var(--text-3); margin-top: -4px; }
+.sheet .files { max-height: 120px; overflow: auto; border: 1px solid var(--hairline); border-radius: 6px; padding: 4px 0; }
+.sheet .files div { display: flex; gap: 8px; padding: 2px 10px; font-size: 12.5px; }
+.sheet .steps { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
+.sheet .steps div { display: flex; align-items: center; gap: 8px; }
+.sheet-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding: 14px 20px 16px; }
+.sheet-actions .muted { margin-right: auto; }
+.menu { position: absolute; z-index: 50; min-width: 220px; padding: 5px; border-radius: 9px; background: var(--panel); box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 10px 30px rgba(0,0,0,0.5); animation: menu-in 120ms var(--ease-out); }
+@keyframes menu-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+.menu-item { width: 100%; height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-radius: 6px; font-size: 13px; }
+.menu-item:hover { background: rgba(255,255,255,0.07); }
+.menu-item.danger { color: var(--danger); }
+.menu-item .m-kbd { margin-left: auto; padding-left: 16px; font-size: 11.5px; color: var(--text-3); }
+.menu-item .m-check { width: 14px; color: var(--accent); }
+.menu-sep { height: 1px; margin: 4px 2px; background: var(--hairline); }
+.toast { position: absolute; left: 50%; bottom: 60px; z-index: 60; transform: translateX(-50%); padding: 8px 12px; border-radius: 8px; background: var(--panel); box-shadow: 0 0 0 1px rgba(255,255,255,0.1), 0 8px 24px rgba(0,0,0,0.45); font-size: 12px; color: var(--text-2); opacity: 0; pointer-events: none; transition: opacity var(--dur-base); white-space: nowrap; }
+.toast.show { opacity: 1; }
+
+/* requirement pins */
+.spec-on .window [data-req] { outline: 1px dashed rgba(120,189,245,0.6); outline-offset: -1px; position: relative; }
+.spec-on .window [data-req]::after { content: attr(data-req); position: absolute; top: 1px; right: 1px; z-index: 30; padding: 2px 4px; border-radius: 3px; background: var(--accent); color: #0E1116; font: 600 9px/1 var(--mono); pointer-events: none; }
+
+/* spec panel */
+.spec { overflow-y: auto; overflow-x: hidden; background: #16181C; border-left: 1px solid var(--hairline); padding: 22px 24px 80px; font-size: 12.5px; line-height: 1.55; color: var(--text-2); }
+.spec h1 { margin: 0 0 6px; font-size: 16px; color: var(--text); }
+.spec h2 { margin: 30px 0 8px; font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); }
+.spec p { margin: 6px 0; } .spec strong { color: var(--text); font-weight: 600; } .spec code { overflow-wrap: anywhere; }
+.spec pre { margin: 6px 0; padding: 8px 10px; border-radius: 6px; background: rgba(0,0,0,0.25); font: 11.5px/1.5 var(--mono); white-space: pre-wrap; color: var(--text); }
+.req { margin: 0 -12px 6px; padding: 12px 12px 10px; border: 1px solid transparent; border-radius: 8px; transition: background 0.3s, border-color 0.3s; scroll-margin-top: 12px; }
+.req.flash { background: rgba(120,189,245,0.08); border-color: rgba(120,189,245,0.4); }
+.req > header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.req .id { font: 600 10.5px var(--mono); color: var(--accent); background: none; padding: 0; }
+.req h3 { flex-grow: 1; margin: 0; font-size: 13px; font-weight: 600; color: var(--text); }
+.scope { font-size: 10px; padding: 1px 6px; border-radius: 4px; border: 1px solid; white-space: nowrap; }
+.scope.in { color: var(--success); border-color: rgba(124,192,138,0.4); } .scope.out { color: var(--attention); border-color: rgba(232,169,75,0.5); }
+.req dl { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 5px 10px; margin: 8px 0 0; }
+.req dt { padding-top: 1px; font-size: 11px; color: var(--text-3); } .req dd { margin: 0; }
+.req ul { margin: 2px 0 0; padding-left: 16px; } .req li { margin: 2px 0; }
+.spec table { width: 100%; border-collapse: collapse; margin: 6px 0; font-size: 11.5px; }
+.spec th { text-align: left; font-weight: 600; color: var(--text-3); padding: 4px 6px 4px 0; border-bottom: 1px solid var(--hairline); }
+.spec td { padding: 4px 6px 4px 0; border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: top; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; vertical-align: -1px; margin-right: 5px; box-shadow: 0 0 0 1px rgba(255,255,255,0.14); }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <h1 class="doc-title">Rocky · Review and edit (M3)</h1>
+  <p class="doc-sub">Interactive spec on top of M2.5's shell and M2.7's right panel. Open a file from the <strong>Changes</strong> tab, hover a line and click <strong>+</strong> (or drag across line numbers) to comment, <strong>Send to agent</strong>, switch to <strong>Edit</strong> and type (⌘S saves), <strong>Commit…</strong>. The panel's header and its Checks tab are M2.7's, drawn simplified; the pull request lives there.</p>
+  <div class="demo" aria-label="Demo controls">
+    <span class="demo-label">Demo controls, not part of Rocky</span>
+    <button type="button" id="demoAgentEdit">Agent edits openapi.ts on disk</button>
+    <button type="button" id="demoWorking" aria-pressed="false">Agent working in this workspace</button>
+    <button type="button" id="demoPins" aria-pressed="false">Requirement pins</button>
+  </div>
+
+  <div class="window" id="win">
+    <!-- M2.5 sidebar (simplified). GIT-03 diff stats; the PR glyphs are M2.7's ROW-07. -->
+    <nav class="sidebar" aria-label="Workspaces">
+      <div class="sb-top"><span class="lights" aria-hidden="true"><span class="light close"></span><span class="light min"></span><span class="light zoom"></span></span><button class="icon-btn" style="margin-left:6px" aria-label="Hide sidebar" data-icon="sidebar"></button></div>
+      <div class="sb-search"><div class="search"><span data-icon="search"></span>Search</div></div>
+      <div class="sb-list" id="sbList"></div>
+      <div class="sb-footer"><span data-icon="folderPlus"></span>Add repository<span class="grow"></span><span data-icon="gear"></span></div>
+    </nav>
+    <div class="vline"></div>
+
+    <main class="main">
+      <header class="topbar" id="topbar"></header>
+      <div class="body">
+        <div class="center">
+          <div class="tabs" id="tabs"></div>
+          <div class="content" id="content"></div>
+          <!-- M2.5 terminal panel, folded here -->
+          <div class="pbar"><span class="sdot done"></span>Setup<span class="sdot run" style="margin-left:8px"></span>Terminal 1<span class="grow"></span><span data-icon="chevUp"></span></div>
+        </div>
+        <div class="vline grab" id="pnlLine"></div>
+        <!-- M2.7 right panel; CHG: its Changes tab -->
+        <aside class="changes" id="changes" aria-label="Right panel"></aside>
+      </div>
+    </main>
+  </div>
+</div>
+
+<aside class="spec" id="spec">
+  <h1>Requirements</h1>
+  <p>Plan: <code>docs/superpowers/plans/2026-09-23-m3-review-edit-pr.md</code>. Builds on M2.5 (<code>docs/superpowers/design/2026-09-23-sidebar-topbar.html</code>), whose sidebar, top bar, tabs, chat and terminal panel appear here simplified, and on M2.7 (<code>docs/superpowers/design/2026-09-23-m2.7-github.html</code>), whose right panel, pull request header and Checks tab appear here simplified.</p>
+  <p><strong>Revised 2026-09-23:</strong> the pull request part of M3 (GitHub account, create, checks, merge, sidebar glyphs: formerly ACC-01, PR-01…07, ROW-07) moved to M2.7, and the Changes panel became the Changes tab of M2.7's right panel. The user asked for Conductor's right panel (relayed by dev-1).</p>
+  <p>Every item gives exact <strong>Values</strong> (points at 100 % zoom, through <code>Font.rocky</code> and <code>Zoom.shared</code> like M2.5), where it goes in our <strong>SwiftUI / Kit</strong> code, and when it is <strong>Done</strong>. When the mock and the text disagree, the text wins.</p>
+
+  <h2>Tokens</h2>
+  <section class="req" id="REQ-TOK-10">
+    <header><code class="id">TOK-10</code><h3>M3 tokens</h3><span class="scope in">In scope</span></header>
+    <table>
+      <tr><th>Token</th><th>Value</th><th>Use</th></tr>
+      <tr><td><code>diffAddLine</code> / <code>diffAddGutter</code></td><td><code>success</code> at 12 % / 20 %</td><td>added lines</td></tr>
+      <tr><td><code>diffDeleteLine</code> / <code>diffDeleteGutter</code></td><td><code>danger</code> at 12 % / 20 %</td><td>removed lines</td></tr>
+      <tr><td><code>diffHunk</code></td><td><code>accent</code> at 6 %</td><td>hunk headers</td></tr>
+      <tr><td><code>commentRange</code></td><td><code>accent</code> at 14 %, 3 pt <code>accent</code> bar</td><td>selected lines</td></tr>
+      <tr><td><code>currentLine</code></td><td>white 3 %</td><td>editor caret line</td></tr>
+      <tr><td><code>syntax.keyword</code></td><td><span class="sw" style="background:#C792EA"></span>#C792EA</td><td rowspan="6">DIFF-04; one map for the diff and the editor</td></tr>
+      <tr><td><code>syntax.string</code></td><td><span class="sw" style="background:#A5D6A7"></span>#A5D6A7</td></tr>
+      <tr><td><code>syntax.number</code></td><td><span class="sw" style="background:#F2A96B"></span>#F2A96B</td></tr>
+      <tr><td><code>syntax.comment</code></td><td><span class="sw" style="background:#7F848E"></span>#7F848E</td></tr>
+      <tr><td><code>syntax.function</code></td><td><span class="sw" style="background:#7CB7F2"></span>#7CB7F2</td></tr>
+      <tr><td><code>syntax.type</code></td><td><span class="sw" style="background:#E6C07B"></span>#E6C07B</td></tr>
+    </table>
+    <dl><dt>Code text</dt><dd>12 mono in the diff, 12.5 mono in the editor, line height 20; all zoom-scaled.</dd><dt>merged</dt><dd>#B48CF2 now comes with M2.7 (HDR-01), which lands first.</dd></dl>
+  </section>
+
+  <h2>Git</h2>
+  <section class="req" id="REQ-GIT-01">
+    <header><code class="id">GIT-01</code><h3>Finding what changed</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Base</dt><dd><code>git merge-base &lt;baseRef&gt; HEAD</code>. <code>baseRef</code> is <code>workspace.baseRef</code>; when nil (workspaces made by M1), <code>origin/HEAD</code>'s branch; else the repository's current branch.</dd>
+      <dt>Diff</dt><dd><code>git diff --no-color --no-ext-diff --find-renames -U3 &lt;base&gt;</code>: committed, staged and unstaged changes against the base. Plus untracked files from <code>git ls-files --others --exclude-standard -z</code>, read directly and shown as added (binary or over 1 MB: DIFF-03). Uncommitted paths from <code>git status --porcelain=v1 -z</code>.</dd>
+      <dt>When</dt><dd>FSEvents on the worktree and on its git directory (the worktree's <code>.git</code> file points to <code>&lt;repo&gt;/.git/worktrees/&lt;name&gt;</code>), excluding <code>node_modules</code> and <code>.git/objects</code>, 500 ms debounce. Skip while a rebase or merge is in progress (<code>rebase-merge</code>, <code>rebase-apply</code>, <code>MERGE_HEAD</code>) or <code>index.lock</code> exists, and retry on the next event.</dd>
+      <dt>Energy</dt><dd>Every workspace keeps an FSEvents stream (no process). On a change: the sidebar's shortstat only. The full diff only for the selected workspace while its Changes tab is visible. At rest: no processes (spec Section 1).</dd>
+      <dt>Kit</dt><dd><code>GitChangesService</code> (actor) and <code>FileWatcher</code> (FSEventStream) in RockyKit; <code>AppModel.changes[workspaceId]</code>, git run with <code>ProcessRunner</code> in the worktree.</dd>
+      <dt>Done when</dt><dd>Tests on temporary repositories: modified, added, untracked, deleted, renamed, binary; a base that moved after the branch was created; a workspace with nil <code>baseRef</code>.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-GIT-02">
+    <header><code class="id">GIT-02</code><h3>Parsing the diff</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Kit</dt><dd>Pure <code>DiffParser.parse(_ output: String) -&gt; [FileDiff]</code>: path, old path (renames), status (added, modified, deleted, renamed), binary flag, mode change, hunks (header, old and new start and count, lines with kind and old/new numbers), "no newline at end of file" per side.</dd>
+      <dt>Done when</dt><dd>Fixture tests: each status, <code>\ No newline at end of file</code>, <code>Binary files … differ</code>, a rename with similarity, a mode-only change, several hunks.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-GIT-03">
+    <header><code class="id">GIT-03</code><h3>Diff stats in the sidebar rows</h3><span class="scope in">In scope</span></header>
+    <p>M2.5's OUT-01, now in scope because GIT-01 exists. Values unchanged: <code>+A −D</code>, 11 mono tabular, <code>success</code> / #E48A8A, thousands as "2.3k", hidden on hover and while ⌘ is held. Source: <code>git diff --shortstat &lt;base&gt;</code> plus untracked lines.</p>
+  </section>
+
+  <section class="req" id="REQ-GIT-04">
+    <header><code class="id">GIT-04</code><h3>Commit</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Entry</dt><dd>"Commit…" in the Uncommitted section header of the Changes tab.</dd>
+      <dt>Why</dt><dd>Commits without the agent, typically your own edits from the editor. M2.7's "Commit and push" (AGT-02) asks the agent instead.</dd>
+      <dt>Sheet</dt><dd>500 wide, slides from the top of the window in 200 ms. Title "Commit changes"; the uncommitted files (status letter and path, read-only); subject (prefilled with the workspace title, 72-character counter that turns <code>attention</code> past 72); optional description; Cancel / Commit (⌘Return; disabled with an empty subject).</dd>
+      <dt>Does</dt><dd><code>git add -A</code> then <code>git commit -m &lt;subject&gt; [-m &lt;description&gt;]</code> in the worktree with the workspace environment. Hook output shows in the sheet while it runs; on failure the sheet stays open with the output and the exit code. Git's own identity settings apply (M4 injects the account's).</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-GIT-05">
+    <header><code class="id">GIT-05</code><h3>Discard a file's uncommitted changes</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Entry</dt><dd>File row hover action (<code>arrow.uturn.backward</code>) and the diff tab's "⋯" menu, for uncommitted files only.</dd>
+      <dt>Does</dt><dd>Confirmation "Discard changes to openapi.ts? This cannot be undone." Tracked files: <code>git restore --staged --worktree -- &lt;path&gt;</code>. Untracked files: moved to the Trash (<code>NSWorkspace.recycle</code>), not deleted. Its diff tab closes. Committed changes are never discarded from Rocky.</dd>
+    </dl>
+  </section>
+
+  <h2>Changes tab</h2>
+  <section class="req" id="REQ-CHG-01">
+    <header><code class="id">CHG-01</code><h3>The Changes tab</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Layout</dt><dd>A tab in M2.7's tab row (PNL-03), before Checks: "Changes" + the number of changed files (11 mono <code>textTertiary</code>; hidden when 0). M2.7's pill style: 26 pt, radius 6, selected <code>fillSelected</code>.</dd>
+      <dt>Behavior</dt><dd>Selecting it shows CHG-02. ⌘⇧C shows the right panel on this tab; pressed again while this tab shows, it hides the panel. The selected tab is remembered per workspace (PNL-03). The top bar keeps M2.7's toggle (PNL-02); M3 adds no top bar control.</dd>
+      <dt>Replaces</dt><dd>M3's former top bar toggle and its own panel (<code>changesPanelOpen</code>, <code>changesPanelWidth</code>): the panel's width, divider and open state are M2.7's (PNL-01).</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-CHG-02">
+    <header><code class="id">CHG-02</code><h3>Tab layout</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Above</dt><dd>M2.7's panel header (HDR-01) and tab row stay above the tab; nothing of M3 goes there.</dd>
+      <dt>Parts</dt><dd>A 30 pt row: "5 files" (12 <code>textSecondary</code>), the total <code>+A −D</code>, spacer, "⋯" (Refresh, Discard All Uncommitted Changes…). Then the file list (scrolls). Then the comments bar (CMT-05), pinned at the bottom while pending comments exist.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-CHG-03">
+    <header><code class="id">CHG-03</code><h3>File rows</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Sections</dt><dd>"Uncommitted" (files with changes not yet committed, with "Commit…" on the right) and "Committed" (changed on this branch, already committed). 10.5 uppercase <code>textTertiary</code> headers with a count. A file with both kinds of change sits in Uncommitted.</dd>
+      <dt>Row</dt><dd>28 pt, radius 7: status letter (A <code>success</code>, M <code>attention</code>, D <code>danger</code>, R <code>textSecondary</code>; 11 mono semibold), file name 13, directory 11 <code>textTertiary</code> (truncated at its start), then the comment count (bubble + n) and <code>+a −d</code>. Hover: Edit (<code>pencil</code>) and, for uncommitted files, Discard replace the counts. Selected (its diff tab is active): <code>fillSelected</code>.</dd>
+      <dt>Behavior</dt><dd>Click opens the file's diff tab or selects it if open. ⌥⌘↓ / ⌥⌘↑ go to the next / previous file.</dd>
+      <dt>Empty</dt><dd>"No changes yet" and "Changes the agent makes in this workspace show up here."</dd>
+    </dl>
+  </section>
+
+  <h2>Diff</h2>
+  <section class="req" id="REQ-DIFF-01">
+    <header><code class="id">DIFF-01</code><h3>Diff tab</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Tab</dt><dd>After conversations and files in the tab row (M2.5 TAB-01). Status letter instead of the file icon, then the file name; tooltip: the path. Unsaved edits: a 7 pt dot replaces the close button until hover. One tab per file.</dd>
+      <dt>Header</dt><dd>34 pt: directory (<code>textTertiary</code>) + name 12.5, <code>+a −d</code>, then "Edited" and Save while there are unsaved edits, a segmented control <strong>Diff | Edit</strong> (24 pt, <code>fillControl</code>, selected <code>fillSelected</code>), and "⋯" (Open in Finder, Copy Path, Discard Changes…).</dd>
+      <dt>Closing</dt><dd>With unsaved edits: "Save changes to openapi.ts?" Save / Don't Save / Cancel.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-DIFF-02">
+    <header><code class="id">DIFF-02</code><h3>Unified diff</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Rows</dt><dd>12 mono, 20 pt rows. Old number and new number columns (40 each, right-aligned, <code>textTertiary</code>), a 16 pt marker column (+ / −), then the code with syntax colors (DIFF-04). Added rows: <code>diffAddLine</code>, their gutter <code>diffAddGutter</code>, marker <code>success</code>. Removed: the delete tokens and <code>danger</code>. Context: no fill.</dd>
+      <dt>Hunks</dt><dd>Header row 26 pt, "<code>@@ -40,7 +40,12 @@</code>" 11.5 mono <code>textTertiary</code> on <code>diffHunk</code>. Three context lines around changes. Unchanged runs between hunks collapse to a 26 pt row "⋯ 18 unchanged lines" that expands on click.</dd>
+      <dt>Other</dt><dd>No wrapping: long lines scroll horizontally, the number columns stay. Text inside a row is selectable for copying.</dd>
+      <dt>SwiftUI</dt><dd>A <code>LazyVStack</code> of rows (so comment cards can sit between rows), one row per line. It is read-only: editing is the Edit mode (EDIT-01), not the diff.</dd>
+      <dt>Done when</dt><dd>A 2,000-line diff scrolls smoothly; beyond DIFF-03's limit it stays collapsed.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-DIFF-03">
+    <header><code class="id">DIFF-03</code><h3>Special files</h3><span class="scope in">In scope</span></header>
+    <table>
+      <tr><th>Case</th><th>Shows</th></tr>
+      <tr><td>New file</td><td>every line added; header adds "New file"</td></tr>
+      <tr><td>Deleted</td><td>every line removed; Edit disabled</td></tr>
+      <tr><td>Renamed</td><td>header "old/path → new/path"; only content changes as rows</td></tr>
+      <tr><td>Binary</td><td>"Binary file · 24 KB → 31 KB", no rows, Edit disabled</td></tr>
+      <tr><td>Large</td><td>over 1,500 changed lines or 1 MB: "Large diff · 3,214 lines" and a Show button</td></tr>
+      <tr><td>Mode only</td><td>"File mode changed 644 → 755"</td></tr>
+    </table>
+  </section>
+
+  <section class="req" id="REQ-DIFF-04">
+    <header><code class="id">DIFF-04</code><h3>Syntax highlighting</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Kit</dt><dd>Prism, vendored as a resource of RockyUI and run in JavaScriptCore, the same approach Textual uses internally (its <code>CodeTokenizer</code> is not public, so it cannot be reused). Language from the file extension; unknown → plain text. Token types map to <code>Theme.syntax</code> (TOK-10).</dd>
+      <dt>Rules</dt><dd>Tokenize off the main thread; show plain text until tokens arrive; cache per file content hash. The editor re-tokenizes 150 ms after typing stops.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-DIFF-05">
+    <header><code class="id">DIFF-05</code><h3>From the chat</h3><span class="scope in">In scope</span></header>
+    <p>A tool call's file badge (Read, Edit…) for a file that is in Changes opens its diff tab, scrolled to the first hunk; other files open the plain file tab as today. This is the "see what the agent changed" M2 left a place for. Try it: the "openapi.ts" badge in the conversation.</p>
+  </section>
+
+  <h2>Comments</h2>
+  <section class="req" id="REQ-CMT-01">
+    <header><code class="id">CMT-01</code><h3>Selecting lines</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Behavior</dt><dd>Hovering a row shows a 16 pt "+" (<code>accent</code> fill, dark glyph, radius 4) over its new line number (old number for removed rows). Click: comment on that line. Drag from "+" or a line number: a range. Shift-click another line number: a range from the last one clicked. A range stays on one side: new-side lines (added and context) or old-side lines (removed). Esc clears.</dd>
+      <dt>Values</dt><dd>Selected rows: <code>commentRange</code> fill and a 3 pt <code>accent</code> bar at their left edge.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-CMT-02">
+    <header><code class="id">CMT-02</code><h3>Composer and comment cards</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Composer</dt><dd>Under the last selected line, aligned with the code: "Comment on line 14" or "lines 14–22" (11.5, <code>textSecondary</code>), a text box (13, 3 lines min), a hint "⌘Return to comment", Cancel and Comment (white filled). Esc cancels when empty; with text it asks first.</dd>
+      <dt>Card</dt><dd>Under its range: "You", relative time, a state chip, Edit and Delete on hover, the text (13). Chips: <strong>Pending</strong> (<code>attention</code> outline), <strong>Sent</strong> (<code>textSecondary</code>, check), <strong>Outdated</strong> (<code>textTertiary</code>, tooltip "The commented lines changed").</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-CMT-03">
+    <header><code class="id">CMT-03</code><h3>Storage</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Store</dt><dd>The next free migration, table <code>diffComment</code>: <code>id, workspaceId, path, side ('new' | 'old'), startLine, endLine, snippet, contextBefore, contextAfter, body, state ('pending' | 'sent' | 'outdated'), createdAt, sentAt</code>. Comments survive a relaunch; removing a workspace removes its comments.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-CMT-04">
+    <header><code class="id">CMT-04</code><h3>Keeping comments on their lines</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Rule</dt><dd>After every diff refresh, for each new-side comment: the snippet still at its lines → stays; else the snippet found elsewhere → moves to the match nearest its old position; else → <strong>Outdated</strong> (keeps its text and last lines). Old-side comments only need the base, which does not change. Outdated comments sit at the top of the file's diff in a collapsed "2 outdated comments".</dd>
+      <dt>Kit</dt><dd>Pure <code>CommentAnchor.relocate(comment:newText:) -&gt; LineRange?</code>. Tests: unchanged; shifted by lines inserted above; edited inside → nil; snippet appears twice → nearest wins.</dd>
+      <dt>Try it</dt><dd>Comment on lines of <code>operation()</code> in openapi.ts, then "Agent edits openapi.ts on disk".</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-CMT-05">
+    <header><code class="id">CMT-05</code><h3>Send to agent</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Entry</dt><dd>The comments bar pinned at the bottom of the Changes tab: "2 comments ready" and Send to agent (white filled), while pending comments exist. Disabled with "The agent is working" while a turn runs.</dd>
+      <dt>Does</dt><dd>One prompt to the workspace's selected conversation (its agent starts if needed); the tab switches to that conversation; the comments become Sent. The prompt:</dd>
+    </dl>
+<pre>Review comments on jhzl/openapi-export:
+
+1. src/openapi.ts, lines 18–25
+```ts
+function operation(route: Route) {
+  …
+```
+Use the route's name as operationId only when it is unique.
+
+2. …
+
+Address each comment and say what you changed for each number.</pre>
+    <dl><dt>Kit</dt><dd>Pure <code>ReviewPrompt.build(branch:comments:fileTexts:)</code> with a test for the exact text.</dd></dl>
+  </section>
+
+  <h2>Editor</h2>
+  <section class="req" id="REQ-EDIT-01">
+    <header><code class="id">EDIT-01</code><h3>Code editor</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Where</dt><dd>The Edit mode of a diff tab, and file tabs of code, data and text files (today's <code>FileTabView</code> shows those read-only). Markdown file tabs get Preview | Edit. Images, PDFs and Quick Look files stay as they are; files over 2 MB stay read-only.</dd>
+      <dt>Features</dt><dd>12.5 mono, 20 pt lines; gutter with line numbers (<code>textTertiary</code>, current line <code>textPrimary</code>) and change bars (EDIT-04); <code>currentLine</code> fill; syntax colors (DIFF-04); undo and redo; the system find bar (⌘F); go to line (⌘L); Tab inserts the file's indentation (detected: spaces or tab); no wrapping, no autocorrect, smart quotes or spell check.</dd>
+      <dt>SwiftUI</dt><dd><code>CodeEditor</code>: an <code>NSViewRepresentable</code> around an <code>NSTextView</code> in an <code>NSScrollView</code> with a ruler view for the gutter (<code>NSRulerView</code> subclass), <code>usesFindBar = true</code>, <code>isAutomaticQuoteSubstitutionEnabled = false</code> and the other substitutions off.</dd>
+      <dt>Done when</dt><dd>Editing a 5,000-line file keeps typing responsive; undo goes back past a save.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-EDIT-02">
+    <header><code class="id">EDIT-02</code><h3>Saving</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Behavior</dt><dd>⌘S or Save writes the file atomically, keeping its line endings and final newline. Unsaved: tab dot, "Edited" and Save in the header. Back in Diff mode with unsaved edits: the diff of the saved file and a banner "Unsaved edits · Save to see them here". After saving, the diff and the change bars refresh.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-EDIT-03">
+    <header><code class="id">EDIT-03</code><h3>When the file changes on disk</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Clean buffer</dt><dd>Reload in place, keeping the caret line and scroll; the header shows "Reloaded" for 2 s.</dd>
+      <dt>Unsaved edits</dt><dd>Banner "This file changed on disk." with Reload (drops your edits) and Keep Mine (your next save overwrites it). Saving compares the file's modification date and content hash with the loaded ones; if they differ and Keep Mine was not chosen, it shows the banner instead of writing.</dd>
+      <dt>Agent working</dt><dd>While the workspace's agent runs a turn: banner "Claude Code is working in this workspace and may change this file." with a close button (per tab).</dd>
+      <dt>Try it</dt><dd>Edit openapi.ts without saving, then "Agent edits openapi.ts on disk".</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-EDIT-04">
+    <header><code class="id">EDIT-04</code><h3>Change bars</h3><span class="scope in">In scope</span></header>
+    <p>3 pt bars left of the line numbers, against the base: added <code>success</code>, modified <code>attention</code>, a small <code>danger</code> triangle where lines were removed. They follow the buffer as you type.</p>
+  </section>
+
+  <h2>Errors and keyboard</h2>
+  <section class="req" id="REQ-ERR-02">
+    <header><code class="id">ERR-02</code><h3>Git errors</h3><span class="scope in">In scope</span></header>
+    <p>A git failure (diff, commit, discard) shows where the action was, the sheet or the Changes tab, with the last lines of its stderr. GitHub errors are M2.7's ERR-01.</p>
+  </section>
+
+  <section class="req" id="REQ-KBD-02">
+    <header><code class="id">KBD-02</code><h3>Keyboard</h3><span class="scope in">In scope</span></header>
+    <p>⌘⇧C right panel on its Changes tab (CHG-01) · ⌥⌘↓ / ⌥⌘↑ next / previous file · ⌘S save · ⌘F find · ⌘L go to line · ⌘Return comment, commit · Esc cancel the composer, close a sheet. None collides with M2, M2.5, M2.6 or M2.7 shortcuts (M2.7 has ⌘⇧G for the panel).</p>
+  </section>
+
+  <h2>Out of scope</h2>
+  <section class="req" id="REQ-OUT-10">
+    <header><code class="id">OUT-10</code><h3>Not in M3</h3><span class="scope out">Later</span></header>
+    <p>Side-by-side diff · staging part of a file · resolving merge conflicts in Rocky (M2.7 sends them to the agent) · GitHub review threads inside the diff (M2.7 lists pending comments in its Checks tab) · the All files tab · pull requests into another remote (forks) · everything about the pull request, which moved to M2.7.</p>
+  </section>
+</aside>
+
+<script>
+/* Demo behavior. The diff, highlighter and git here are JavaScript stand-ins: Rocky uses git (GIT-01) and Prism (DIFF-04). */
+(() => {
+  'use strict';
+  const $ = (s) => document.querySelector(s);
+  const win = $('#win');
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  let seq = 0; const uid = () => 'i' + (++seq);
+  const clock = () => new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+  // ---------- icons ----------
+  const svg = (size, body, w) => `<svg width="${size}" height="${size}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+  const spinner = (s) => `<svg class="spinner" width="${s}" height="${s}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" role="img" aria-label="Working"><circle cx="8" cy="8" r="5.5" stroke-opacity="0.22"/><path d="M8 2.5a5.5 5.5 0 0 1 5.5 5.5"/></svg>`;
+  const I = {
+    sidebar: svg(16, '<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2.25"/><path d="M6.25 2.75v10.5"/>', 1.3),
+    search: svg(14, '<circle cx="7" cy="7" r="4.5"/><path d="M10.4 10.4l3.35 3.35"/>', 1.5),
+    folderPlus: svg(15, '<path d="M1.75 4.25a1.5 1.5 0 0 1 1.5-1.5h2.9l1.5 1.5h5.1a1.5 1.5 0 0 1 1.5 1.5v6a1.5 1.5 0 0 1-1.5 1.5h-9.5a1.5 1.5 0 0 1-1.5-1.5z"/><path d="M8 7.25v3.5M6.25 9h3.5"/>', 1.3),
+    gear: svg(16, '<path d="M8 1.75l1.1 1.6 1.9-.5.5 1.9 1.6 1.1-.9 1.7.9 1.7-1.6 1.1-.5 1.9-1.9-.5L8 14.25l-1.1-1.6-1.9.5-.5-1.9-1.6-1.1.9-1.7-.9-1.7 1.6-1.1.5-1.9 1.9.5z"/><circle cx="8" cy="8" r="2.25"/>', 1.3),
+    chevUp: svg(12, '<path d="M3.5 10l4.5-4.5 4.5 4.5"/>', 1.8),
+    chevDown: svg(10, '<path d="M3.5 6l4.5 4.5L12.5 6"/>', 2),
+    plus: svg(12, '<path d="M8 3v10M3 8h10"/>', 2),
+    close: svg(10, '<path d="M4 4l8 8M12 4l-8 8"/>', 1.8),
+    ellipsis: '<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.2" fill="currentColor"/><circle cx="8" cy="8" r="1.2" fill="currentColor"/><circle cx="12.5" cy="8" r="1.2" fill="currentColor"/></svg>',
+    open: svg(15, '<path d="M9.5 2.5h4v4M13.5 2.5L8 8M12 9.5V12a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 12V5.5A1.5 1.5 0 0 1 4 4h2.5"/>', 1.3),
+    play: '<svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 2.75v10.5L13 8z" fill="currentColor"/></svg>',
+    plusminus: svg(14, '<path d="M4.5 2.5v5M2 5h5M9 11h5M12.5 2.5l-9 11"/>', 1.4),
+    branch: (s) => svg(s, '<circle cx="4.5" cy="3.5" r="1.6"/><circle cx="4.5" cy="12.5" r="1.6"/><circle cx="11.5" cy="4.5" r="1.6"/><path d="M4.5 5.1v5.8M11.5 6.1c0 3-3.2 3.1-6.2 4.7"/>', 1.4),
+    pr: (s) => svg(s, '<circle cx="4.5" cy="3.5" r="1.6"/><circle cx="4.5" cy="12.5" r="1.6"/><circle cx="11.5" cy="12.5" r="1.6"/><path d="M4.5 5.1v5.8M11.5 10.9V6.5a2 2 0 0 0-2-2H7.5M9 3L7.5 4.5 9 6"/>', 1.4),
+    merge: (s) => svg(s, '<circle cx="4.5" cy="3.5" r="1.6"/><circle cx="4.5" cy="12.5" r="1.6"/><circle cx="11.5" cy="8.5" r="1.6"/><path d="M4.5 5.1v5.8M4.5 5.1c0 2.4 2.2 3.4 5.4 3.4"/>', 1.4),
+    error: (s) => svg(s, '<path d="M8 2.25l6.25 11H1.75z"/><path d="M8 6.5v2.75"/><circle cx="8" cy="11.25" r=".35" fill="currentColor"/>', 1.4),
+    check: (s) => svg(s, '<path d="M3.5 8.5l3 3 6-7"/>', 1.8),
+    cross: (s) => svg(s, '<path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/>', 1.8),
+    queued: (s) => svg(s, '<circle cx="8" cy="8" r="5"/>', 1.4),
+    pencil: svg(13, '<path d="M11.6 2.4a1.3 1.3 0 0 1 1.9 1.9L6 11.8 3 12.6l.8-3z"/>', 1.3),
+    discard: svg(13, '<path d="M5.5 3.5L2.5 6.5l3 3"/><path d="M2.5 6.5h7a4 4 0 0 1 0 8H7"/>', 1.4),
+    bubble: svg(11, '<path d="M2.5 3.5h11v7.5H7l-3 2.5V11H2.5z"/>', 1.4),
+    trash: svg(12, '<path d="M2.75 4.25h10.5M6.25 4.25V2.75h3.5v1.5M4 4.25l.6 9a1 1 0 0 0 1 .95h4.8a1 1 0 0 0 1-.95l.6-9"/>', 1.4),
+    ext: svg(10, '<path d="M9.5 2.5h4v4M13.5 2.5L7 9"/>', 1.8),
+    refresh: svg(13, '<path d="M13 8a5 5 0 1 1-1.5-3.5M13 2.5v3h-3"/>', 1.4),
+    sidebarRight: svg(15, '<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2.25"/><path d="M9.75 2.75v10.5"/>', 1.3),
+    terminal: svg(14, '<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2"/><path d="M4.5 6.5L6.5 8l-2 1.5M8 10h3"/>', 1.3),
+    edit: svg(14, '<path d="M11.6 2.4a1.3 1.3 0 0 1 1.9 1.9L6 11.8 3 12.6l.8-3z"/>', 1.3),
+    file: svg(13, '<path d="M4 1.75h5.25L12.5 5v9.25H4z"/><path d="M9.25 1.75V5h3.25"/>', 1.4),
+    copy: svg(13, '<rect x="5" y="5" width="8.5" height="8.5" rx="1.5"/><path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5"/>', 1.3),
+  };
+  document.querySelectorAll('[data-icon]').forEach((el) => { const i = I[el.dataset.icon]; el.insertAdjacentHTML('afterbegin', typeof i === 'function' ? i(14) : i); });
+
+  // ---------- DIFF-04 stand-in highlighter ----------
+  const TOKEN = /(\/\/.*$)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)|(\b\d+(?:\.\d+)?\b)|(\b(?:import|from|export|function|const|let|return|for|of|type|if|else|new|async|await|true|false|null|describe|it)\b)|(\b[A-Z][A-Za-z0-9_]*\b)|(\b[a-zA-Z_]\w*(?=\())/g;
+  function hl(line, path) {
+    if (!/\.(ts|js|json)$/.test(path)) return esc(line);
+    let out = ''; let last = 0; let m;
+    TOKEN.lastIndex = 0;
+    while ((m = TOKEN.exec(line))) {
+      if (!m[0]) { TOKEN.lastIndex++; continue; }
+      out += esc(line.slice(last, m.index));
+      const cls = m[1] ? 'c' : m[2] ? 's' : m[3] ? 'n' : m[4] ? 'k' : m[5] ? 't' : 'f';
+      out += `<span class="t-${cls}">${esc(m[0])}</span>`;
+      last = m.index + m[0].length;
+    }
+    return out + esc(line.slice(last));
+  }
+
+  // ---------- line diff (stand-in for git diff) ----------
+  const splitLines = (t) => (t === null || t === '' ? [] : t.replace(/\n$/, '').split('\n'));
+  function diffOps(a, b) {
+    const n = a.length, m = b.length;
+    const dp = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
+    for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    const ops = []; let i = 0, j = 0;
+    while (i < n && j < m) {
+      if (a[i] === b[j]) { ops.push({ t: 'ctx', o: i + 1, n: j + 1, s: b[j] }); i++; j++; }
+      else if (dp[i + 1][j] >= dp[i][j + 1]) { ops.push({ t: 'del', o: i + 1, s: a[i] }); i++; }
+      else { ops.push({ t: 'add', n: j + 1, s: b[j] }); j++; }
+    }
+    while (i < n) { ops.push({ t: 'del', o: i + 1, s: a[i] }); i++; }
+    while (j < m) { ops.push({ t: 'add', n: j + 1, s: b[j] }); j++; }
+    return ops;
+  }
+  function hunksOf(ops, ctx = 3) {
+    const keep = ops.map(() => false);
+    ops.forEach((op, k) => { if (op.t !== 'ctx') for (let d = -ctx; d <= ctx; d++) if (ops[k + d]) keep[k + d] = true; });
+    const hunks = []; let cur = null; let pending = [];
+    ops.forEach((op, k) => {
+      if (keep[k]) { if (!cur) { cur = { gap: pending, lines: [] }; hunks.push(cur); pending = []; } cur.lines.push(op); }
+      else { cur = null; pending.push(op); }
+    });
+    hunks.forEach((h) => {
+      const o0 = (h.lines.find((l) => l.o) || {}).o || 0; const n0 = (h.lines.find((l) => l.n) || {}).n || 0;
+      h.header = `@@ -${o0},${h.lines.filter((l) => l.t !== 'add').length} +${n0},${h.lines.filter((l) => l.t !== 'del').length} @@`;
+    });
+    return { hunks, trailing: pending };
+  }
+  const opsOf = (f) => diffOps(splitLines(f.base), splitLines(f.current));
+  const statOf = (f) => { const ops = opsOf(f); return [ops.filter((o) => o.t === 'add').length, ops.filter((o) => o.t === 'del').length]; };
+  const count = (n) => (n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(n));
+  const statHTML = ([a, d]) => `<span class="diff-stat"><span class="a">+${count(a)}</span> <span class="d">−${count(d)}</span></span>`;
+
+  // ---------- data ----------
+  const OPENAPI_BASE = `import { routes } from "./routes";
+import { writeFileSync } from "node:fs";
+
+// Builds the OpenAPI document.
+export function buildDocument() {
+  const paths = {};
+  for (const route of routes) {
+    paths[route.path] = {};
+  }
+  return { openapi: "3.0.0", info: { title: "Providers" }, paths };
+}
+
+export function writeDocument(file) {
+  writeFileSync(file, JSON.stringify(buildDocument()));
+}
+`;
+  const OPENAPI_V1 = `import { routes, type Route } from "./routes";
+import { writeFileSync } from "node:fs";
+import { schemaFor } from "./schemas";
+
+// Builds the OpenAPI 3.1 document from the router.
+export function buildDocument() {
+  const paths: Record<string, object> = {};
+  for (const route of routes) {
+    paths[route.path] = {
+      ...paths[route.path],
+      [route.method.toLowerCase()]: operation(route),
+    };
+  }
+  return { openapi: "3.1.0", info: { title: "Providers", version: "1.0.0" }, paths };
+}
+
+function operation(route: Route) {
+  return {
+    operationId: route.name,
+    responses: {
+      "200": { content: { "application/json": { schema: schemaFor(route) } } },
+    },
+  };
+}
+
+export function writeDocument(file: string) {
+  writeFileSync(file, JSON.stringify(buildDocument(), null, 2));
+}
+`;
+  const OPENAPI_AGENT = OPENAPI_V1.replace('    operationId: route.name,\n', '    operationId: uniqueId(route),\n    summary: route.summary ?? route.name,\n');
+  const F = (path, status, committed, base, current) => ({ path, status, committed, base, current });
+  const repos = { celes: { name: 'celes-platform', color: '#4C7BD9', login: 'jhzl1' }, veritas: { name: 'veritas', color: '#8E6BE0', login: 'jhzl1' }, doculift: { name: 'doculift', color: '#3A9C8C', login: 'jhzl1' } };
+  const conv = (id, agent, title, items) => ({ id, agent, title, items });
+  const it = (kind, text, extra = {}) => ({ id: uid(), kind, text, ...extra });
+  const workspaces = [
+    { id: 'w1', repo: 'celes', name: 'tokyo', branch: 'jhzl/openapi-export', baseBranch: 'main', port: 41000, title: 'OpenAPI export for providers',
+      files: [
+        F('src/openapi.ts', 'M', false, OPENAPI_BASE, OPENAPI_V1),
+        F('test/openapi.test.ts', 'A', false, null, `import { describe, expect, it } from "vitest";
+import { buildDocument } from "../src/openapi";
+
+describe("buildDocument", () => {
+  it("is a valid OpenAPI 3.1 document", () => {
+    const doc = buildDocument();
+    expect(doc.openapi).toBe("3.1.0");
+    expect(Object.keys(doc.paths).length).toBeGreaterThan(0);
+  });
+});
+`),
+        F('src/routes/providers.ts', 'M', true, `export const providers = [
+  { method: "GET", path: "/providers" },
+];
+`, `export const providers = [
+  { name: "listProviders", method: "GET", path: "/providers" },
+  { name: "createProvider", method: "POST", path: "/providers" },
+];
+`),
+        F('package.json', 'M', true, `{
+  "name": "celes-platform",
+  "scripts": {
+    "dev": "vite",
+    "test": "vitest"
+  }
+}
+`, `{
+  "name": "celes-platform",
+  "scripts": {
+    "dev": "vite",
+    "test": "vitest",
+    "openapi": "tsx scripts/openapi.ts"
+  }
+}
+`),
+        F('docs/old-api.md', 'D', true, `# Old API
+
+The providers API returned XML.
+Use /v1/providers.xml for the list.
+`, null),
+      ],
+      pr: null,
+      convs: [conv('c1', 'claude', 'OpenAPI export for providers', [
+        it('user', 'Export the provider endpoints as an OpenAPI 3.1 document and add a test that validates the schema.'),
+        it('tool', '', { icon: 'edit', label: 'Edit', file: 'src/openapi.ts' }),
+        it('tool', '', { icon: 'edit', label: 'Edit', file: 'test/openapi.test.ts' }),
+        it('agent', 'Done. `buildDocument()` now emits OpenAPI 3.1 with an operation per method, and the new test checks the version and that paths exist.'),
+        it('footer', '', { agent: 'claude', duration: '1m 4s', time: '4:02 PM' }),
+      ])] },
+    { id: 'w2', repo: 'celes', name: 'lima', branch: 'jhzl/invoice-rounding', baseBranch: 'main', port: 41010, title: 'Fix invoice rounding', needsYou: true,
+      files: [F('src/billing/round.ts', 'M', false, `export const round = (n) => Math.round(n * 100) / 100;
+`, `export const round = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+`)], pr: null,
+      convs: [conv('c3', 'claude', 'Fix invoice rounding', [it('user', 'Round invoice totals half-up to two decimals.'), it('agent', 'The change is in. I need permission to run `pnpm test billing` to check it.')])] },
+    { id: 'w3', repo: 'celes', name: 'oslo', branch: 'jhzl/oslo', baseBranch: 'main', port: 41020, title: null, files: [], pr: null, convs: [conv('c8', 'claude', null, [])] },
+    { id: 'w4', repo: 'veritas', name: 'quito', branch: 'jhzl/list-prs', baseBranch: 'main', port: 41030, title: 'List repo PRs by author',
+      files: [F('src/prs.ts', 'M', true, `export async function listPrs(repo) {
+  return fetchPrs(repo);
+}
+`, `export async function listPrs(repo: string) {
+  const prs = await fetchPrs(repo);
+  return groupBy(prs, (pr) => pr.author);
+}
+`)],
+      pr: { number: 212, state: 'open', updated: Date.now() - 12000, checks: [
+        { name: 'lint', state: 'success' }, { name: 'unit', state: 'success' }, { name: 'e2e / chromium', state: 'failure' },
+        { name: 'build', state: 'success' }, { name: 'typecheck', state: 'success' }, { name: 'e2e / webkit', state: 'running' },
+      ] },
+      convs: [conv('c4', 'claude', 'List repo PRs by author', [it('user', 'List the open pull requests in this repo grouped by author.'), it('agent', 'Done: `prs:list` prints them grouped by author, newest first.')])] },
+    { id: 'w5', repo: 'veritas', name: 'bergen', branch: 'jhzl/acp-handshake', baseBranch: 'main', port: 41040, title: 'Refactor ACP handshake', unread: true,
+      files: [F('src/acp.ts', 'M', false, `await connection.initialize();
+`, `try {
+  await connection.initialize();
+} catch {
+  await connection.initialize();
+}
+`)], pr: null,
+      convs: [conv('c5', 'claude', 'Refactor ACP handshake', [it('user', 'Retry the ACP handshake once when the adapter exits during initialize.'), it('agent', 'The handshake now retries once.')])] },
+    { id: 'w6', repo: 'doculift', name: 'cairo', branch: 'jhzl/scanned-invoices', baseBranch: 'main', port: 41080, title: 'Parse scanned invoices', files: [],
+      pr: { number: 88, state: 'merged', updated: Date.now() - 600000, checks: [{ name: 'test', state: 'success' }] },
+      convs: [conv('c10', 'claude', 'Parse scanned invoices', [it('user', 'Parse the scanned invoices in fixtures/ and extract their totals.'), it('agent', 'Totals match for every fixture.')])] },
+  ];
+  workspaces.forEach((w) => { w.tabs = []; w.active = { kind: 'conv', id: w.convs[0].id }; });
+
+  // comments: {id, ws, path, side, start, end, snippet[], body, state}
+  const comments = [
+    { id: uid(), ws: 'w1', path: 'src/routes/providers.ts', side: 'new', start: 2, end: 3, snippet: ['  { name: "listProviders", method: "GET", path: "/providers" },', '  { name: "createProvider", method: "POST", path: "/providers" },'], body: 'Use the handler names here so the operationIds match the code.', state: 'sent', time: '20m ago' },
+  ];
+
+  const state = { selected: 'w1', panelOpen: true, tab: {}, mode: {}, buffers: {}, loaded: {}, conflict: {}, keepMine: {}, reloadedAt: {}, dismissed: {}, sel: null, composer: null, expanded: new Set(), sheet: null, working: false };
+  const wsOf = (id) => workspaces.find((w) => w.id === id);
+  const W = () => wsOf(state.selected);
+  const fileOf = (w, path) => w.files.find((f) => f.path === path);
+  const key = (w, path) => `${w.id}:${path}`;
+  const baseName = (p) => p.split('/').pop();
+  const dirName = (p) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/') + 1) : '');
+
+  // ---------- status (M2.5 ROW-03 + M2.7 ROW-07) ----------
+  function checksSummary(pr) {
+    const c = { success: 0, failure: 0, running: 0, queued: 0 };
+    pr.checks.forEach((x) => { c[x.state] = (c[x.state] || 0) + 1; });
+    return c;
+  }
+  function checksState(pr) { const c = checksSummary(pr); return c.failure ? 'failure' : (c.running || c.queued) ? 'running' : 'success'; }
+  function status(w) {
+    if (w.needsYou) return 'needs';
+    if (w.turn) return 'working';
+    if (w.unread) return 'unread';
+    if (w.pr && (w.pr.state === 'open' || w.pr.state === 'draft')) return 'pr';
+    if (w.pr && w.pr.state === 'merged') return 'merged';
+    return 'idle';
+  }
+  function glyph(w) {
+    const st = status(w);
+    if (st === 'needs') return '<span class="dot dot-needs"></span>';
+    if (st === 'working') return spinner(14);
+    if (st === 'unread') return '<span class="dot dot-unread"></span>';
+    if (st === 'pr') { const cs = checksState(w.pr); const cls = w.pr.state === 'draft' ? 'c-2' : cs === 'failure' ? 'c-danger' : cs === 'running' ? 'c-attention' : 'c-success'; return `<span class="${cls}">${I.pr(14)}</span>`; }
+    if (st === 'merged') return `<span class="c-merged">${I.merge(14)}</span>`;
+    return `<span class="c-muted">${I.branch(14)}</span>`;
+  }
+  const wsStat = (w) => w.files.reduce((acc, f) => { const [a, d] = statOf(f); return [acc[0] + a, acc[1] + d]; }, [0, 0]);
+
+  function renderSidebar() {
+    let html = '';
+    let pinnedStat = false;
+    for (const rid of Object.keys(repos)) {
+      const r = repos[rid];
+      html += `<div class="repo"><span class="monogram" style="background:${r.color}">${r.name[0].toUpperCase()}</span>${esc(r.name)}</div>`;
+      for (const w of workspaces.filter((x) => x.repo === rid)) {
+        const [a, d] = wsStat(w);
+        const st = status(w);
+        const statPin = !pinnedStat && (a || d) ? (pinnedStat = true, ' data-req="GIT-03"') : '';
+        const titleCls = !w.title ? ' fallback' : st === 'merged' ? ' dim' : '';
+        html += `<div class="row-wrap${w.id === state.selected ? ' selected' : ''}"><button class="row" data-action="select" data-ws="${w.id}"><span class="glyph">${glyph(w)}</span><span class="row-title${titleCls}">${esc(w.title || w.name)}</span>${a || d ? `<span${statPin}>${statHTML([a, d])}</span>` : ''}</button></div>`;
+      }
+    }
+    $('#sbList').innerHTML = html;
+  }
+
+  // ---------- top bar (M2.5 TB-01 + M2.7 PNL-02) ----------
+  function prColorClass(pr) { return pr.state === 'merged' ? 'c-merged' : pr.state === 'closed' ? 'c-danger' : pr.state === 'draft' ? 'c-2' : 'c-success'; }
+  function checksGlyph(pr, s = 12) { const cs = checksState(pr); return cs === 'failure' ? `<span class="c-danger">${I.cross(s)}</span>` : cs === 'running' ? `<span class="c-attention">${spinner(s)}</span>` : `<span class="c-success">${I.check(s)}</span>`; }
+  function renderTopbar() {
+    const w = W(); const r = repos[w.repo];
+    const toggle = w.pr ? `<span class="${prColorClass(w.pr)}">${w.pr.state === 'merged' ? I.merge(13) : I.pr(13)}</span>#${w.pr.number}${w.pr.state === 'merged' ? '' : checksGlyph(w.pr)}` : I.sidebarRight;
+    $('#topbar').innerHTML = `<span class="crumb-repo">${esc(r.name)}</span><span class="crumb-sep">/</span>` +
+      `<button class="branch" title="Copy branch name"><span class="b-icon">${I.branch(13)}</span>${esc(w.branch)}</button><span class="grow"></span>` +
+      `<button class="pnl-toggle${state.panelOpen ? ' on' : ''}" data-action="toggle-panel" title="${state.panelOpen ? 'Hide' : 'Show'} the right panel (⌘⇧G), M2.7's toggle">${toggle}</button>` +
+      `<button class="icon-btn" title="Open in Finder or Terminal" aria-label="Open in">${I.open}</button><button class="run">${I.play}<span>Run</span></button>`;
+    win.classList.toggle('pnl-closed', !state.panelOpen);
+  }
+
+  // ---------- tabs (M2.5 TAB-01 + DIFF-01) ----------
+  const agentTile = (a) => `<span class="agent ${a}">${a === 'claude' ? 'C' : 'O'}</span>`;
+  const isDirty = (w, path) => { const k = key(w, path); return state.buffers[k] !== undefined && state.buffers[k] !== state.loaded[k]; };
+  function renderTabs() {
+    const w = W();
+    let html = '';
+    w.convs.forEach((c) => {
+      const sel = w.active.kind === 'conv' && w.active.id === c.id;
+      html += `<div class="tab-wrap${sel ? ' selected' : ''}"><button class="tab" data-action="conv-tab" data-conv="${c.id}">${w.turn ? spinner(12) : agentTile(c.agent)}<span class="t-label">${esc(c.title || 'New conversation')}</span></button><button class="tab-close" aria-label="Close tab">${I.close}</button></div>`;
+    });
+    w.tabs.forEach((path, i) => {
+      const f = fileOf(w, path);
+      const sel = w.active.kind === 'diff' && w.active.path === path;
+      const dirty = isDirty(w, path);
+      html += `<div class="tab-wrap${sel ? ' selected' : ''}"${i === 0 ? ' data-req="DIFF-01"' : ''}><button class="tab" data-action="diff-tab" data-path="${esc(path)}" title="${esc(path)}"><span class="status-letter st-${f ? f.status : 'M'}">${f ? f.status : 'M'}</span><span class="t-label">${esc(baseName(path))}</span></button>` +
+        (dirty ? '<span class="tab-dirty" aria-label="Unsaved edits"></span>' : '') +
+        `<button class="tab-close${dirty ? ' dirty-hidden' : ''}" data-action="close-diff" data-path="${esc(path)}" aria-label="Close tab">${I.close}</button></div>`;
+    });
+    $('#tabs').innerHTML = html;
+  }
+
+  // ---------- content ----------
+  function renderContent() {
+    const w = W();
+    if (w.active.kind === 'conv') return renderChat(w);
+    const f = fileOf(w, w.active.path);
+    if (!f) { w.active = { kind: 'conv', id: w.convs[0].id }; return renderContent(); }
+    renderFile(w, f);
+  }
+
+  // chat (M2.5, simplified)
+  function itemHTML(item, fresh) {
+    const enter = fresh ? ' enter' : '';
+    if (item.kind === 'user') {
+      const body = esc(item.text).replace(/```(\w*)\n([\s\S]*?)```/g, (m, lang, code) => `<pre>${code}</pre>`);
+      return `<div class="msg-user${enter}">${body}</div>`;
+    }
+    if (item.kind === 'agent') return `<div class="msg-agent${enter}" data-item="${item.id}">${esc(item.text).replace(/`([^`]+)`/g, '<code>$1</code>')}</div>`;
+    if (item.kind === 'footer') return `<div class="turn-footer${enter}">${agentTile(item.agent)}<span>Claude Code · ${item.duration} · ${item.time}</span></div>`;
+    if (item.kind === 'tool') {
+      const inChanges = fileOf(W(), item.file);
+      return `<div class="tool${enter}" data-item="${item.id}"><span class="tool-icon">${I[item.icon] || I.edit}</span><span class="tool-label${item.live ? ' shimmer' : ''}">${esc(item.label)}</span><button class="file-badge" data-action="badge" data-path="${esc(item.file)}"${inChanges ? ' data-req="DIFF-05"' : ''} title="${esc(item.file)}">${I.file}<span>${esc(baseName(item.file))}</span></button></div>`;
+    }
+    return '';
+  }
+  function renderChat(w) {
+    const c = w.convs.find((x) => x.id === w.active.id) || w.convs[0];
+    const items = c.items.map((x) => itemHTML(x, false)).join('') + (w.turn ? `<div class="working" id="working"><span class="shimmer">Working</span><span class="elapsed">${Math.floor((Date.now() - w.turn) / 1000)}s</span></div>` : '');
+    $('#content').innerHTML = `<div class="chat" id="chat"><div class="col" id="chatCol">${items || '<p style="color:var(--text-3);text-align:center;margin-top:60px">New conversation</p>'}</div></div>` +
+      `<div class="composer-wrap"><div class="composer">Ask ${c.agent === 'claude' ? 'Claude Code' : 'OpenCode'} to make changes…<span class="c-send">↑</span></div></div>`;
+    const chat = $('#chat'); chat.scrollTop = chat.scrollHeight;
+  }
+
+  // ---------- diff tab ----------
+  function renderFile(w, f) {
+    const k = key(w, f.path);
+    const mode = state.mode[k] || 'diff';
+    const dirty = isDirty(w, f.path);
+    const [a, d] = statOf(f);
+    const deleted = f.status === 'D';
+    let banners = '';
+    if (state.conflict[k]) banners += `<div class="banner warn" data-req="EDIT-03">${I.error(14)}<span class="grow">This file changed on disk.</span><button class="text-btn" data-action="reload">Reload</button><button class="fill-btn" data-action="keep-mine">Keep Mine</button></div>`;
+    if (w.turn && mode === 'edit' && !state.dismissed[k]) banners += `<div class="banner info"><span class="grow">Claude Code is working in this workspace and may change this file.</span><button class="icon-btn xs" data-action="dismiss-banner" aria-label="Dismiss">${I.close}</button></div>`;
+    if (mode === 'diff' && dirty) banners += `<div class="banner info" data-req="EDIT-02"><span class="grow">Unsaved edits · Save to see them here.</span><button class="fill-btn" data-action="save">Save</button></div>`;
+    const reloaded = state.reloadedAt[k] && Date.now() - state.reloadedAt[k] < 2000;
+    $('#content').innerHTML = `<div class="dv">` +
+      `<div class="dv-head"><span class="dv-path"><span class="dir">${esc(dirName(f.path))}</span>${esc(baseName(f.path))}</span>${statHTML([a, d])}${f.status === 'A' ? '<span class="muted">New file</span>' : ''}<span class="grow"></span>` +
+      (reloaded ? '<span class="dv-edited">Reloaded</span>' : '') +
+      (dirty ? `<span class="dv-edited">Edited</span><button class="fill-btn" data-action="save" title="Save (⌘S)">Save</button>` : '') +
+      `<div class="seg" role="tablist" data-req="EDIT-01"><button class="${mode === 'diff' ? 'on' : ''}" data-action="mode" data-mode="diff">Diff</button><button class="${mode === 'edit' ? 'on' : ''}" data-action="mode" data-mode="edit" ${deleted ? 'disabled title="A deleted file cannot be edited"' : ''}>Edit</button></div>` +
+      `<button class="icon-btn sm" data-action="file-menu" data-path="${esc(f.path)}" aria-label="More">${I.ellipsis}</button></div>` +
+      banners + `<div class="dv-body" id="dvBody"></div></div>`;
+    if (mode === 'edit' && !deleted) renderEditor(w, f); else renderDiff(w, f);
+  }
+
+  function lineRow(op, path, selected) {
+    const side = op.t === 'del' ? 'old' : 'new';
+    const line = side === 'new' ? op.n : op.o;
+    return `<div class="dl ${op.t}${selected ? ' sel' : ''}" data-side="${side}" data-line="${line}">` +
+      `<span class="ln" data-line="${line}" data-side="${side}">${op.o || ''}</span><span class="ln" data-line="${line}" data-side="${side}">${op.n || ''}</span>` +
+      `<button class="cadd${side === 'old' ? ' old' : ''}" data-line="${line}" data-side="${side}" aria-label="Comment on line ${line}">${I.plus}</button>` +
+      `<span class="mk">${op.t === 'add' ? '+' : op.t === 'del' ? '−' : ''}</span><span class="src">${hl(op.s, path)}</span></div>`;
+  }
+  const inSel = (path, side, line) => state.sel && state.sel.path === path && state.sel.side === side && line >= state.sel.start && line <= state.sel.end;
+  function commentsAfter(w, f, side, line) {
+    let html = '';
+    comments.filter((c) => c.ws === w.id && c.path === f.path && c.side === side && c.end === line && c.state !== 'outdated').forEach((c) => { html += cardHTML(c); });
+    const cm = state.composer;
+    if (cm && cm.path === f.path && cm.side === side && cm.end === line) html += composerHTML(cm);
+    return html ? `<div class="cmt-slot">${html}</div>` : '';
+  }
+  function cardHTML(c) {
+    const chip = c.state === 'pending' ? '<span class="cstate pending">Pending</span>' : c.state === 'sent' ? `<span class="cstate sent">${I.check(10)}Sent</span>` : '<span class="cstate outdated" title="The commented lines changed">Outdated</span>';
+    return `<div class="ccard" data-req="CMT-02"><div class="ccard-head"><span class="who">You</span><span>${esc(c.time || 'just now')}</span>${chip}<span class="grow"></span><span class="ccard-actions"><button class="icon-btn xs" data-action="edit-comment" data-cid="${c.id}" aria-label="Edit comment">${I.pencil}</button><button class="icon-btn xs" data-action="delete-comment" data-cid="${c.id}" aria-label="Delete comment">${I.trash}</button></span></div><div class="cbody">${esc(c.body)}</div></div>`;
+  }
+  function composerHTML(cm) {
+    const label = cm.start === cm.end ? `Comment on line ${cm.start}` : `Comment on lines ${cm.start}–${cm.end}`;
+    return `<div class="ccomposer"><div class="cc-head">${label}${cm.side === 'old' ? ' (removed)' : ''}</div><textarea id="cmtInput" placeholder="Leave a comment for the agent">${esc(cm.text || '')}</textarea><div class="cc-actions"><span class="cc-hint">⌘Return to comment</span><button class="text-btn" data-action="cancel-comment">Cancel</button><button class="fill-btn primary" data-action="save-comment">Comment</button></div></div>`;
+  }
+  function renderDiff(w, f) {
+    const body = $('#dvBody');
+    if (f.status === 'D' && false) return;
+    const ops = opsOf(f);
+    const { hunks, trailing } = hunksOf(ops);
+    let html = '<div class="diff" id="diffRoot" data-req="DIFF-02">';
+    const outdated = comments.filter((c) => c.ws === w.id && c.path === f.path && c.state === 'outdated');
+    if (outdated.length) html += `<details class="outdated-box" data-req="CMT-04"><summary>${outdated.length} outdated comment${outdated.length > 1 ? 's' : ''}</summary>${outdated.map(cardHTML).join('')}</details>`;
+    hunks.forEach((h, hi) => {
+      const gk = `${key(w, f.path)}:${hi}`;
+      if (h.gap.length) {
+        if (state.expanded.has(gk)) h.gap.forEach((op) => { html += lineRow(op, f.path, inSel(f.path, 'new', op.n)) + commentsAfter(w, f, 'new', op.n); });
+        else html += `<button class="gap" data-action="expand" data-gap="${gk}">${I.chevDown}${h.gap.length} unchanged lines</button>`;
+      }
+      html += `<div class="hunk">${esc(h.header)}</div>`;
+      h.lines.forEach((op) => {
+        const side = op.t === 'del' ? 'old' : 'new';
+        const line = side === 'new' ? op.n : op.o;
+        html += lineRow(op, f.path, inSel(f.path, side, line)) + commentsAfter(w, f, side, line);
+      });
+    });
+    if (trailing.length) {
+      const gk = `${key(w, f.path)}:end`;
+      if (state.expanded.has(gk)) trailing.forEach((op) => { html += lineRow(op, f.path, inSel(f.path, 'new', op.n)) + commentsAfter(w, f, 'new', op.n); });
+      else html += `<button class="gap" data-action="expand" data-gap="${gk}">${I.chevDown}${trailing.length} unchanged lines</button>`;
+    }
+    html += '</div>';
+    body.innerHTML = html;
+    const input = $('#cmtInput');
+    if (input) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
+  }
+
+  // ---------- CMT-01 selection ----------
+  let drag = null;
+  document.addEventListener('pointerdown', (e) => {
+    const t = e.target.closest('#diffRoot .cadd, #diffRoot .ln');
+    if (!t) return;
+    const w = W(); const path = w.active.path;
+    const side = t.dataset.side; const line = Number(t.dataset.line);
+    e.preventDefault();
+    if (e.shiftKey && state.sel && state.sel.path === path && state.sel.side === side) {
+      state.sel = { path, side, start: Math.min(state.sel.anchor, line), end: Math.max(state.sel.anchor, line), anchor: state.sel.anchor };
+      openComposer();
+      return;
+    }
+    drag = { path, side, anchor: line };
+    state.sel = { path, side, start: line, end: line, anchor: line };
+    paintSel();
+  });
+  document.addEventListener('pointerover', (e) => {
+    if (!drag) return;
+    const row = e.target.closest('#diffRoot .dl');
+    if (!row || row.dataset.side !== drag.side) return;
+    const line = Number(row.dataset.line);
+    state.sel = { path: drag.path, side: drag.side, start: Math.min(drag.anchor, line), end: Math.max(drag.anchor, line), anchor: drag.anchor };
+    paintSel();
+  });
+  document.addEventListener('pointerup', () => { if (drag) { drag = null; openComposer(); } });
+  function paintSel() {
+    document.querySelectorAll('#diffRoot .dl').forEach((row) => row.classList.toggle('sel', inSel(state.sel.path, row.dataset.side, Number(row.dataset.line))));
+  }
+  function openComposer() {
+    const s = state.sel;
+    state.composer = { path: s.path, side: s.side, start: s.start, end: s.end, text: state.composer && state.composer.path === s.path ? ($('#cmtInput') || {}).value || '' : '', editing: null };
+    renderContent();
+  }
+  function saveComment() {
+    const w = W(); const f = fileOf(w, state.composer.path);
+    const text = ($('#cmtInput').value || '').trim();
+    if (!text) return;
+    const cm = state.composer;
+    const src = splitLines(cm.side === 'new' ? f.current : f.base);
+    if (cm.editing) { const c = comments.find((x) => x.id === cm.editing); c.body = text; }
+    else comments.push({ id: uid(), ws: w.id, path: f.path, side: cm.side, start: cm.start, end: cm.end, snippet: src.slice(cm.start - 1, cm.end), body: text, state: 'pending', time: 'just now' });
+    state.composer = null; state.sel = null;
+    renderContent(); renderPanel();
+  }
+
+  // ---------- CMT-04 re-anchoring ----------
+  function relocate(c, text) {
+    const ls = splitLines(text); const n = c.snippet.length;
+    const at = (i) => c.snippet.every((s, k) => ls[i + k] === s);
+    if (at(c.start - 1)) return { start: c.start, end: c.end };
+    let best = -1; let bestD = Infinity;
+    for (let i = 0; i + n <= ls.length; i++) if (at(i)) { const dd = Math.abs(i - (c.start - 1)); if (dd < bestD) { bestD = dd; best = i; } }
+    return best >= 0 ? { start: best + 1, end: best + n } : null;
+  }
+  function reanchor(w, f) {
+    comments.filter((c) => c.ws === w.id && c.path === f.path && c.side === 'new' && c.state !== 'outdated').forEach((c) => {
+      const r = relocate(c, f.current);
+      if (r) { c.start = r.start; c.end = r.end; } else c.state = 'outdated';
+    });
+  }
+
+  // ---------- EDIT ----------
+  function changeMarks(base, text) {
+    const ops = diffOps(splitLines(base), splitLines(text));
+    const marks = {}; let dels = 0;
+    ops.forEach((op) => {
+      if (op.t === 'del') { dels++; return; }
+      if (op.t === 'add') { marks[op.n] = dels > 0 ? 'mod' : 'add'; if (dels > 0) dels--; return; }
+      if (dels > 0) { marks[op.n] = (marks[op.n] || '') + ' delmark'; dels = 0; }
+    });
+    return marks;
+  }
+  function renderEditor(w, f) {
+    const k = key(w, f.path);
+    if (state.buffers[k] === undefined) { state.buffers[k] = f.current; state.loaded[k] = f.current; }
+    $('#dvBody').outerHTML = `<div class="editor" id="editor"><div class="ed-inner"><div class="ed-gutter" id="edGutter" data-req="EDIT-04"></div><div class="ed-code"><div class="ed-cur" id="edCur"></div><pre class="ed-hl" id="edHl" aria-hidden="true"></pre><textarea class="ed-input" id="edInput" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off" aria-label="Edit ${esc(baseName(f.path))}"></textarea></div></div></div>`;
+    const input = $('#edInput');
+    input.value = state.buffers[k];
+    paintEditor(w, f);
+    input.addEventListener('input', () => { state.buffers[k] = input.value; paintEditor(w, f); refreshDirtyChrome(w, f); });
+    ['keyup', 'click', 'select'].forEach((ev) => input.addEventListener(ev, () => paintCaretLine(input)));
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Tab') { e.preventDefault(); const s = input.selectionStart; input.setRangeText('  ', s, input.selectionEnd, 'end'); input.dispatchEvent(new Event('input')); }
+      if (e.metaKey && e.key.toLowerCase() === 's') { e.preventDefault(); save(); }
+      if (e.metaKey && e.key.toLowerCase() === 'l') { e.preventDefault(); toast('Go to line: a small field over the editor (⌘L).'); }
+    });
+    input.focus();
+  }
+  function paintEditor(w, f) {
+    const k = key(w, f.path);
+    const text = state.buffers[k];
+    const ls = text.replace(/\n$/, '').split('\n');
+    $('#edHl').innerHTML = ls.map((l) => hl(l, f.path)).join('\n') + '\n';
+    const marks = changeMarks(f.base, text);
+    $('#edGutter').innerHTML = ls.map((_, i) => { const m = marks[i + 1] || ''; const bar = m.includes('add') ? '<span class="bar add"></span>' : m.includes('mod') ? '<span class="bar mod"></span>' : ''; return `<div class="gl" data-n="${i + 1}">${bar}${m.includes('delmark') ? '<span class="delmark"></span>' : ''}${i + 1}</div>`; }).join('');
+    paintCaretLine($('#edInput'));
+  }
+  function paintCaretLine(input) {
+    const idx = input.value.slice(0, input.selectionStart).split('\n').length - 1;
+    $('#edCur').style.top = `${8 + idx * 20}px`;
+    document.querySelectorAll('#edGutter .gl').forEach((g, i) => g.classList.toggle('cur', i === idx));
+  }
+  function refreshDirtyChrome(w, f) {
+    const head = document.querySelector('.dv-head');
+    if (!head) return;
+    const dirty = isDirty(w, f.path);
+    const has = head.querySelector('[data-action="save"]');
+    if (dirty && !has) head.querySelector('.seg').insertAdjacentHTML('beforebegin', '<span class="dv-edited">Edited</span><button class="fill-btn" data-action="save" title="Save (⌘S)">Save</button>');
+    if (!dirty && has) { has.remove(); const e = head.querySelector('.dv-edited'); if (e) e.remove(); }
+    renderTabs();
+  }
+  function save() {
+    const w = W(); if (w.active.kind !== 'diff') return;
+    const f = fileOf(w, w.active.path); const k = key(w, f.path);
+    if (state.buffers[k] === undefined) return;
+    if (f.current !== state.loaded[k] && !state.keepMine[k]) { state.conflict[k] = true; renderContent(); return; }
+    f.current = state.buffers[k]; state.loaded[k] = f.current; state.keepMine[k] = false; state.conflict[k] = false;
+    reanchor(w, f);
+    toast(`Saved ${baseName(f.path)}`);
+    renderAll();
+  }
+  // A change on disk (the agent, a terminal, git): EDIT-03.
+  function externalChange(w, f, text) {
+    const k = key(w, f.path);
+    f.current = text;
+    if (state.buffers[k] !== undefined) {
+      if (state.buffers[k] === state.loaded[k]) { state.buffers[k] = text; state.loaded[k] = text; state.reloadedAt[k] = Date.now(); setTimeout(() => { if (W() === w) renderContent(); }, 2100); }
+      else state.conflict[k] = true;
+    }
+    reanchor(w, f);
+    const editing = W() === w && w.active.kind === 'diff' && w.active.path === f.path && state.mode[k] === 'edit';
+    if (editing && !state.conflict[k] && state.buffers[k] === text) { const input = $('#edInput'); const pos = input.selectionStart; input.value = text; input.setSelectionRange(pos, pos); paintEditor(w, f); renderFileHeaderOnly(); }
+    else if (W() === w) renderContent();
+    renderSidebar(); renderPanel(); renderTopbar(); renderTabs();
+  }
+  function renderFileHeaderOnly() { const w = W(); const f = fileOf(w, w.active.path); const k = key(w, f.path); const head = document.querySelector('.dv-head'); if (head && state.reloadedAt[k] && !head.querySelector('.dv-edited')) head.querySelector('.seg').insertAdjacentHTML('beforebegin', '<span class="dv-edited">Reloaded</span>'); setTimeout(() => { const e = document.querySelector('.dv-head .dv-edited'); if (e && e.textContent === 'Reloaded') e.remove(); }, 2000); }
+
+  // ---------- CHG panel ----------
+  function fileRow(w, f) {
+    const sel = w.active.kind === 'diff' && w.active.path === f.path;
+    const n = comments.filter((c) => c.ws === w.id && c.path === f.path).length;
+    return `<div class="frow${sel ? ' selected' : ''}"><button class="frow-main" data-action="open-diff" data-path="${esc(f.path)}" title="${esc(f.path)}"><span class="status-letter st-${f.status}">${f.status}</span><span class="fname">${esc(baseName(f.path))}</span><span class="fdir"><bdi>${esc(dirName(f.path))}</bdi></span><span class="frow-trail">${n ? `<span class="ccount">${I.bubble}${n}</span>` : ''}${statHTML(statOf(f))}</span></button>` +
+      `<span class="frow-actions">${f.status !== 'D' ? `<button class="icon-btn sm" data-action="edit-file" data-path="${esc(f.path)}" aria-label="Edit" title="Edit">${I.pencil}</button>` : ''}${!f.committed ? `<button class="icon-btn sm" data-action="discard" data-path="${esc(f.path)}" aria-label="Discard changes" title="Discard changes…">${I.discard}</button>` : ''}</span></div>`;
+  }
+  // M2.7's header, simplified: its HDR-02 decides the real states.
+  function hdrOf(w) {
+    const pr = w.pr;
+    if (pr && pr.state === 'merged') return { group: 'merged', label: 'Merged', btn: ['Archive', 'archive'] };
+    if (w.turn) return { group: 'loading', label: 'Working…', spin: true };
+    if (!pr) return w.files.length ? { group: 'no_pr', label: '', btn: ['Create PR', ''] } : { group: 'no_pr', label: 'No changes yet' };
+    if (w.files.some((f) => !f.committed)) return { group: 'out_of_sync', label: 'Uncommitted changes', btn: ['Commit and push', ''] };
+    const c = checksSummary(pr);
+    if (c.failure) return { group: 'out_of_sync', label: `${c.failure} / ${pr.checks.length} checks failed${c.running ? `, ${c.running} pending` : ''}`, btn: ['Fix errors', ''] };
+    if (c.running || c.queued) return { group: 'queued', label: `${c.running + c.queued} checks pending…`, spin: true };
+    return { group: 'in_sync', label: 'Ready to merge', btn: ['Merge', 'merge'] };
+  }
+  function renderPanel() {
+    const w = W();
+    const h = hdrOf(w);
+    const tab = state.tab[w.id] || 'changes';
+    const hdr = `<div class="hdr ${h.group}" title="M2.7's header (HDR-01), simplified">${w.pr ? `<span class="pill">#${w.pr.number}</span>` : ''}<span class="hdr-label">${h.spin ? spinner(13) : ''}<span>${esc(h.label)}</span></span>${h.btn ? `<button class="hbtn ${h.btn[1]}" data-action="hdr-action" ${w.turn ? 'disabled' : ''}>${h.btn[0]}</button>` : ''}</div>`;
+    const n = w.files.length;
+    const tabs = `<div class="ptabs"><button class="ptab" disabled data-scope="out" title="The worktree's file tree: not planned yet">All files</button><button class="ptab${tab === 'changes' ? ' sel' : ''}" data-action="ptab" data-tab="changes" data-req="CHG-01">Changes${n ? ` <span class="n">${n}</span>` : ''}</button><button class="ptab${tab === 'checks' ? ' sel' : ''}" data-action="ptab" data-tab="checks" title="M2.7's Checks tab">Checks</button></div>`;
+    if (tab === 'checks') {
+      $('#changes').innerHTML = hdr + tabs + '<div class="m27">M2.7\'s Checks tab: the pull request\'s title and body, Git status, deployments, checks and comments. See <code>docs/superpowers/design/2026-09-23-m2.7-github.html</code>.</div>';
+      return;
+    }
+    const unc = w.files.filter((f) => !f.committed); const com = w.files.filter((f) => f.committed);
+    let list = '';
+    if (!w.files.length) list = '<div class="chg-empty">No changes yet<p>Changes the agent makes in this workspace show up here.</p></div>';
+    if (unc.length) list += `<div class="chg-sec" data-req="CHG-03">Uncommitted · ${unc.length}<span class="grow"></span><button class="fill-btn" data-action="commit" data-req="GIT-04">Commit…</button></div>` + unc.map((f) => fileRow(w, f)).join('');
+    if (com.length) list += `<div class="chg-sec">Committed · ${com.length}</div>` + com.map((f) => fileRow(w, f)).join('');
+    const pending = comments.filter((c) => c.ws === w.id && c.state === 'pending');
+    const cmtBar = pending.length ? `<div class="chg-foot"><div class="cmt-bar" data-req="CMT-05"><span class="note">${pending.length} comment${pending.length > 1 ? 's' : ''} ready</span><span class="grow"></span><button class="fill-btn primary" data-action="send-comments" ${w.turn ? 'disabled title="The agent is working"' : ''}>Send to agent</button></div></div>` : '';
+    const head = n ? `<div class="chg-head" data-req="CHG-02"><span class="chg-files">${n} file${n > 1 ? 's' : ''}</span>${statHTML(wsStat(w))}<span class="grow"></span><button class="icon-btn sm" data-action="panel-menu" aria-label="More">${I.ellipsis}</button></div>` : '';
+    $('#changes').innerHTML = hdr + tabs + head + `<div class="chg-list">${list}</div>` + cmtBar;
+  }
+
+  // ---------- sheets ----------
+  function renderSheet() {
+    const old = win.querySelector('.scrim'); if (old) old.remove();
+    const s = state.sheet; if (!s) return;
+    const w = W();
+    let inner = '';
+    if (s.kind === 'commit') {
+      const unc = w.files.filter((f) => !f.committed);
+      inner = `<div class="sheet" data-req="GIT-04"><div class="sheet-body"><h3>Commit changes</h3><div class="files">${unc.map((f) => `<div><span class="status-letter st-${f.status}">${f.status}</span>${esc(f.path)}</div>`).join('')}</div>` +
+        `<label>Subject<input type="text" id="cSubject" value="${esc(s.subject)}"></label><span class="counter" id="cCounter"></span>` +
+        `<label>Description (optional)<textarea id="cDesc" rows="3"></textarea></label>${s.running ? `<div class="steps"><div>${spinner(12)}Running git commit…</div></div>` : ''}</div>` +
+        `<div class="sheet-actions"><span class="muted">git add -A, then git commit</span><button class="text-btn" data-action="close-sheet">Cancel</button><button class="fill-btn primary" data-action="do-commit" id="cCommit">Commit</button></div></div>`;
+    }
+    if (s.kind === 'confirm') {
+      inner = `<div class="sheet small"><div class="sheet-body"><h3>${esc(s.title)}</h3><span style="color:var(--text-2)">${esc(s.text)}</span></div><div class="sheet-actions">${s.buttons.map((b) => `<button class="${b.cls}" data-action="sheet-btn" data-i="${b.i}">${esc(b.label)}</button>`).join('')}</div></div>`;
+    }
+    win.insertAdjacentHTML('beforeend', `<div class="scrim" data-action="scrim">${inner}</div>`);
+    const subj = $('#cSubject');
+    if (subj) { const upd = () => { const n = subj.value.length; const c = $('#cCounter'); c.textContent = `${n} / 72`; c.style.color = n > 72 ? 'var(--attention)' : ''; $('#cCommit').disabled = !subj.value.trim(); }; subj.addEventListener('input', upd); upd(); subj.focus(); }
+  }
+  function confirmSheet(title, text, buttons) { state.sheet = { kind: 'confirm', title, text, buttons: buttons.map((b, i) => ({ ...b, i })) }; renderSheet(); }
+
+  // ---------- menus / toast ----------
+  let menuEl = null;
+  function closeMenu() { if (menuEl) { menuEl.remove(); menuEl = null; } }
+  function openMenu(anchor, items) {
+    closeMenu();
+    const m = document.createElement('div'); m.className = 'menu';
+    m.innerHTML = items.map((x, i) => (x === '-' ? '<div class="menu-sep"></div>' : `<button class="menu-item${x.danger ? ' danger' : ''}" data-i="${i}">${x.check !== undefined ? `<span class="m-check">${x.check ? '✓' : ''}</span>` : ''}<span>${esc(x.label)}</span>${x.kbd ? `<span class="m-kbd">${x.kbd}</span>` : ''}</button>`)).join('');
+    win.appendChild(m);
+    const box = win.getBoundingClientRect(); const r = anchor.getBoundingClientRect();
+    let top = r.bottom - box.top + 4; if (top + m.offsetHeight > box.height - 6) top = r.top - box.top - m.offsetHeight - 4;
+    m.style.left = `${Math.max(6, Math.min(r.right - box.left - m.offsetWidth, box.width - m.offsetWidth - 6))}px`; m.style.top = `${top}px`;
+    m.addEventListener('click', (e) => { const b = e.target.closest('.menu-item'); if (!b) return; const x = items[Number(b.dataset.i)]; closeMenu(); if (x.run) x.run(); });
+    menuEl = m;
+  }
+  document.addEventListener('mousedown', (e) => { if (menuEl && !menuEl.contains(e.target)) closeMenu(); });
+  let toastTimer = null;
+  function toast(msg) { let t = win.querySelector('.toast'); if (!t) { t = document.createElement('div'); t.className = 'toast'; win.appendChild(t); } t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2200); }
+
+  // ---------- actions ----------
+  function renderAll() { renderSidebar(); renderTopbar(); renderTabs(); renderContent(); renderPanel(); renderSheet(); }
+  function openDiff(path, mode) {
+    const w = W();
+    if (!w.tabs.includes(path)) w.tabs.push(path);
+    w.active = { kind: 'diff', path };
+    if (mode) state.mode[key(w, path)] = mode;
+    state.sel = null; state.composer = null;
+    renderTabs(); renderContent(); renderPanel();
+  }
+  function closeDiff(path) {
+    const w = W();
+    const doClose = () => { w.tabs = w.tabs.filter((p) => p !== path); const k = key(w, path); delete state.buffers[k]; delete state.loaded[k]; if (w.active.kind === 'diff' && w.active.path === path) w.active = w.tabs.length ? { kind: 'diff', path: w.tabs[w.tabs.length - 1] } : { kind: 'conv', id: w.convs[0].id }; state.sheet = null; renderAll(); };
+    if (isDirty(w, path)) {
+      confirmSheet(`Save changes to ${baseName(path)}?`, 'Your edits are lost if you don\'t save them.', [
+        { label: 'Don\'t Save', cls: 'text-btn', run: doClose }, { label: 'Cancel', cls: 'text-btn', run: () => { state.sheet = null; renderSheet(); } },
+        { label: 'Save', cls: 'fill-btn primary', run: () => { state.sheet = null; w.active = { kind: 'diff', path }; save(); doClose(); } },
+      ]);
+    } else doClose();
+  }
+  function discard(path) {
+    const w = W(); const f = fileOf(w, path);
+    confirmSheet(`Discard changes to ${baseName(path)}?`, f.status === 'A' ? 'The file moves to the Trash. This cannot be undone from Rocky.' : 'Its uncommitted changes are lost. This cannot be undone.', [
+      { label: 'Cancel', cls: 'text-btn', run: () => { state.sheet = null; renderSheet(); } },
+      { label: 'Discard', cls: 'fill-btn confirm', run: () => { w.files = w.files.filter((x) => x !== f); w.tabs = w.tabs.filter((p) => p !== path); if (w.active.kind === 'diff' && w.active.path === path) w.active = { kind: 'conv', id: w.convs[0].id }; state.sheet = null; toast(`Discarded ${baseName(path)}`); renderAll(); } },
+    ]);
+  }
+  async function sendComments() {
+    const w = W();
+    const pending = comments.filter((c) => c.ws === w.id && c.state === 'pending');
+    if (!pending.length || w.turn) return;
+    let text = `Review comments on ${w.branch}:\n`;
+    pending.forEach((c, i) => {
+      const lines = c.start === c.end ? `line ${c.start}` : `lines ${c.start}–${c.end}`;
+      text += `\n${i + 1}. ${c.path}, ${lines}${c.side === 'old' ? ' (removed)' : ''}\n\`\`\`ts\n${c.snippet.join('\n')}\n\`\`\`\n${c.body}\n`;
+      c.state = 'sent';
+    });
+    text += '\nAddress each comment and say what you changed for each number.';
+    const conv = w.convs[0];
+    conv.items.push(it('user', text));
+    w.active = { kind: 'conv', id: conv.id };
+    w.turn = Date.now();
+    renderAll();
+    await wait(1500);
+    const tool = it('tool', '', { icon: 'edit', label: 'Edit', file: 'src/openapi.ts', live: true });
+    conv.items.push(tool); if (W() === w && w.active.kind === 'conv') renderContent();
+    await wait(1800);
+    const f = fileOf(w, 'src/openapi.ts');
+    if (f) externalChange(w, f, f.current === OPENAPI_AGENT ? OPENAPI_V1 : OPENAPI_AGENT);
+    tool.live = false;
+    conv.items.push(it('agent', '1. `operation()` now uses `uniqueId(route)` for operationId, and adds a summary. Nothing else changed.'));
+    conv.items.push(it('footer', '', { agent: 'claude', duration: `${Math.floor((Date.now() - w.turn) / 1000)}s`, time: clock() }));
+    w.turn = null;
+    renderAll();
+  }
+  async function doCommit() {
+    const w = W();
+    state.sheet.running = true; state.sheet.subject = $('#cSubject').value; renderSheet();
+    await wait(900);
+    w.files.forEach((f) => { f.committed = true; });
+    state.sheet = null;
+    toast('Committed');
+    renderAll();
+  }
+  win.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-action]');
+    if (!b || !win.contains(b)) return;
+    const w = W();
+    const a = b.dataset.action;
+    if (a === 'scrim') { if (e.target === b && state.sheet && !state.sheet.running) { state.sheet = null; renderSheet(); } return; }
+    switch (a) {
+      case 'select': state.selected = b.dataset.ws; wsOf(b.dataset.ws).unread = false; state.sel = null; state.composer = null; renderAll(); break;
+      case 'toggle-panel': state.panelOpen = !state.panelOpen; renderTopbar(); break;
+      case 'ptab': state.tab[w.id] = b.dataset.tab; renderPanel(); break;
+      case 'hdr-action': toast(`M2.7: "${b.textContent}" (its HDR-02 and AGT actions).`); break;
+      case 'conv-tab': w.active = { kind: 'conv', id: b.dataset.conv }; renderTabs(); renderContent(); renderPanel(); break;
+      case 'diff-tab': openDiff(b.dataset.path); break;
+      case 'close-diff': closeDiff(b.dataset.path); break;
+      case 'open-diff': openDiff(b.dataset.path); break;
+      case 'edit-file': openDiff(b.dataset.path, 'edit'); break;
+      case 'badge': if (fileOf(w, b.dataset.path)) openDiff(b.dataset.path, 'diff'); else toast('Opens the file tab, as today.'); break;
+      case 'mode': { const k = key(w, w.active.path); state.mode[k] = b.dataset.mode; state.composer = null; state.sel = null; renderContent(); break; }
+      case 'expand': state.expanded.add(b.dataset.gap); renderContent(); break;
+      case 'cancel-comment': state.composer = null; state.sel = null; renderContent(); break;
+      case 'save-comment': saveComment(); break;
+      case 'edit-comment': { const c = comments.find((x) => x.id === b.dataset.cid); state.composer = { path: c.path, side: c.side, start: c.start, end: c.end, text: c.body, editing: c.id }; renderContent(); break; }
+      case 'delete-comment': { const i = comments.findIndex((x) => x.id === b.dataset.cid); comments.splice(i, 1); renderContent(); renderPanel(); break; }
+      case 'send-comments': sendComments(); break;
+      case 'save': save(); break;
+      case 'reload': { const f = fileOf(w, w.active.path); const k = key(w, f.path); state.buffers[k] = f.current; state.loaded[k] = f.current; state.conflict[k] = false; renderAll(); break; }
+      case 'keep-mine': { const f = fileOf(w, w.active.path); const k = key(w, f.path); state.keepMine[k] = true; state.loaded[k] = f.current; state.conflict[k] = false; renderContent(); toast('Your next save overwrites the file on disk.'); break; }
+      case 'dismiss-banner': state.dismissed[key(w, w.active.path)] = true; renderContent(); break;
+      case 'file-menu': { const path = b.dataset.path; const f = fileOf(w, path); openMenu(b, [{ label: 'Open in Finder', run: () => toast('Demo: reveals the file in Finder.') }, { label: 'Copy Path', run: () => toast('Copied the path') }, ...(!f.committed ? ['-', { label: 'Discard Changes…', danger: true, run: () => discard(path) }] : [])]); break; }
+      case 'panel-menu': openMenu(b, [{ label: 'Refresh', run: () => toast('Demo: recomputes the diff (GIT-01).') }, '-', { label: 'Discard All Uncommitted Changes…', danger: true, run: () => toast('Demo: asks, then discards every uncommitted file (GIT-05).') }]); break;
+      case 'discard': discard(b.dataset.path); break;
+      case 'commit': state.sheet = { kind: 'commit', subject: w.title || '' }; renderSheet(); break;
+      case 'do-commit': doCommit(); break;
+      case 'close-sheet': state.sheet = null; renderSheet(); break;
+      case 'sheet-btn': { const btn = state.sheet.buttons[Number(b.dataset.i)]; btn.run(); break; }
+      default: break;
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    const cmt = $('#cmtInput');
+    if (cmt && document.activeElement === cmt && e.metaKey && e.key === 'Enter') { e.preventDefault(); saveComment(); return; }
+    if (e.key === 'Escape') {
+      if (menuEl) { closeMenu(); return; }
+      if (state.sheet && !state.sheet.running) { state.sheet = null; renderSheet(); return; }
+      if (state.composer) { const t = cmt ? cmt.value.trim() : ''; if (!t || window.confirm('Discard this comment?')) { state.composer = null; state.sel = null; renderContent(); } return; }
+      if (state.sel) { state.sel = null; renderContent(); }
+    }
+    if (e.metaKey && e.shiftKey && e.key.toLowerCase() === 'c') {
+      e.preventDefault();
+      const w = W(); const onChanges = (state.tab[w.id] || 'changes') === 'changes';
+      if (state.panelOpen && onChanges) state.panelOpen = false; else { state.panelOpen = true; state.tab[w.id] = 'changes'; }
+      renderTopbar(); renderPanel();
+    }
+    if (e.metaKey && e.shiftKey && e.key.toLowerCase() === 'g') { e.preventDefault(); state.panelOpen = !state.panelOpen; renderTopbar(); }
+    if (e.metaKey && e.key === 'Enter' && state.sheet && state.sheet.kind === 'commit') { e.preventDefault(); doCommit(); }
+    if (e.metaKey && e.altKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      e.preventDefault();
+      const w = W(); const order = [...w.files.filter((f) => !f.committed), ...w.files.filter((f) => f.committed)].map((f) => f.path);
+      if (!order.length) return;
+      const cur = w.active.kind === 'diff' ? order.indexOf(w.active.path) : -1;
+      openDiff(order[(cur + (e.key === 'ArrowDown' ? 1 : -1) + order.length) % order.length]);
+    }
+  });
+
+  // panel resize (M2.7 PNL-01)
+  const line = $('#pnlLine');
+  line.addEventListener('pointerdown', (e) => {
+    e.preventDefault(); line.setPointerCapture(e.pointerId);
+    const x0 = e.clientX; const w0 = parseFloat(getComputedStyle(win).getPropertyValue('--pnl-w'));
+    const move = (ev) => win.style.setProperty('--pnl-w', `${Math.min(480, Math.max(280, w0 - (ev.clientX - x0)))}px`);
+    const up = () => { line.removeEventListener('pointermove', move); line.removeEventListener('pointerup', up); };
+    line.addEventListener('pointermove', move); line.addEventListener('pointerup', up);
+  });
+
+  // demo controls
+  $('#demoAgentEdit').addEventListener('click', () => { const w = wsOf('w1'); const f = fileOf(w, 'src/openapi.ts'); if (!f) { toast('openapi.ts was discarded; reload the page.'); return; } externalChange(w, f, f.current === OPENAPI_AGENT ? OPENAPI_V1 : OPENAPI_AGENT); toast('The agent changed src/openapi.ts on disk.'); });
+  $('#demoWorking').addEventListener('click', (e) => { const w = W(); w.turn = w.turn ? null : Date.now(); e.currentTarget.setAttribute('aria-pressed', String(Boolean(w.turn))); renderAll(); });
+  $('#demoPins').addEventListener('click', (e) => { e.currentTarget.setAttribute('aria-pressed', String(document.body.classList.toggle('spec-on'))); });
+  document.addEventListener('click', (e) => {
+    if (!document.body.classList.contains('spec-on')) return;
+    const el = e.target.closest('[data-req]'); if (!el || !win.contains(el)) return;
+    const s = document.getElementById('REQ-' + el.dataset.req); if (!s) return;
+    s.scrollIntoView({ behavior: 'smooth', block: 'start' }); s.classList.add('flash'); setTimeout(() => s.classList.remove('flash'), 1400);
+  }, true);
+  setInterval(() => { const el = $('#working .elapsed'); const w = W(); if (el && w.turn) el.textContent = `${Math.floor((Date.now() - w.turn) / 1000)}s`; }, 1000);
+
+  // Start on the openapi.ts diff so the review is the first thing on screen.
+  openDiff('src/openapi.ts');
+  renderAll();
+})();
+</script>
+</body>
+</html>

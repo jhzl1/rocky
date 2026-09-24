@@ -1,0 +1,785 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rocky · Slash commands spec</title>
+<!--
+==========================================================================================================
+HOW TO READ THIS FILE (for the agent that implements it)
+==========================================================================================================
+Visual, behavioral and technical source of truth for
+  docs/superpowers/plans/2026-09-23-m2.6-slash-commands.md
+
+- Left: an interactive mock of the chat with the slash command popup. Right: the requirements, one
+  <section id="REQ-…"> each, grouped: ACP (what the agents send and expect), KIT (RockyKit model and pure logic),
+  CMD (the popup and the message box), and the rest.
+- Every requirement has an id. The same id is on the element of the mock (button "Requirement pins"), in its
+  <section>, and in the plan task. Values are points at 100 % zoom (Font.rocky / Zoom.shared, as in M2.5).
+- The ACP facts come from the adapters Rocky installs, read on 2026-09-23:
+    ~/Library/Application Support/Rocky/agents/node_modules/@agentclientprotocol/claude-agent-acp 0.81.0
+      (dist/acp-agent.js: getAvailableSlashCommands, sendAvailableCommandsUpdate, commands_changed,
+       LOCAL_ONLY_COMMANDS, the /mcp: rewrite)
+    ~/Library/Application Support/Rocky/agents/node_modules/@agentclientprotocol/sdk 1.5.0
+      (dist/schema/types.gen.d.ts: AvailableCommand, AvailableCommandInput, AvailableCommandsUpdate)
+    ~/Library/Application Support/Rocky/agents/node_modules/opencode-ai/bin/opencode.exe 1.18.32 (embedded JS)
+  Command names and descriptions in the mock are illustrative; the shapes are exact.
+- When the mock and a requirement's text disagree, the text wins.
+==========================================================================================================
+-->
+<style>
+:root {
+  --page: #131519; --bg: #23272E; --sidebar: #1E2127; --panel: #1A1D22; --composer: #2A2F37; --composer-border: rgba(255,255,255,0.10);
+  --hairline: rgba(255,255,255,0.08); --hairline-soft: rgba(255,255,255,0.06);
+  --text: #E6E8EB; --text-2: #A3A9B1; --text-3: #858C95; --sep: #5C636C;
+  --fill-hover: rgba(255,255,255,0.04); --fill-selected: rgba(255,255,255,0.08); --fill-control: rgba(255,255,255,0.05);
+  --fill-icon-hover: rgba(255,255,255,0.06); --fill-button: rgba(255,255,255,0.08);
+  --accent: #78BDF5; --attention: #E8A94B; --danger: #F0876A; --success: #7CC08A;
+  --titlebar: 38px; --row: 28px; --r-row: 7px; --r-btn: 6px;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --dur-fast: 120ms; --dur-base: 150ms; --dur-enter: 220ms; --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--page); color: var(--text); font: 13px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; -webkit-font-smoothing: antialiased; display: grid; grid-template-columns: minmax(0, 1fr) 500px; overflow: hidden; }
+[hidden] { display: none !important; }
+button { font: inherit; color: inherit; background: none; border: 0; margin: 0; padding: 0; text-align: left; cursor: pointer; }
+input, textarea { font: inherit; color: inherit; }
+svg { display: block; flex-shrink: 0; }
+code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 4px; }
+.grow { flex-grow: 1; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.stage { overflow: auto; padding: 20px 24px 48px; }
+.doc-title { width: 1100px; margin: 0 0 4px; font-size: 18px; font-weight: 600; }
+.doc-sub { width: 1100px; margin: 0 0 14px; color: var(--text-2); font-size: 12.5px; line-height: 1.5; }
+.demo { width: 1100px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
+.demo-label { font-size: 10.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.07em; margin-right: 4px; }
+.demo button { height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.14); color: var(--text-2); font-size: 12px; }
+.demo button:hover { color: var(--text); border-color: rgba(255,255,255,0.3); }
+.demo button[aria-pressed="true"] { background: rgba(120,189,245,0.14); border-color: rgba(120,189,245,0.55); color: var(--text); }
+
+/* window (M2.5 shell, simplified) */
+.window { position: relative; width: 1100px; height: 740px; display: flex; background: var(--bg); border-radius: 10px; overflow: hidden; box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 24px 60px rgba(0,0,0,0.45); }
+.sidebar { width: 230px; flex-shrink: 0; display: flex; flex-direction: column; background: var(--sidebar); border-right: 1px solid var(--hairline); }
+.sb-top { height: var(--titlebar); display: flex; align-items: center; gap: 8px; padding: 0 16px; }
+.lights { display: inline-flex; gap: 8px; } .light { width: 12px; height: 12px; border-radius: 50%; }
+.light.close { background: #FF5F57; } .light.min { background: #FEBC2E; } .light.zoom { background: #28C840; }
+.sb-list { padding: 8px; display: flex; flex-direction: column; gap: 2px; }
+.repo { height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 8px; font-weight: 600; }
+.monogram { width: 16px; height: 16px; border-radius: 4px; background: #4C7BD9; color: #fff; font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.row { height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 24px; border-radius: var(--r-row); color: var(--text); }
+.row.selected { background: var(--fill-selected); }
+.row .t { flex-grow: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.c-muted { color: var(--text-3); display: flex; }
+.main { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; }
+.topbar { height: var(--titlebar); flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 0 16px; color: var(--text-2); }
+.topbar .br { font: 12px var(--mono); color: var(--text); }
+.tabs { height: 34px; flex-shrink: 0; display: flex; align-items: stretch; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--hairline); }
+.tab-wrap { position: relative; display: flex; align-items: center; }
+.tab-wrap.selected::before { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--text); }
+.tab { height: 100%; max-width: 240px; display: flex; align-items: center; gap: 7px; padding: 0 12px 0 10px; font-size: 12.5px; color: var(--text-2); transition: color var(--dur-fast); }
+.tab-wrap:hover .tab, .tab-wrap.selected .tab { color: var(--text); }
+.t-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.agent { width: 14px; height: 14px; border-radius: 4px; font-size: 9px; font-weight: 700; display: flex; align-items: center; justify-content: center; color: #1E2127; flex-shrink: 0; }
+.agent.sm { width: 12px; height: 12px; font-size: 8px; border-radius: 3px; }
+.agent.claude { background: #D97757; } .agent.opencode { background: #9BA1A9; }
+
+.chat-area { flex-grow: 1; min-height: 0; display: flex; flex-direction: column; }
+.chat { flex-grow: 1; min-height: 0; overflow-y: auto; padding: 20px 24px 12px; display: flex; flex-direction: column; align-items: center; }
+.col { width: 100%; max-width: 760px; display: flex; flex-direction: column; gap: 14px; font-size: 14px; }
+.msg-user { align-self: flex-end; max-width: 520px; padding: 10px 14px; border-radius: 12px; background: rgba(255,255,255,0.06); line-height: 1.5; white-space: pre-wrap; }
+/* M2.5's queued message, simplified */
+.msg-queued { align-self: flex-end; max-width: 520px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.msg-queued .q-body { padding: 10px 14px; border-radius: 12px; border: 1px dashed rgba(255,255,255,0.18); background: rgba(255,255,255,0.03); color: var(--text-2); line-height: 1.5; white-space: pre-wrap; }
+.msg-queued .q-cap { font-size: 11px; color: var(--text-3); }
+.cmd-chip { display: inline-flex; align-items: center; height: 22px; padding: 0 7px; margin-right: 4px; border-radius: 6px; background: rgba(120,189,245,0.14); color: #B7D9F7; font: 12.5px var(--mono); vertical-align: 1px; }
+.msg-agent { line-height: 1.6; color: #D5D8DC; white-space: pre-wrap; }
+.msg-agent code, .msg-user code { font-size: 12.5px; }
+.tool { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
+.tool-icon { width: 18px; display: flex; justify-content: center; color: var(--text-2); }
+.badge { font: 11.5px var(--mono); color: var(--text-2); background: rgba(255,255,255,0.05); padding: 2px 6px; border-radius: 5px; }
+.working { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
+.elapsed { font: 12px var(--mono); color: var(--text-3); }
+.turn-footer { display: flex; align-items: center; gap: 8px; font-size: 10.5px; color: var(--text-2); }
+.chat-empty { margin-top: 70px; text-align: center; color: var(--text-3); font-size: 13px; }
+.enter { animation: enter var(--dur-enter) var(--ease-out) both; }
+@keyframes enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes pop { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.spinner { animation: spin 0.9s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
+.shimmer { color: transparent; background: linear-gradient(90deg, var(--text-2) 0%, var(--text-2) 30%, var(--text) 50%, var(--text-2) 70%, var(--text-2) 100%); background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; animation: shimmer 2.1s linear infinite; }
+@keyframes shimmer { 0% { background-position: 100% 0; } 76% { background-position: 0% 0; } 100% { background-position: 0% 0; } }
+
+/* composer (as today) + CMD */
+.composer-wrap { position: relative; flex-shrink: 0; display: flex; justify-content: center; padding: 8px 24px 16px; }
+.composer-col { position: relative; width: 100%; max-width: 712px; }
+.composer { border-radius: 12px; background: var(--composer); border: 1px solid var(--composer-border); padding: 14px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.35); }
+.editor { position: relative; }
+.editor textarea, .editor .ghost { width: 100%; min-height: 44px; margin: 0; padding: 0; border: 0; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; white-space: pre-wrap; word-wrap: break-word; letter-spacing: normal; }
+.editor textarea { position: relative; z-index: 1; display: block; resize: none; background: transparent; outline: none; color: var(--text); caret-color: var(--text); }
+.editor textarea::placeholder { color: var(--text-3); }
+.editor .ghost { position: absolute; inset: 0; color: transparent; pointer-events: none; }
+.editor .ghost .hint { color: var(--text-3); }
+.composer-bar { display: flex; align-items: center; gap: 8px; }
+.model-btn { height: 26px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border-radius: 6px; font-size: 12px; color: var(--text-2); }
+.icon-btn { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r-btn); color: var(--text-2); transition: background var(--dur-fast), color var(--dur-fast); }
+.icon-btn:hover { background: var(--fill-icon-hover); color: var(--text); }
+.c-btn { width: 28px; height: 28px; border-radius: 7px; display: flex; align-items: center; justify-content: center; background: #FFFFFF; color: #000000; }
+.c-btn:disabled { background: rgba(255,255,255,0.1); color: var(--text-2); cursor: default; }
+
+.popup { position: absolute; left: 0; right: 0; bottom: calc(100% + 8px); z-index: 20; border-radius: 10px; background: var(--panel); box-shadow: 0 0 0 1px rgba(255,255,255,0.09), 0 14px 36px rgba(0,0,0,0.5); overflow: hidden; animation: pop 120ms var(--ease-out); }
+.pop-list { max-height: 264px; overflow-y: auto; padding: 4px; }
+.cmd { width: 100%; height: 32px; display: flex; align-items: center; gap: 10px; padding: 0 10px; border-radius: 6px; }
+.cmd.sel { background: var(--fill-selected); }
+.cmd-name { font: 13px var(--mono); color: var(--text); white-space: nowrap; flex-shrink: 0; }
+.cmd-name .m { color: var(--accent); }
+.cmd-hint { font: 12px var(--mono); color: var(--text-3); white-space: nowrap; flex-shrink: 0; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+.cmd-desc { flex-grow: 1; min-width: 0; font-size: 12.5px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; }
+.mcp { height: 16px; display: inline-flex; align-items: center; padding: 0 5px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.16); font: 600 9.5px -apple-system, sans-serif; color: var(--text-2); flex-shrink: 0; letter-spacing: 0.04em; }
+.pop-state { height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 14px; color: var(--text-2); font-size: 12.5px; }
+.pop-foot { height: 28px; display: flex; align-items: center; gap: 12px; padding: 0 12px; border-top: 1px solid var(--hairline); font-size: 11px; color: var(--text-3); }
+.pop-foot kbd { font: 11px -apple-system, sans-serif; color: var(--text-2); }
+.menu { position: absolute; z-index: 30; min-width: 220px; padding: 5px; border-radius: 9px; background: var(--panel); box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 10px 30px rgba(0,0,0,0.5); animation: pop 120ms var(--ease-out); }
+.menu-item { width: 100%; height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-radius: 6px; font-size: 13px; }
+.menu-item:hover { background: rgba(255,255,255,0.07); }
+.menu-item .k { margin-left: auto; padding-left: 16px; font-size: 11.5px; color: var(--text-3); }
+.toast { position: absolute; left: 50%; top: 52px; z-index: 60; transform: translateX(-50%); padding: 8px 12px; border-radius: 8px; background: var(--panel); box-shadow: 0 0 0 1px rgba(255,255,255,0.1), 0 8px 24px rgba(0,0,0,0.45); font-size: 12px; color: var(--text-2); opacity: 0; pointer-events: none; transition: opacity var(--dur-base); white-space: nowrap; }
+.toast.show { opacity: 1; }
+
+.spec-on .window [data-req] { outline: 1px dashed rgba(120,189,245,0.6); outline-offset: -1px; position: relative; }
+.spec-on .window [data-req]::after { content: attr(data-req); position: absolute; top: 1px; right: 1px; z-index: 40; padding: 2px 4px; border-radius: 3px; background: var(--accent); color: #0E1116; font: 600 9px/1 var(--mono); pointer-events: none; }
+.spec-on .window .popup[data-req] { position: absolute; }
+
+/* spec */
+.spec { overflow-y: auto; overflow-x: hidden; background: #16181C; border-left: 1px solid var(--hairline); padding: 22px 24px 80px; font-size: 12.5px; line-height: 1.55; color: var(--text-2); }
+.spec h1 { margin: 0 0 6px; font-size: 16px; color: var(--text); }
+.spec h2 { margin: 30px 0 8px; font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); }
+.spec p { margin: 6px 0; } .spec strong { color: var(--text); font-weight: 600; } .spec code { overflow-wrap: anywhere; }
+.spec pre { margin: 6px 0; padding: 8px 10px; border-radius: 6px; background: rgba(0,0,0,0.28); font: 11px/1.55 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+.spec pre .c { color: var(--text-3); }
+.req { margin: 0 -12px 6px; padding: 12px 12px 10px; border: 1px solid transparent; border-radius: 8px; transition: background 0.3s, border-color 0.3s; scroll-margin-top: 12px; }
+.req.flash { background: rgba(120,189,245,0.08); border-color: rgba(120,189,245,0.4); }
+.req > header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.req .id { font: 600 10.5px var(--mono); color: var(--accent); background: none; padding: 0; }
+.req h3 { flex-grow: 1; margin: 0; font-size: 13px; font-weight: 600; color: var(--text); }
+.scope { font-size: 10px; padding: 1px 6px; border-radius: 4px; border: 1px solid; white-space: nowrap; }
+.scope.in { color: var(--success); border-color: rgba(124,192,138,0.4); } .scope.out { color: var(--attention); border-color: rgba(232,169,75,0.5); }
+.scope.tech { color: var(--accent); border-color: rgba(120,189,245,0.45); }
+.req dl { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 5px 10px; margin: 8px 0 0; }
+.req dt { padding-top: 1px; font-size: 11px; color: var(--text-3); } .req dd { margin: 0; }
+.req ul, .req ol { margin: 2px 0 0; padding-left: 18px; } .req li { margin: 2px 0; }
+.spec table { width: 100%; border-collapse: collapse; margin: 6px 0; font-size: 11.5px; }
+.spec th { text-align: left; font-weight: 600; color: var(--text-3); padding: 4px 6px 4px 0; border-bottom: 1px solid var(--hairline); }
+.spec td { padding: 4px 6px 4px 0; border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: top; }
+.seq { margin: 8px 0; border-radius: 8px; background: rgba(0,0,0,0.22); }
+.seq text { font: 10.5px -apple-system, sans-serif; fill: #A3A9B1; }
+.seq .lane { font-weight: 600; fill: #E6E8EB; }
+.seq .code { font: 10px ui-monospace, "SF Mono", Menlo, monospace; fill: #B7D9F7; }
+.seq .note { fill: #858C95; font-style: italic; }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <h1 class="doc-title">Rocky · Slash commands (M2.6)</h1>
+  <p class="doc-sub">Type <strong>/</strong> at the start of the message box: the popup lists the commands the conversation's agent announced over ACP. Arrow keys, Return, Tab, Esc; the mouse works too. Switch to the OpenCode tab for a different list. Everything on the right explains what goes over the wire and where it lands in our code.</p>
+  <div class="demo" aria-label="Demo controls">
+    <span class="demo-label">Demo controls, not part of Rocky</span>
+    <button type="button" id="demoStarting">Agent still starting</button>
+    <button type="button" id="demoSkills">Skills discovered mid-session</button>
+    <button type="button" id="demoPins" aria-pressed="false">Requirement pins</button>
+  </div>
+
+  <div class="window" id="win">
+    <nav class="sidebar">
+      <div class="sb-top"><span class="lights"><span class="light close"></span><span class="light min"></span><span class="light zoom"></span></span></div>
+      <div class="sb-list">
+        <div class="repo"><span class="monogram">C</span>celes-platform</div>
+        <div class="row selected"><span class="c-muted" data-icon="branch"></span><span class="t" id="rowTitle">OpenAPI export for providers</span></div>
+        <div class="row"><span class="c-muted" data-icon="branch"></span><span class="t">Fix invoice rounding</span></div>
+      </div>
+    </nav>
+    <main class="main">
+      <header class="topbar"><span>celes-platform</span><span style="color:var(--sep)">/</span><span class="br">jhzl/openapi-export</span></header>
+      <div class="tabs" id="tabs"></div>
+      <div class="chat-area">
+        <div class="chat" id="chat"><div class="col" id="chatCol"></div></div>
+        <div class="composer-wrap">
+          <div class="composer-col" id="composerCol">
+            <div class="popup" id="popup" data-req="CMD-01" role="listbox" aria-label="Commands" hidden></div>
+            <div class="composer">
+              <div class="editor">
+                <div class="ghost" id="ghost" aria-hidden="true"></div>
+                <textarea id="input" rows="2" spellcheck="false" aria-label="Message" aria-autocomplete="list" aria-controls="popup" data-req="KIT-02"></textarea>
+              </div>
+              <div class="composer-bar">
+                <button class="model-btn" id="modelBtn"></button>
+                <span class="grow"></span>
+                <button class="icon-btn" id="plusBtn" aria-label="Add" title="Add attachment, plan mode, commands" data-icon="plus" data-req="CMD-07"></button>
+                <button class="c-btn" id="sendBtn" aria-label="Send"></button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<aside class="spec" id="spec">
+  <h1>Requirements</h1>
+  <p>Plan: <code>docs/superpowers/plans/2026-09-23-m2.6-slash-commands.md</code>. Scope: the slash commands the conversation's agent announces over ACP, offered in the message box. Rocky adds no commands of its own.</p>
+  <p>Labels: <span class="scope tech">Technical</span> = protocol and model facts the implementation must follow; <span class="scope in">In scope</span> = behavior and UI.</p>
+
+  <!-- ============================== ACP ============================== -->
+  <h2>What the agents send and expect (ACP)</h2>
+
+  <section class="req" id="REQ-ACP-01">
+    <header><code class="id">ACP-01</code><h3>Receiving the command list</h3><span class="scope tech">Technical</span></header>
+    <p>Agents announce their commands with a <code>session/update</code> notification whose update is <code>available_commands_update</code>. Schema (ACP SDK 1.5.0, <code>AvailableCommandsUpdate</code>):</p>
+<pre>{ "jsonrpc": "2.0", "method": "session/update",
+  "params": { "sessionId": "…",
+    "update": {
+      "sessionUpdate": "available_commands_update",
+      "availableCommands": [
+        { "name": "compact",
+          "description": "Clear conversation history but keep a summary in context",
+          "input": { "hint": "&lt;optional custom summarization instructions&gt;" } },
+        { "name": "security-review", "description": "…", "input": null }
+      ] } } }</pre>
+    <dl>
+      <dt>Fields</dt><dd><code>name</code> (without the slash), <code>description</code> (may be empty), optional <code>input</code>: only <code>{ hint }</code> exists ("unstructured": everything typed after the name is the input). <code>_meta</code> may appear anywhere; ignore it.</dd>
+      <dt>When</dt><dd>
+        <ul>
+          <li>Right after <code>session/new</code>, <code>session/load</code> and <code>session/resume</code>, from a <code>setTimeout</code>: it arrives just after the response, never inside it.</li>
+          <li>Again during the session, whenever the list changes: Claude's <code>commands_changed</code> (skills found as the agent works in a subdirectory), and after its first <code>system/init</code> frame filters terminal-bound commands.</li>
+        </ul>
+      </dd>
+      <dt>Rule</dt><dd>Each update <strong>replaces</strong> the whole list for that session (the adapter's own comment: "The client should REPLACE its cached command list"). Never merge.</dd>
+      <dt>Today</dt><dd><code>ACPProtocol.event(fromUpdate:sessionId:)</code> returns <code>.ignored("available_commands_update")</code> through its <code>default:</code> branch, and M1 pinned that with a test (<code>ACPProtocolTests</code>, "available_commands_update" → <code>.ignored</code>). That test changes with this work.</dd>
+    </dl>
+    <svg class="seq" viewBox="0 0 452 372" width="100%" role="img" aria-label="Sequence of a slash command">
+      <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#858C95"/></marker></defs>
+      <text class="lane" x="16" y="22">Rocky</text><text class="lane" x="170" y="22">ACP adapter</text><text class="lane" x="444" y="22" text-anchor="end">Claude Code / OpenCode</text>
+      <line x1="40" y1="32" x2="40" y2="362" stroke="#3A3F47" stroke-dasharray="3 4"/><line x1="210" y1="32" x2="210" y2="362" stroke="#3A3F47" stroke-dasharray="3 4"/><line x1="390" y1="32" x2="390" y2="362" stroke="#3A3F47" stroke-dasharray="3 4"/>
+      <line x1="40" y1="54" x2="208" y2="54" stroke="#858C95" marker-end="url(#ar)"/><text class="code" x="48" y="49">session/new</text>
+      <line x1="210" y1="80" x2="42" y2="80" stroke="#858C95" marker-end="url(#ar)"/><text class="code" x="48" y="75">result { sessionId }</text>
+      <line x1="210" y1="108" x2="42" y2="108" stroke="#858C95" stroke-dasharray="4 3" marker-end="url(#ar)"/><text class="code" x="48" y="103">available_commands_update</text>
+      <text class="note" x="48" y="122">(setTimeout, just after the result)</text>
+      <rect x="10" y="134" width="190" height="34" rx="5" fill="rgba(120,189,245,0.08)" stroke="rgba(120,189,245,0.3)"/>
+      <text x="18" y="149">user types "/rev": the popup filters</text><text x="18" y="162">locally. No request is sent.</text>
+      <line x1="40" y1="194" x2="208" y2="194" stroke="#858C95" marker-end="url(#ar)"/><text class="code" x="48" y="189">session/prompt [text "/review 212"]</text>
+      <line x1="210" y1="220" x2="388" y2="220" stroke="#858C95" marker-end="url(#ar)"/><text x="218" y="215">runs the command</text>
+      <text class="note" x="218" y="234">SDK query · session.command</text>
+      <line x1="210" y1="258" x2="42" y2="258" stroke="#858C95" stroke-dasharray="4 3" marker-end="url(#ar)"/><text class="code" x="48" y="253">agent_message_chunk, tool_call…</text>
+      <line x1="210" y1="286" x2="42" y2="286" stroke="#858C95" marker-end="url(#ar)"/><text class="code" x="48" y="281">result { stopReason: end_turn }</text>
+      <line x1="210" y1="330" x2="42" y2="330" stroke="#858C95" stroke-dasharray="4 3" marker-end="url(#ar)"/><text class="code" x="48" y="325">available_commands_update</text>
+      <text class="note" x="48" y="344">any time later: replace the list</text>
+      <text x="444" y="362" text-anchor="end" style="font-size:9.5px">solid: request/response · dashed: notification</text>
+    </svg>
+  </section>
+
+  <section class="req" id="REQ-ACP-02">
+    <header><code class="id">ACP-02</code><h3>How each agent differs</h3><span class="scope tech">Technical</span></header>
+    <table>
+      <tr><th></th><th>Claude Code (claude-agent-acp 0.81.0)</th><th>OpenCode 1.18.32</th></tr>
+      <tr><td>Source</td><td><code>query.supportedCommands()</code>: built-in commands, skills, <code>.claude/commands</code>, MCP prompts</td><td>its <code>commands</code> (built-in and custom)</td></tr>
+      <tr><td>Fields</td><td><code>name</code>, <code>description</code>, <code>input.hint</code> from <code>argumentHint</code> (arrays joined with spaces), else <code>null</code></td><td><code>name</code>, <code>description</code> only (no <code>input</code>)</td></tr>
+      <tr><td>Filtered out</td><td>clear, cost, keybindings-help, login, logout, output-style:new, release-notes, todos, and the CLI's terminal-bound commands</td><td>none</td></tr>
+      <tr><td>MCP</td><td>"server:cmd (MCP)" becomes <code>mcp:server:cmd</code>; the adapter turns <code>/mcp:server:cmd args</code> back when it receives the prompt</td><td>n/a</td></tr>
+      <tr><td>Local-only</td><td><code>/context</code>, <code>/heapdump</code>, <code>/extra-usage</code> answer without replaying the user message</td><td>n/a</td></tr>
+      <tr><td>Runs as</td><td>the prompt text goes to the SDK, which runs the slash command</td><td>matches the name and calls <code>session.command({ command, arguments })</code></td></tr>
+      <tr><td>Size</td><td>large: every installed skill is a command (this machine has dozens)</td><td>small</td></tr>
+    </table>
+    <dl><dt>So</dt><dd>Show the hint only when present; insert names exactly as announced (with <code>mcp:</code>); expect lists from a handful to a few hundred.</dd></dl>
+  </section>
+
+  <section class="req" id="REQ-ACP-03">
+    <header><code class="id">ACP-03</code><h3>Running a command</h3><span class="scope tech">Technical</span></header>
+    <p>There is no command request in ACP. A command runs when the prompt's <strong>first content block is text that starts with <code>/name</code></strong>:</p>
+<pre>{ "method": "session/prompt",
+  "params": { "sessionId": "…",
+    "prompt": [ { "type": "text", "text": "/review 212" } ] } }</pre>
+    <dl>
+      <dt>Rules</dt><dd>
+        <ul>
+          <li>Send the message text exactly as typed: no trimming of the leading slash, no prefix, no rewriting of <code>mcp:</code>.</li>
+          <li>Files attached after the command (Rocky's <code>PromptAttachment</code> blocks) follow the text block as today. A file badge placed <em>before</em> the slash makes it an ordinary message (KIT-02).</li>
+          <li>The rest is an ordinary turn: the same <code>session/update</code> stream, the same stop reasons, Stop cancels it (<code>session/cancel</code>).</li>
+          <li>A local-only Claude command may end the turn without echoing the user message; Rocky already shows the user message itself, so nothing changes.</li>
+        </ul>
+      </dd>
+      <dt>Today</dt><dd><code>ACPProtocol.promptParams(sessionId:text:)</code> builds this already; commands need no new request, only this guarantee (test in KIT).</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-ACP-04">
+    <header><code class="id">ACP-04</code><h3>History and replay</h3><span class="scope tech">Technical</span></header>
+    <p>Rocky stores the user message as sent ("/compact"). On <code>session/load</code>, Claude's adapter strips its local-command markers (<code>&lt;command-name&gt;</code>…) from the replay, so Rocky never sees them; no filtering is needed on Rocky's side. The command list is not persisted: it comes again after every <code>session/load</code>.</p>
+  </section>
+
+  <!-- ============================== KIT ============================== -->
+  <h2>RockyKit: model and pure logic</h2>
+
+  <section class="req" id="REQ-KIT-01">
+    <header><code class="id">KIT-01</code><h3>SlashCommand and where the list lives</h3><span class="scope tech">Technical</span></header>
+<pre>public struct SlashCommand: Equatable, Sendable, Identifiable {
+  public var id: String { name }
+  public let name: String          // as announced, e.g. "compact", "mcp:linear:triage"
+  public let description: String
+  public let inputHint: String?    // input.hint
+  public var isMCP: Bool { name.hasPrefix("mcp:") }
+}
+// SessionEvent gains:  case availableCommands([SlashCommand])
+// ChatSessionModel:     public private(set) var commands: [SlashCommand]  // replaced on every event
+//                       public private(set) var commandsReceived: Bool     // false until the first update</pre>
+    <dl>
+      <dt>Per session</dt><dd>Each conversation's <code>ChatSessionModel</code> has its own list (the tab's agent and session). Switching tabs switches lists.</dd>
+      <dt>Cache</dt><dd><code>AppModel.lastCommands[repoId + agent]</code> keeps the last list seen, in memory. A new conversation shows it while its own agent starts, marked as not yet confirmed (CMD-05), and replaces it when its first update arrives.</dd>
+      <dt>Parse</dt><dd>Entries without a string <code>name</code> are dropped; a missing <code>description</code> becomes ""; <code>input</code> null, missing or without <code>hint</code> → nil. Order kept as received.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-KIT-02">
+    <header><code class="id">KIT-02</code><h3>When the popup opens: the trigger</h3><span class="scope tech">Technical</span></header>
+<pre>public enum SlashQuery {
+  /// nil when the popup must stay closed.
+  public static func parse(text: String, caret: Int, firstIsAttachment: Bool) -> String?
+}</pre>
+    <dl>
+      <dt>Opens when</dt><dd>all of: the text's first character is "/"; no file badge comes before it (<code>firstIsAttachment == false</code>; badges are U+FFFC, <code>PromptAttachment.marker</code>); the caret is inside the first token (between the "/" and the first whitespace); the popup was not dismissed for this token. The query is the text between "/" and the caret.</dd>
+      <dt>Closes when</dt><dd>a space or newline follows the token (arguments start); the caret leaves the token; the first character stops being "/"; Esc (it stays closed until the token changes); a command is chosen; the message is sent.</dd>
+      <dt>Not a trigger</dt><dd>"/" anywhere else: <code>src/openapi.ts</code>, "a / b", a path pasted mid-sentence.</dd>
+      <dt>Tests</dt><dd>"/" → ""; "/rev" caret 4 → "rev"; "/review 12" caret 10 → nil; "src/foo" → nil; " /rev" → nil; badge + "/rev" → nil; "/rev" caret 1 → "".</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-KIT-03">
+    <header><code class="id">KIT-03</code><h3>Filtering and order</h3><span class="scope tech">Technical</span></header>
+<pre>public enum SlashCommandFilter {
+  public static func rank(_ commands: [SlashCommand], query: String) -> [SlashCommand]
+}</pre>
+    <dl>
+      <dt>Order</dt><dd>Case-insensitive. Empty query: the announced order. Otherwise, in tiers, each tier in announced order: (1) name starts with the query; (2) a segment of the name starts with it (segments split on <code>:</code>, <code>-</code>, <code>_</code>: "rev" finds <code>security-review</code>, "tri" finds <code>mcp:linear:triage</code>); (3) the name contains it; (4) the description contains it. Nothing else matches.</dd>
+      <dt>Highlight</dt><dd>The matched part of the name is drawn in <code>accent</code> (tiers 1–3).</dd>
+      <dt>Tests</dt><dd>Each tier; ties keep announced order; a query matching only descriptions; a 300-command list ranks in under 5 ms.</dd>
+    </dl>
+  </section>
+
+  <!-- ============================== CMD ============================== -->
+  <h2>The popup and the message box</h2>
+
+  <section class="req" id="REQ-CMD-01">
+    <header><code class="id">CMD-01</code><h3>Popup layout</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Place</dt><dd>Above the message box, 8 pt over its top edge, as wide as the box; it grows upward. Background <code>panel</code>, radius 10, hairline ring and shadow like Rocky's menus. Appears in 120 ms (opacity and 4 pt rise).</dd>
+      <dt>List</dt><dd>Rows of 32 pt in a 4 pt inset, at most 8 visible (264 pt) and then it scrolls, keeping the selected row in view. The first row is selected when the list changes.</dd>
+      <dt>Footer</dt><dd>28 pt, hairline on top, 11 pt <code>textTertiary</code>: "↑↓ navigate · Return run · Tab complete · Esc close", and on the right the agent and count ("Claude Code · 42").</dd>
+      <dt>SwiftUI</dt><dd>An overlay on the composer in <code>ChatView</code>, not a window: the text view keeps focus while the popup is open.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-CMD-02">
+    <header><code class="id">CMD-02</code><h3>Row</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Layout</dt><dd>Padding 10, gap 10: "/name" 13 mono <code>textPrimary</code> with the match in <code>accent</code>; the hint (if any) 12 mono <code>textTertiary</code>, max 200 pt, truncated; the description 12.5 <code>textSecondary</code>, right-aligned, one line, truncated; an "MCP" tag (9.5 semibold, hairline border) for <code>mcp:</code> commands, whose name shows without the <code>mcp:</code> prefix.</dd>
+      <dt>States</dt><dd>Selected <code>fillSelected</code>; hover moves the selection; the pointing hand (M2.5 CUR-01). Tooltip: the full description.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-CMD-03">
+    <header><code class="id">CMD-03</code><h3>Keyboard and mouse</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Keys</dt><dd>While the popup is open, the message box's text view forwards: ↑ / ↓ (move, wraps), Return (CMD-04), Tab (complete), Esc (close). Every other key edits the text, which re-runs KIT-02 and KIT-03. ⇧Tab keeps switching plan mode.</dd>
+      <dt>Esc first</dt><dd>Since M2.5, Esc during a turn cancels it in <code>ChatView</code>'s key monitor, which runs before the text view. That monitor skips when the popup is open (like it does for menus, the settings modal and sheets), so Esc closes the popup and the turn keeps running.</dd>
+      <dt>Mouse</dt><dd>Hover selects; click runs Return on that row.</dd>
+      <dt>SwiftUI</dt><dd><code>ComposerTextView.keyDown</code> (<code>Composer.swift</code>) today handles Return and ⇧Tab; it checks the popup's state first and hands those four keys to a <code>SlashCommandPopupModel</code> owned by <code>ComposerController</code>. IME composition (<code>hasMarkedText()</code>) never triggers it.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-CMD-04">
+    <header><code class="id">CMD-04</code><h3>Choosing a command</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Return</dt><dd>Command without <code>inputHint</code>: replace the token with "/name" and <strong>send</strong> at once. Command with a hint: replace the token with "/name " (trailing space), close the popup, and show the hint as ghost text after the caret until the first character is typed.</dd>
+      <dt>Tab</dt><dd>Always completes: "/name " and the ghost hint, never sends.</dd>
+      <dt>No match</dt><dd>Return sends the text as an ordinary message; the agent decides what "/foo" means.</dd>
+      <dt>While running</dt><dd>The popup works the same during a turn. Sending goes into M2.5's message queue: "/name" becomes a queued row at the end of the transcript, after "Working", and goes out when the turn ends. It is still one <code>session/prompt</code> whose text starts with "/name" (ACP-03).</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-CMD-05">
+    <header><code class="id">CMD-05</code><h3>Loading and empty states</h3><span class="scope in">In scope</span></header>
+    <table>
+      <tr><th>State</th><th>Popup shows</th></tr>
+      <tr><td>No update yet, no cache</td><td>spinner + "Starting Claude Code…"; fills in when the list arrives</td></tr>
+      <tr><td>No update yet, cache</td><td>the cached list; the footer reads "Claude Code · 42 · from the last session" until the update replaces it</td></tr>
+      <tr><td>Update with no commands</td><td>"Claude Code has no commands here."</td></tr>
+      <tr><td>No match</td><td>"No commands match “xyz”. Return sends it as a message."</td></tr>
+      <tr><td>Agent stopped (error)</td><td>no popup (the message box is replaced by Restart, as today)</td></tr>
+    </table>
+    <p>An update that arrives while the popup is open replaces the rows in place and keeps the selected command selected if it still exists.</p>
+  </section>
+
+  <section class="req" id="REQ-CMD-06">
+    <header><code class="id">CMD-06</code><h3>A sent command in the conversation</h3><span class="scope in">In scope</span></header>
+    <p>The user message starts with a chip: "/name" 12.5 mono in <code>accent</code> text on <code>accent</code> at 14 %, radius 6, 22 pt high, then the arguments as normal text. Only when the name is in the conversation's command list at the time it is drawn; otherwise the message shows as typed. <code>UserMessageRow</code> (<code>ActivityRows.swift</code>) draws it.</p>
+  </section>
+
+  <section class="req" id="REQ-CMD-07">
+    <header><code class="id">CMD-07</code><h3>Finding the feature</h3><span class="scope in">In scope</span></header>
+    <p>The message box's "+" menu gains "Commands" with the hint "/": it inserts "/" at the start of an empty message (or selects the whole message's start when it has text and puts "/" there) and opens the popup. The placeholder stays as today.</p>
+  </section>
+
+  <h2>Titles and accessibility</h2>
+
+  <section class="req" id="REQ-TITLE-01">
+    <header><code class="id">TITLE-01</code><h3>Commands do not name a conversation</h3><span class="scope in">In scope</span></header>
+    <p>Today the conversation's title comes from its first message (<code>ChatSessionRecord.title(from:)</code>, two call sites in <code>AppModel</code>). A message that is a command ("/compact", "/init") must not become the title: the title comes from the first message that is not a command. This also keeps the sidebar row titles meaningful (M2.5 ROW-02). Try it: the "New conversation" tab, send "/init", then a normal message.</p>
+    <dl><dt>Kit</dt><dd><code>ChatSessionRecord.title(from:)</code> returns nil for text that starts with "/" and whose first token is a known command; callers keep looking. Test both cases.</dd></dl>
+  </section>
+
+  <section class="req" id="REQ-A11Y-02">
+    <header><code class="id">A11Y-02</code><h3>Accessibility</h3><span class="scope in">In scope</span></header>
+    <p>The popup is a list of options; VoiceOver announces the selected row as "/name, description" when it changes, while focus stays in the text view (announcements, not focus moves). Rows scale with zoom. The ghost hint is not read.</p>
+  </section>
+
+  <h2>Out of scope</h2>
+  <section class="req" id="REQ-OUT-20">
+    <header><code class="id">OUT-20</code><h3>Not in M2.6</h3><span class="scope out">Later</span></header>
+    <p>Rocky's own commands or a command palette · per-repository custom commands defined in Rocky · structured command inputs (ACP only defines the unstructured hint) · editing or creating the agent's commands from Rocky · "@" file mentions.</p>
+  </section>
+</aside>
+
+<script>
+/* Demo behavior. The requirements on the right are what matters; this only lets them be tried. */
+(() => {
+  'use strict';
+  const $ = (s) => document.querySelector(s);
+  const win = $('#win');
+  const input = $('#input');
+  const ghost = $('#ghost');
+  const popup = $('#popup');
+  const chatCol = $('#chatCol');
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  let seq = 0; const uid = () => 'i' + (++seq);
+
+  const svg = (s, body, w) => `<svg width="${s}" height="${s}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+  const spinner = (s) => `<svg class="spinner" width="${s}" height="${s}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" role="img" aria-label="Working"><circle cx="8" cy="8" r="5.5" stroke-opacity="0.22"/><path d="M8 2.5a5.5 5.5 0 0 1 5.5 5.5"/></svg>`;
+  const I = {
+    branch: svg(14, '<circle cx="4.5" cy="3.5" r="1.6"/><circle cx="4.5" cy="12.5" r="1.6"/><circle cx="11.5" cy="4.5" r="1.6"/><path d="M4.5 5.1v5.8M11.5 6.1c0 3-3.2 3.1-6.2 4.7"/>', 1.4),
+    plus: svg(14, '<path d="M8 3v10M3 8h10"/>', 1.5),
+    arrowUp: svg(13, '<path d="M8 13V3.5M3.75 7.5L8 3.25l4.25 4.25"/>', 2.2),
+    stop: '<svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor"/></svg>',
+    terminal: svg(14, '<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2"/><path d="M4.5 6.5L6.5 8l-2 1.5M8 10h3"/>', 1.3),
+    clip: svg(14, '<path d="M13 7.5l-5.2 5.2a3.2 3.2 0 0 1-4.5-4.5L8.6 2.9a2.1 2.1 0 0 1 3 3l-5.3 5.3a1 1 0 0 1-1.5-1.5l4.8-4.8"/>', 1.3),
+    map: svg(14, '<path d="M1.75 3.75l4-1.5 4.5 1.5 4-1.5v10l-4 1.5-4.5-1.5-4 1.5z"/><path d="M5.75 2.25v10M10.25 3.75v10"/>', 1.3),
+    slash: svg(14, '<path d="M10.5 2.5l-5 11"/>', 1.6),
+  };
+  document.querySelectorAll('[data-icon]').forEach((el) => el.insertAdjacentHTML('afterbegin', I[el.dataset.icon]));
+
+  // ---------- commands as the agents announce them (ACP-01/02); texts are illustrative ----------
+  const C = (name, description, hint = null) => ({ name, description, inputHint: hint });
+  const CLAUDE = [
+    C('compact', 'Clear conversation history but keep a summary in context', '<optional custom summarization instructions>'),
+    C('context', 'Show current context usage'),
+    C('init', 'Initialize a new CLAUDE.md file with codebase documentation'),
+    C('review', 'Review a pull request', '<pr number>'),
+    C('security-review', 'Complete a security review of the pending changes on the current branch'),
+    C('pr-comments', 'Get comments from a GitHub pull request', '<pr number>'),
+    C('usage', 'Show plan usage limits'),
+    C('code-review', 'Review the current diff for correctness bugs', '[low|medium|high] [--comment] [--fix]'),
+    C('simplify', 'Review changed code for reuse and simplification, then apply the fixes'),
+    C('run', 'Launch and drive this project\'s app to see a change working'),
+    C('loop', 'Run a prompt or slash command on a recurring interval', '[interval] <prompt>'),
+    C('judgment-day', 'Run a blind dual review with at most two fix rounds'),
+    C('branch-pr', 'Create a pull request with issue-first checks'),
+    C('chained-pr', 'Split an oversized change into chained pull requests'),
+    C('work-unit-commits', 'Plan commits as reviewable work units'),
+    C('frontend-design', 'Create distinctive, production-grade frontend interfaces'),
+    C('ui-ux-pro-max', 'UI/UX design intelligence: styles, palettes, fonts, guidelines'),
+    C('skill-creator', 'Create LLM-first skills with valid frontmatter'),
+    C('find-skills', 'Discover and install agent skills'),
+    C('mcp:linear:triage', 'Triage new Linear issues assigned to you', '<team>'),
+  ];
+  const OPENCODE = [
+    C('init', 'create/update AGENTS.md'),
+    C('review', 'review changes [commit|branch|pr], defaults to uncommitted'),
+    C('test', 'run the test suite and summarize failures'),
+  ];
+  const DISCOVERED = [
+    C('rocky:new-milestone', 'Start a Rocky milestone: spec, plan and design HTML'),
+    C('rocky:energy-check', 'Measure Rocky\'s energy use from the power log'),
+    C('rocky:release-notes', 'Draft release notes from the merged commits'),
+  ];
+  const AGENT = { claude: 'Claude Code', opencode: 'OpenCode' };
+  const convs = [
+    { id: 'c1', agent: 'claude', title: 'OpenAPI export for providers', commands: [...CLAUDE], received: true, turn: null, items: [
+      { id: uid(), kind: 'user', text: 'Export the provider endpoints as an OpenAPI 3.1 document and add a test that validates the schema.' },
+      { id: uid(), kind: 'agent', text: 'Done. `buildDocument()` now emits OpenAPI 3.1, and the new test checks the version and that paths exist.' },
+      { id: uid(), kind: 'footer', agent: 'claude', text: 'Claude Code · 1m 4s · 4:02 PM' },
+    ] },
+    { id: 'c2', agent: 'opencode', title: 'Review the migration', commands: [...OPENCODE], received: true, turn: null, items: [
+      { id: uid(), kind: 'user', text: 'Review the v5 migration for missing indexes.' },
+      { id: uid(), kind: 'agent', text: 'Nothing is missing: `attachments` and `toolKind` are read with their message and never filtered on.' },
+    ] },
+    { id: 'c3', agent: 'claude', title: null, commands: [...CLAUDE], received: true, turn: null, items: [] },
+  ];
+  let active = 'c1';
+  const conv = () => convs.find((c) => c.id === active);
+
+  // ---------- KIT-02: the trigger ----------
+  function slashQuery(text, caret) {
+    if (!text.startsWith('/')) return null;
+    const end = text.search(/\s/);
+    const tokenEnd = end === -1 ? text.length : end;
+    if (caret < 1 || caret > tokenEnd) return null;     // outside the first token: arguments or elsewhere
+    return text.slice(1, caret);
+  }
+  // ---------- KIT-03: ranking ----------
+  function rank(commands, query) {
+    const q = query.toLowerCase();
+    if (!q) return commands.map((c) => ({ c, at: -1 }));
+    const tiers = [[], [], [], []];
+    for (const c of commands) {
+      const n = c.name.toLowerCase();
+      if (n.startsWith(q)) { tiers[0].push({ c, at: 0 }); continue; }
+      let seg = -1; let pos = 0;
+      for (const part of n.split(/([:\-_])/)) { if (!/[:\-_]/.test(part) && part.startsWith(q)) { seg = pos; break; } pos += part.length; }
+      if (seg >= 0) { tiers[1].push({ c, at: seg }); continue; }
+      const i = n.indexOf(q);
+      if (i >= 0) { tiers[2].push({ c, at: i }); continue; }
+      if (c.description.toLowerCase().includes(q)) tiers[3].push({ c, at: -1 });
+    }
+    return tiers.flat();
+  }
+
+  // ---------- popup state ----------
+  const pop = { open: false, query: '', rows: [], sel: 0, dismissedToken: null, loading: false };
+  function tokenOf(text) { const end = text.search(/\s/); return end === -1 ? text : text.slice(0, end); }
+  function refresh() {
+    const text = input.value; const caret = input.selectionStart;
+    const q = slashQuery(text, caret);
+    const token = tokenOf(text);
+    if (pop.dismissedToken !== null && pop.dismissedToken !== token) pop.dismissedToken = null;
+    const c = conv();
+    if (q === null || pop.dismissedToken === token || c.stopped) { closePopup(); renderGhost(); return; }
+    const prevName = pop.rows[pop.sel] && pop.rows[pop.sel].c.name;
+    pop.open = true; pop.query = q;
+    pop.rows = c.received ? rank(c.commands, q) : [];
+    const keep = pop.rows.findIndex((r) => r.c.name === prevName);
+    pop.sel = keep >= 0 && q === pop.lastQuery ? keep : 0;
+    pop.lastQuery = q;
+    renderPopup(); renderGhost();
+  }
+  function closePopup() { pop.open = false; popup.hidden = true; input.setAttribute('aria-expanded', 'false'); }
+  function nameHTML(r) {
+    const shown = r.c.name.startsWith('mcp:') ? r.c.name.slice(4) : r.c.name;
+    const offset = r.c.name.length - shown.length;
+    const q = pop.query;
+    if (r.at < 0 || !q) return '/' + esc(shown);
+    const at = r.at - offset;
+    if (at < 0) return '/' + esc(shown);
+    return '/' + esc(shown.slice(0, at)) + `<span class="m">${esc(shown.slice(at, at + q.length))}</span>` + esc(shown.slice(at + q.length));
+  }
+  function renderPopup() {
+    const c = conv();
+    let body = '';
+    if (!c.received) body = `<div class="pop-state">${spinner(13)}Starting ${AGENT[c.agent]}…</div>`;
+    else if (!c.commands.length) body = `<div class="pop-state">${AGENT[c.agent]} has no commands here.</div>`;
+    else if (!pop.rows.length) body = `<div class="pop-state">No commands match “${esc(pop.query)}”. Return sends it as a message.</div>`;
+    else body = `<div class="pop-list" id="popList" data-req="KIT-03">` + pop.rows.map((r, i) =>
+      `<button class="cmd${i === pop.sel ? ' sel' : ''}" role="option" aria-selected="${i === pop.sel}" data-i="${i}" title="${esc(r.c.description)}"${i === 0 ? ' data-req="CMD-02"' : ''}>` +
+      `<span class="cmd-name">${nameHTML(r)}</span>${r.c.inputHint ? `<span class="cmd-hint">${esc(r.c.inputHint)}</span>` : ''}` +
+      `<span class="cmd-desc">${esc(r.c.description)}</span>${r.c.name.startsWith('mcp:') ? '<span class="mcp">MCP</span>' : ''}</button>`).join('') + '</div>';
+    const count = c.received ? `${AGENT[c.agent]} · ${c.commands.length}` : AGENT[c.agent];
+    popup.innerHTML = body + `<div class="pop-foot" data-req="CMD-03"><span><kbd>↑↓</kbd> navigate · <kbd>Return</kbd> run · <kbd>Tab</kbd> complete · <kbd>Esc</kbd> close</span><span class="grow"></span><span>${count}</span></div>`;
+    popup.hidden = false;
+    input.setAttribute('aria-expanded', 'true');
+    const selEl = popup.querySelector('.cmd.sel');
+    if (selEl) selEl.scrollIntoView({ block: 'nearest' });
+  }
+  // CMD-04: ghost hint after "/name "
+  let ghostCmd = null;
+  function renderGhost() {
+    const text = input.value;
+    if (ghostCmd && text === '/' + ghostCmd.name + ' ') ghost.innerHTML = `<span>${esc(text)}</span><span class="hint">${esc(ghostCmd.inputHint)}</span>`;
+    else { ghost.innerHTML = ''; if (ghostCmd && !text.startsWith('/' + ghostCmd.name + ' ')) ghostCmd = null; }
+  }
+  function choose(i, how) {
+    const r = pop.rows[i]; if (!r) return;
+    const cmd = r.c;
+    const rest = input.value.slice(tokenOf(input.value).length).replace(/^\s+/, '');
+    if (how === 'return' && !cmd.inputHint && !rest) {
+      input.value = '/' + cmd.name; closePopup(); send(); return;
+    }
+    input.value = '/' + cmd.name + ' ' + rest;
+    const caret = cmd.name.length + 2;
+    input.setSelectionRange(caret, caret);
+    ghostCmd = cmd.inputHint && !rest ? cmd : null;
+    closePopup(); renderGhost(); syncSend(); input.focus();
+  }
+
+  // ---------- chat ----------
+  function userHTML(text, c) {
+    const m = text.match(/^\/(\S+)([\s\S]*)$/);
+    if (m && c.commands.some((x) => x.name === m[1])) return `<span class="cmd-chip" data-req="CMD-06">/${esc(m[1].startsWith('mcp:') ? m[1] : m[1])}</span>${esc(m[2].replace(/^\s+/, ''))}`;
+    return esc(text);
+  }
+  function itemHTML(it, c, fresh) {
+    const e = fresh ? ' enter' : '';
+    if (it.kind === 'user') return `<div class="msg-user${e}">${userHTML(it.text, c)}</div>`;
+    if (it.kind === 'agent') return `<div class="msg-agent${e}" data-item="${it.id}">${esc(it.text).replace(/`([^`]+)`/g, '<code>$1</code>')}</div>`;
+    if (it.kind === 'tool') return `<div class="tool${e}" data-item="${it.id}"><span class="tool-icon">${I.terminal}</span><span class="${it.live ? 'shimmer' : ''}" style="${it.live ? '' : 'color:var(--text)'}">${esc(it.label)}</span><span class="badge">${esc(it.detail)}</span></div>`;
+    if (it.kind === 'footer') return `<div class="turn-footer${e}"><span class="agent sm ${it.agent}">${it.agent === 'claude' ? 'C' : 'O'}</span><span>${esc(it.text)}</span></div>`;
+    return '';
+  }
+  function renderChat() {
+    const c = conv();
+    const html = c.items.map((it) => itemHTML(it, c, false)).join('') + (c.turn ? '<div class="working" id="working"><span class="shimmer">Working</span><span class="elapsed">0s</span></div>' : '') + queuedHTML(c);
+    chatCol.innerHTML = html || '<p class="chat-empty">New conversation. Type / to see the commands.</p>';
+    $('#chat').scrollTop = $('#chat').scrollHeight;
+  }
+  function renderTabs() {
+    $('#tabs').innerHTML = convs.map((c) => `<div class="tab-wrap${c.id === active ? ' selected' : ''}"><button class="tab" data-conv="${c.id}">${c.turn ? spinner(12) : `<span class="agent ${c.agent}">${c.agent === 'claude' ? 'C' : 'O'}</span>`}<span class="t-label">${esc(c.title || 'New conversation')}</span></button></div>`).join('');
+    $('#rowTitle').textContent = convs.find((x) => x.title).title;
+  }
+  function renderComposer() {
+    const c = conv();
+    input.placeholder = `Ask ${AGENT[c.agent]} to make changes…`;
+    $('#modelBtn').innerHTML = `<span class="agent sm ${c.agent}">${c.agent === 'claude' ? 'C' : 'O'}</span><span>${c.agent === 'claude' ? 'Opus 5.5' : 'Default model'}</span>`;
+    syncSend();
+  }
+  function syncSend() {
+    const running = Boolean(conv().turn);
+    const b = $('#sendBtn');
+    b.innerHTML = running ? I.stop : I.arrowUp;
+    b.disabled = !running && !input.value.trim();
+    b.setAttribute('aria-label', running ? 'Stop' : 'Send');
+  }
+  function append(c, it) {
+    c.items.push(it);
+    if (c.id !== active) return;
+    const empty = chatCol.querySelector('.chat-empty'); if (empty) empty.remove();
+    const w = $('#working');
+    if (w) w.insertAdjacentHTML('beforebegin', itemHTML(it, c, true)); else chatCol.insertAdjacentHTML('beforeend', itemHTML(it, c, true));
+    $('#chat').scrollTop = $('#chat').scrollHeight;
+  }
+  // TITLE-01: a command never names the conversation.
+  function isCommand(text, c) { const m = text.match(/^\/(\S+)/); return Boolean(m && c.commands.some((x) => x.name === m[1])); }
+  // M2.5's queue, simplified: while a turn runs, a sent message waits after "Working".
+  const queuedHTML = (c) => (c.queue || []).map((t) => `<div class="msg-queued"><div class="q-body">${userHTML(t, c)}</div><span class="q-cap">Queued</span></div>`).join('');
+  function renderQueue(c) { if (c.id !== active) return; chatCol.querySelectorAll('.msg-queued').forEach((e) => e.remove()); chatCol.insertAdjacentHTML('beforeend', queuedHTML(c)); $('#chat').scrollTop = $('#chat').scrollHeight; }
+  async function send(queuedText, target) {
+    const c = target || conv();
+    const text = queuedText || input.value.trim();
+    if (!text) return;
+    if (!queuedText) { input.value = ''; ghostCmd = null; renderGhost(); closePopup(); syncSend(); }
+    if (c.turn) { (c.queue = c.queue || []).push(text); renderQueue(c); return; }
+    if (!c.title && !isCommand(text, c)) c.title = text.slice(0, 40) + (text.length > 40 ? '…' : '');
+    append(c, { id: uid(), kind: 'user', text });
+    const turn = { started: Date.now() };
+    c.turn = turn; renderTabs(); syncSend();
+    if (c.id === active) chatCol.insertAdjacentHTML('beforeend', '<div class="working enter" id="working"><span class="shimmer">Working</span><span class="elapsed">0s</span></div>');
+    const m = text.match(/^\/(\S+)\s*([\s\S]*)$/);
+    const name = m && c.commands.some((x) => x.name === m[1]) ? m[1] : null;
+    await wait(900);
+    if (c.turn !== turn) return;
+    let reply;
+    if (name === 'review' || name === 'pr-comments') {
+      const tool = { id: uid(), kind: 'tool', label: 'Run', detail: `gh pr view ${m[2] || '212'}`, live: true };
+      append(c, tool); await wait(1600); if (c.turn !== turn) return;
+      tool.live = false; const el = chatCol.querySelector(`[data-item="${tool.id}"] span:nth-child(2)`); if (el) { el.className = ''; el.style.color = 'var(--text)'; }
+      reply = `Pull request #${m[2] || '212'} looks good. One note: \`operation()\` reuses route names as operationIds, which can collide.`;
+    } else if (name === 'compact') reply = 'Compacted the conversation. The summary keeps the OpenAPI decisions and the open test failure.';
+    else if (name === 'context') reply = 'Context: 38k of 200k tokens used (19 %).';
+    else if (name === 'init') reply = c.agent === 'claude' ? 'Created `CLAUDE.md` with the build, test and layout of this repository.' : 'Created `AGENTS.md`.';
+    else if (name) reply = `Ran /${name}.`;
+    else reply = 'Sure. Tell me more about what you want to change.';
+    append(c, { id: uid(), kind: 'agent', text: reply });
+    append(c, { id: uid(), kind: 'footer', agent: c.agent, text: `${AGENT[c.agent]} · ${Math.max(1, Math.round((Date.now() - turn.started) / 1000))}s · ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` });
+    c.turn = null;
+    const w = $('#working'); if (w && c.id === active) w.remove();
+    renderTabs(); syncSend();
+    if (c.queue && c.queue.length) { const next = c.queue.shift(); renderQueue(c); send(next, c); }
+  }
+
+  // ---------- events ----------
+  input.addEventListener('input', () => { refresh(); syncSend(); });
+  input.addEventListener('click', refresh);
+  input.addEventListener('keyup', (e) => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) refresh(); });
+  input.addEventListener('keydown', (e) => {
+    if (e.isComposing) return;
+    if (pop.open) {
+      const n = pop.rows.length;
+      if (e.key === 'ArrowDown' && n) { e.preventDefault(); pop.sel = (pop.sel + 1) % n; renderPopup(); return; }
+      if (e.key === 'ArrowUp' && n) { e.preventDefault(); pop.sel = (pop.sel - 1 + n) % n; renderPopup(); return; }
+      if (e.key === 'Tab' && !e.shiftKey && n) { e.preventDefault(); choose(pop.sel, 'tab'); return; }
+      if (e.key === 'Enter' && !e.shiftKey && n) { e.preventDefault(); choose(pop.sel, 'return'); return; }
+      if (e.key === 'Escape') { e.preventDefault(); pop.dismissedToken = tokenOf(input.value); closePopup(); return; }
+    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+    if (e.key === 'Tab' && e.shiftKey) { e.preventDefault(); toast('Plan mode (⇧Tab) switches as today.'); }
+  });
+  popup.addEventListener('mousemove', (e) => { const b = e.target.closest('.cmd'); if (b && Number(b.dataset.i) !== pop.sel) { pop.sel = Number(b.dataset.i); popup.querySelectorAll('.cmd').forEach((x, i) => { x.classList.toggle('sel', i === pop.sel); x.setAttribute('aria-selected', String(i === pop.sel)); }); } });
+  popup.addEventListener('mousedown', (e) => e.preventDefault());       // keep focus in the text box
+  popup.addEventListener('click', (e) => { const b = e.target.closest('.cmd'); if (b) choose(Number(b.dataset.i), 'return'); });
+  $('#tabs').addEventListener('click', (e) => { const b = e.target.closest('[data-conv]'); if (!b) return; active = b.dataset.conv; input.value = ''; ghostCmd = null; renderGhost(); closePopup(); renderTabs(); renderChat(); renderComposer(); input.focus(); });
+  $('#sendBtn').addEventListener('click', () => { const c = conv(); if (c.turn) { c.turn = null; const w = $('#working'); if (w) w.remove(); renderTabs(); syncSend(); toast('Stopped the turn (session/cancel).'); return; } send(); });
+  document.addEventListener('mousedown', (e) => { if (menuEl && !menuEl.contains(e.target)) closeMenu(); });
+
+  // CMD-07: "+" menu
+  let menuEl = null;
+  function closeMenu() { if (menuEl) { menuEl.remove(); menuEl = null; } }
+  $('#plusBtn').addEventListener('click', (e) => {
+    closeMenu();
+    const m = document.createElement('div'); m.className = 'menu';
+    m.innerHTML = `<button class="menu-item" data-a="attach">${I.clip}<span>Add attachment</span><span class="k">⌘U</span></button><button class="menu-item" data-a="plan">${I.map}<span>Plan mode</span><span class="k">⇧Tab</span></button><button class="menu-item" data-a="commands">${I.slash}<span>Commands</span><span class="k">/</span></button>`;
+    win.appendChild(m);
+    const box = win.getBoundingClientRect(); const r = e.currentTarget.getBoundingClientRect();
+    m.style.left = `${r.right - box.left - m.offsetWidth}px`; m.style.top = `${r.top - box.top - m.offsetHeight - 6}px`;
+    m.addEventListener('click', (ev) => {
+      const b = ev.target.closest('.menu-item'); if (!b) return; closeMenu();
+      if (b.dataset.a === 'commands') { if (!input.value.startsWith('/')) input.value = '/' + input.value; input.focus(); input.setSelectionRange(1, 1); pop.dismissedToken = null; refresh(); }
+      else toast(b.dataset.a === 'attach' ? 'Opens the file picker, as today.' : 'Switches plan mode, as today.');
+    });
+    menuEl = m;
+  });
+
+  let toastTimer = null;
+  function toast(msg) { let t = win.querySelector('.toast'); if (!t) { t = document.createElement('div'); t.className = 'toast'; win.appendChild(t); } t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2200); }
+
+  // ---------- demo controls ----------
+  $('#demoStarting').addEventListener('click', async () => {
+    const c = conv();
+    c.received = false; c.commands = [];
+    input.focus(); if (!input.value.startsWith('/')) { input.value = '/'; input.setSelectionRange(1, 1); }
+    pop.dismissedToken = null; refresh();
+    toast(`${AGENT[c.agent]} is starting; its commands arrive after session/new.`);
+    await wait(1800);
+    c.commands = c.agent === 'claude' ? [...CLAUDE] : [...OPENCODE]; c.received = true;
+    refresh();
+  });
+  $('#demoSkills').addEventListener('click', () => {
+    const c = conv();
+    if (c.agent !== 'claude') { toast('commands_changed is a Claude Code event; switch to a Claude Code tab.'); return; }
+    const missing = DISCOVERED.filter((d) => !c.commands.some((x) => x.name === d.name));
+    c.commands = [...c.commands, ...missing];
+    toast(`available_commands_update: ${c.commands.length} commands (replaced, not merged).`);
+    if (pop.open) refresh();
+  });
+  $('#demoPins').addEventListener('click', (e) => { e.currentTarget.setAttribute('aria-pressed', String(document.body.classList.toggle('spec-on'))); });
+  document.addEventListener('click', (e) => {
+    if (!document.body.classList.contains('spec-on')) return;
+    const el = e.target.closest('[data-req]'); if (!el || !win.contains(el)) return;
+    const s = document.getElementById('REQ-' + el.dataset.req); if (!s) return;
+    s.scrollIntoView({ behavior: 'smooth', block: 'start' }); s.classList.add('flash'); setTimeout(() => s.classList.remove('flash'), 1400);
+  }, true);
+  setInterval(() => { const el = $('#working .elapsed'); const c = conv(); if (el && c.turn) el.textContent = `${Math.floor((Date.now() - c.turn.started) / 1000)}s`; }, 1000);
+
+  renderTabs(); renderChat(); renderComposer();
+  input.focus();
+})();
+</script>
+</body>
+</html>

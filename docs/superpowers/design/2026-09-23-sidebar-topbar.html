@@ -1,0 +1,1830 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rocky · Workspace shell spec</title>
+<!--
+==========================================================================================================
+HOW TO READ THIS FILE (for the agent that implements it)
+==========================================================================================================
+This file is the visual and behavioral source of truth for
+  docs/superpowers/plans/2026-09-23-m2.5-sidebar-topbar.md
+
+- Left: an interactive mock of the Rocky window. Right: the requirements, one <section id="REQ-…"> each.
+- Every requirement has an id (SB-03, TERM-02, MOT-02…). The same id appears in three places:
+    1. data-req="…" on the element of the mock it describes (turn on "Requirement pins" to see them),
+    2. the <section id="REQ-…"> in the right panel,
+    3. the plan task that implements it.
+- Each requirement lists Values (exact numbers, at 100 % zoom), SwiftUI (where and how in our code) and
+  Done when (the acceptance check). When the mock and a requirement's text disagree, the text wins.
+- data-scope="out" marks what is drawn but NOT in scope (the diff stats). Do not implement those.
+- Parts drawn only for context and NOT changed by this plan: the message box and its menus, the content of a file
+  tab, the reply footer, the permission sheet and the question card. The spec says so where it matters.
+- The :root custom properties below are the design tokens. TOK-01 maps each one to a Theme.swift name.
+- The "Demo controls" bar is not part of Rocky. It only triggers states so they can be seen.
+- File and line references point at the code as of 2026-09-23, before dev-1's M2 commit. After that commit,
+  the symbol names are authoritative, not the line numbers. The record of what M2 built is the section
+  "Changes during implementation" of docs/superpowers/plans/2026-09-23-m2-terminal-scripts-env.md.
+==========================================================================================================
+-->
+<style>
+:root {
+  /* TOK-01 colors (Theme.swift names in TOK-01) */
+  --page: #131519;                        /* this document only, not Rocky */
+  --bg: #23272E;                          /* Theme.background (exists) */
+  --sidebar: #1E2127;                     /* Theme.sidebar (exists) */
+  --panel: #1A1D22;                       /* Theme.panel (exists): menus */
+  --composer: #2A2F37;                    /* Theme.composer (exists) */
+  --composer-border: rgba(255,255,255,0.10); /* Theme.composerBorder (exists) */
+  --hairline: rgba(255,255,255,0.08);     /* Theme.hairline (exists) */
+  --hairline-soft: rgba(255,255,255,0.06);/* Theme.hairlineSoft (new) */
+  --panel-bar: rgba(255,255,255,0.03);    /* Theme.panelBar (new; today inline in WorkspacePanelView) */
+  --text: #E6E8EB;                        /* Theme.textPrimary (new) */
+  --text-2: #A3A9B1;                      /* Theme.textSecondary (new) */
+  --text-3: #858C95;                      /* Theme.textTertiary (new) */
+  --sep: #5C636C;                         /* Theme.separatorGlyph (new) */
+  --fill-hover: rgba(255,255,255,0.04);   /* Theme.fillHover (new) */
+  --fill-selected: rgba(255,255,255,0.08);/* Theme.fillSelected (new) */
+  --fill-control: rgba(255,255,255,0.05); /* Theme.fillControl (new) */
+  --fill-icon-hover: rgba(255,255,255,0.06); /* Theme.fillIconHover (new) */
+  --fill-pressed: rgba(255,255,255,0.10); /* Theme.fillPressed (new) */
+  --fill-button: rgba(255,255,255,0.08);  /* Theme.fillButton (new) */
+  --fill-button-hover: rgba(255,255,255,0.12); /* Theme.fillButtonHover (new) */
+  --accent: #78BDF5;                      /* Theme.accent (new, same value as Theme.plan) */
+  --attention: #E8A94B;                   /* Theme.attention (new) */
+  --danger: #F0876A;                      /* Theme.danger (new) */
+  --success: #7CC08A;                     /* Theme.success (new): running process dot */
+  --diff-del: #E48A8A;                    /* OUT OF SCOPE: future diff module */
+  /* TOK-02 metrics, in points at 100 % zoom */
+  --titlebar: 38px;
+  --row: 28px;
+  --r-row: 7px;
+  --r-btn: 6px;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  /* TOK-03 motion */
+  --dur-fast: 120ms;
+  --dur-base: 150ms;
+  --dur-enter: 220ms;
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--page); color: var(--text);
+  font: 13px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  display: grid; grid-template-columns: minmax(0, 1fr) 470px; overflow: hidden;
+}
+[hidden] { display: none !important; }
+/* CUR-01: every clickable element shows the pointing hand. */
+button { font: inherit; color: inherit; background: none; border: 0; margin: 0; padding: 0; text-align: left; cursor: pointer; }
+button:disabled { cursor: default; }
+input, textarea { font: inherit; color: inherit; }
+svg { display: block; flex-shrink: 0; }
+code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 4px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.grow { flex-grow: 1; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* ---------- document chrome (not Rocky) ---------- */
+.stage { overflow: auto; padding: 20px 24px 48px; }
+.doc-title { width: 1180px; margin: 0 0 4px; font-size: 18px; font-weight: 600; }
+.doc-sub { width: 1180px; margin: 0 0 14px; color: var(--text-2); font-size: 12.5px; line-height: 1.5; }
+.demo { width: 1180px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
+.demo-label { font-size: 10.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.07em; margin-right: 4px; }
+.demo button { height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.14); color: var(--text-2); font-size: 12px; transition: color var(--dur-fast), border-color var(--dur-fast), background var(--dur-fast); }
+.demo button:hover { color: var(--text); border-color: rgba(255,255,255,0.3); }
+.demo button[aria-pressed="true"] { background: rgba(120,189,245,0.14); border-color: rgba(120,189,245,0.55); color: var(--text); }
+.demo .sep { width: 1px; height: 18px; background: rgba(255,255,255,0.12); margin: 0 4px; }
+
+/* ---------- the window ---------- */
+.window { --sb-w: 260px; --panel-h: 220px; position: relative; width: 1180px; height: 780px; display: flex; background: var(--bg); border-radius: 10px; overflow: hidden; box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 24px 60px rgba(0,0,0,0.45); }
+.lights { display: inline-flex; gap: 8px; }
+.light { width: 12px; height: 12px; border-radius: 50%; }
+.light.close { background: #FF5F57; } .light.min { background: #FEBC2E; } .light.zoom { background: #28C840; }
+.window.inactive .light { background: #4D5057; }
+
+/* CUR-02: buttons */
+.icon-btn { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r-btn); color: var(--text-2); flex-shrink: 0; transition: background var(--dur-fast) ease-out, color var(--dur-fast) ease-out, opacity var(--dur-fast) ease-out; }
+.icon-btn:hover { background: var(--fill-icon-hover); color: var(--text); }
+.icon-btn:active { background: var(--fill-pressed); }
+.icon-btn.sm { width: 22px; height: 22px; border-radius: 5px; }
+.icon-btn.xs { width: 18px; height: 18px; border-radius: 4px; }
+.text-btn { height: 28px; display: inline-flex; align-items: center; gap: 8px; padding: 0 8px; border-radius: var(--r-row); color: var(--text-2); font-size: 13px; transition: background var(--dur-fast) ease-out, color var(--dur-fast) ease-out; }
+.text-btn:hover { background: var(--fill-icon-hover); color: var(--text); }
+.text-btn.sm { height: 24px; gap: 6px; font-size: 12px; border-radius: var(--r-btn); }
+.fill-btn { height: 28px; display: inline-flex; align-items: center; gap: 8px; padding: 0 12px; border-radius: var(--r-btn); background: var(--fill-button); font-size: 13px; transition: background var(--dur-fast); }
+.fill-btn:hover { background: var(--fill-button-hover); }
+
+/* ---------- sidebar ---------- */
+.sidebar { width: var(--sb-w); flex-shrink: 0; display: flex; flex-direction: column; background: var(--sidebar); }
+.window.sb-hidden .sidebar, .window.sb-hidden .divider { display: none; }
+.sb-top { height: var(--titlebar); flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 0 10px 0 16px; }
+.sb-search { padding: 2px 10px 6px; flex-shrink: 0; }
+.search { height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 6px 0 8px; border-radius: var(--r-row); background: var(--fill-control); color: var(--text-3); cursor: text; transition: box-shadow var(--dur-fast); }
+.search:focus-within { box-shadow: 0 0 0 2px rgba(120,189,245,0.55); }
+.search input { flex-grow: 1; min-width: 0; background: none; border: 0; outline: none; font-size: 13px; color: var(--text); }
+.search input::placeholder { color: var(--text-3); }
+.kbd { font-size: 11px; color: var(--text-3); padding-right: 2px; }
+.sb-list { flex-grow: 1; overflow-y: auto; padding: 4px 8px 8px; display: flex; flex-direction: column; gap: 2px; }
+.no-match { margin: 24px 8px; text-align: center; color: var(--text-3); font-size: 12.5px; }
+.sb-empty { display: flex; flex-direction: column; align-items: center; padding-top: 40px; }
+.sb-empty p { margin: 0 0 12px; color: var(--text-2); font-size: 13px; }
+
+.repo { height: 28px; flex-shrink: 0; display: flex; align-items: center; gap: 2px; padding: 0 4px 0 8px; margin-top: 10px; }
+.repo:first-child { margin-top: 4px; }
+.repo-name { flex-grow: 1; min-width: 0; height: 28px; display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--text); }
+.monogram { width: 16px; height: 16px; border-radius: 4px; color: #FFFFFF; font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.repo-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chev { display: flex; color: var(--text-3); transition: transform var(--dur-base) var(--ease-out), opacity var(--dur-fast) ease-out; }
+.chev.open { opacity: 0; transform: rotate(90deg); }
+.repo:hover .chev.open { opacity: 1; }
+.repo-more { opacity: 0; }
+.repo:hover .repo-more, .repo:focus-within .repo-more { opacity: 1; }
+
+.row-wrap { position: relative; flex-shrink: 0; border-radius: var(--r-row); transition: background var(--dur-fast) ease-out; }
+.row-wrap:hover { background: var(--fill-hover); }
+.row-wrap.selected { background: var(--fill-selected); }
+.row { width: 100%; height: var(--row); display: flex; align-items: center; gap: 8px; padding: 0 8px 0 24px; border-radius: var(--r-row); color: var(--text); }
+.glyph { width: 16px; height: 16px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+.row-title { flex-grow: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-title.fallback { color: var(--text-2); }
+.row-trailing { flex-shrink: 0; display: flex; align-items: center; }
+.diff { font: 11px var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.diff .add { color: var(--success); } .diff .del { color: var(--diff-del); }
+.hint { display: none; font-size: 11px; color: var(--text-3); }
+.cmd-held .hint { display: inline; }
+.cmd-held .diff { display: none; }
+.row-actions { position: absolute; top: 3px; right: 4px; display: flex; gap: 2px; opacity: 0; pointer-events: none; transition: opacity var(--dur-fast) ease-out; }
+.row-wrap:hover .row-actions, .row-wrap:focus-within .row-actions { opacity: 1; pointer-events: auto; }
+.row-wrap:hover .row-trailing, .row-wrap:focus-within .row-trailing { visibility: hidden; }
+
+.dot { display: block; border-radius: 50%; }
+.dot-needs { width: 8px; height: 8px; background: var(--attention); box-shadow: 0 0 0 3px rgba(232,169,75,0.2); }
+.dot-unread { width: 7px; height: 7px; background: var(--accent); }
+.g-error { color: var(--danger); display: flex; }
+.g-idle { color: var(--text-3); display: flex; }
+.g-pr { color: var(--success); display: flex; } .g-merged { color: #B48CF2; display: flex; }
+
+.sb-footer { height: 44px; flex-shrink: 0; display: flex; align-items: center; padding: 0 10px; border-top: 1px solid var(--hairline-soft); }
+
+.divider { position: relative; width: 1px; flex-shrink: 0; background: var(--hairline); }
+.divider::before { content: ""; position: absolute; top: 0; bottom: 0; left: -4px; right: -4px; cursor: col-resize; z-index: 2; }
+
+/* ---------- main ---------- */
+.main { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; }
+.topbar { height: var(--titlebar); flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 0 12px 0 16px; }
+.lights-slot { display: none; align-items: center; gap: 8px; margin-right: 4px; }
+.window.sb-hidden .lights-slot { display: flex; }
+.tb-content { flex-grow: 1; min-width: 0; display: flex; align-items: center; gap: 10px; }
+.crumb-repo { color: var(--text-2); white-space: nowrap; }
+.crumb-sep { color: var(--sep); }
+.branch { height: 24px; display: flex; align-items: center; gap: 6px; padding: 0 6px; margin-left: -6px; border-radius: 5px; font: 12px var(--mono); color: var(--text); white-space: nowrap; transition: background var(--dur-fast) ease-out; }
+.branch:hover { background: var(--fill-icon-hover); }
+.branch .b-icon { color: var(--text-3); display: flex; }
+.branch.copied #branchText { color: var(--accent); }
+.port { font: 11px var(--mono); color: var(--text-3); white-space: nowrap; }
+.run { height: 26px; display: flex; align-items: center; gap: 6px; padding: 0 10px; border-radius: var(--r-btn); background: var(--fill-button); font-size: 12.5px; font-weight: 500; color: var(--text); transition: background var(--dur-fast) ease-out; }
+.run:hover { background: var(--fill-button-hover); }
+.run:active { background: rgba(255,255,255,0.16); }
+
+.tabs { height: 34px; flex-shrink: 0; display: flex; align-items: stretch; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--hairline); }
+.tab-wrap { position: relative; display: flex; align-items: center; padding-right: 6px; }
+.tab-wrap.selected::before { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--text); }
+.tab { height: 100%; max-width: 240px; display: flex; align-items: center; gap: 7px; padding: 0 4px 0 10px; font-size: 12.5px; color: var(--text-2); transition: color var(--dur-fast) ease-out; }
+.t-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tab-wrap:hover .tab, .tab-wrap.selected .tab { color: var(--text); }
+.tab-close { width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; border-radius: 4px; color: var(--text-3); opacity: 0; transition: opacity var(--dur-fast), background var(--dur-fast), color var(--dur-fast); }
+.tab-wrap:hover .tab-close, .tab-wrap.selected .tab-close { opacity: 1; }
+.tab-close:hover { background: var(--fill-icon-hover); color: var(--text); }
+.tab-new { align-self: center; }
+/* Stand-ins for the real Claude and OpenCode logos (AgentIcon). */
+.agent { width: 14px; height: 14px; border-radius: 4px; font-size: 9px; font-weight: 700; display: flex; align-items: center; justify-content: center; color: #1E2127; flex-shrink: 0; }
+.agent.sm { width: 12px; height: 12px; font-size: 8px; border-radius: 3px; }
+.agent.claude { background: #D97757; } .agent.opencode { background: #9BA1A9; }
+
+/* ---------- content: chat over the terminal panel ---------- */
+.content { flex-grow: 1; min-height: 0; display: flex; flex-direction: column; }
+.chat-area { flex-grow: 1; min-height: 200px; display: flex; flex-direction: column; }
+.chat { flex-grow: 1; min-height: 0; overflow-y: auto; padding: 20px 24px 12px; display: flex; flex-direction: column; align-items: center; }
+.col { width: 100%; max-width: 820px; display: flex; flex-direction: column; gap: 14px; font-size: 14px; }
+.msg-user { align-self: flex-end; max-width: 520px; padding: 10px 14px; border-radius: 12px; background: rgba(255,255,255,0.06); line-height: 1.5; }
+.msg-agent { line-height: 1.6; color: #D5D8DC; }
+.msg-error { font-size: 13px; color: var(--danger); }
+.tool { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
+.tool-icon { width: 18px; display: flex; justify-content: center; color: var(--text-2); }
+.tool-label { color: var(--text); transition: color var(--dur-base) ease-out; }
+.badge { font: 11.5px var(--mono); color: var(--text-2); background: rgba(255,255,255,0.05); padding: 2px 6px; border-radius: 5px; }
+.file-badge { height: 22px; display: inline-flex; align-items: center; gap: 5px; padding: 0 7px; border-radius: 5px; background: rgba(255,255,255,0.05); font-size: 12px; color: var(--text); transition: background var(--dur-fast); }
+.file-badge:hover { background: rgba(255,255,255,0.09); }
+.working { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
+.elapsed { font: 12px var(--mono); font-variant-numeric: tabular-nums; color: var(--text-3); }
+.turn-footer { display: flex; align-items: center; gap: 8px; padding-bottom: 6px; font-size: 10.5px; color: var(--text-2); }
+.chat-empty { margin: 60px 0 0; color: var(--text-3); text-align: center; font-size: 13px; }
+.file-view { flex-grow: 1; min-height: 0; overflow: auto; padding: 16px 24px; font: 12.5px/1.6 var(--mono); color: #D5D8DC; white-space: pre; }
+.file-view .kw { color: #C792EA; } .file-view .str { color: #A5D6A7; } .file-view .cm { color: var(--text-3); }
+
+/* ---------- WEL-01: welcome screen (no workspace selected) ---------- */
+.welcome { display: none; flex-grow: 1; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding-bottom: 48px; }
+.window.no-ws .welcome { display: flex; animation: rocky-fade 300ms ease-out both; }
+.window.no-ws .tabs, .window.no-ws .content { display: none; }
+.welcome-dog { width: 200px; color: var(--text-3); }
+.welcome-dog svg { display: block; width: 100%; height: auto; }
+.welcome-text { margin: 0; font-size: 15px; font-weight: 600; color: var(--text-2); }
+
+/* the message box: drawn as today, not changed by this plan */
+.composer-wrap { flex-shrink: 0; display: flex; justify-content: center; padding: 12px 24px 16px; margin-top: -20px; position: relative; background: linear-gradient(to bottom, rgba(35,39,46,0), rgba(35,39,46,0.9) 60%); }
+.composer, .stopped { width: 100%; max-width: 772px; border-radius: 12px; background: var(--composer); border: 1px solid var(--composer-border); }
+.composer { padding: 14px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.35); }
+.composer textarea { background: none; border: 0; outline: none; resize: none; font-size: 14px; line-height: 1.5; }
+.composer textarea::placeholder { color: var(--text-3); }
+.composer-bar { display: flex; align-items: center; gap: 8px; }
+.model-btn { height: 26px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border-radius: 6px; font-size: 12px; color: var(--text-2); transition: background var(--dur-fast), color var(--dur-fast); }
+.model-btn:hover { background: var(--fill-icon-hover); color: var(--text); }
+.c-btn { width: 28px; height: 28px; border-radius: 7px; display: flex; align-items: center; justify-content: center; background: #FFFFFF; color: #000000; transition: background var(--dur-fast), color var(--dur-fast); }
+.c-btn:disabled { background: rgba(255,255,255,0.1); color: var(--text-2); }
+.stopped { padding: 14px; display: flex; align-items: center; gap: 12px; color: var(--text-2); font-size: 13px; }
+
+/* ---------- TERM: terminal panel ---------- */
+.pdivider { position: relative; height: 1px; flex-shrink: 0; background: var(--hairline); }
+.pdivider::before { content: ""; position: absolute; left: 0; right: 0; top: -4px; bottom: -4px; cursor: row-resize; z-index: 2; }
+.window.panel-folded .pdivider::before, .window.panel-empty .pdivider::before { display: none; }
+.panel { height: var(--panel-h); flex-shrink: 0; display: flex; flex-direction: column; overflow: hidden; transition: height var(--dur-base) ease-out; }
+.window.panel-folded .panel, .window.panel-empty .panel { height: 32px; }
+.window.dragging .panel, .window.switching .panel { transition: none; }
+.pbar { height: 32px; flex-shrink: 0; display: flex; align-items: center; gap: 4px; padding: 0 6px 0 8px; background: var(--panel-bar); }
+.ptab-wrap { height: 24px; display: flex; align-items: center; border-radius: var(--r-btn); transition: background var(--dur-fast) ease-out; }
+.ptab-wrap:hover { background: var(--fill-hover); }
+.ptab-wrap.selected { background: var(--fill-selected); }
+.ptab { height: 24px; display: flex; align-items: center; gap: 6px; padding: 0 8px; font-size: 12px; color: var(--text-2); transition: color var(--dur-fast); }
+.ptab-wrap.closable .ptab { padding-right: 2px; }
+.ptab-wrap:hover .ptab, .ptab-wrap.selected .ptab { color: var(--text); }
+.ptab-wrap .tab-close { margin-right: 4px; }
+.ptab-wrap:hover .tab-close, .ptab-wrap.selected .tab-close { opacity: 1; }
+.sdot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.sdot.running { background: var(--success); } .sdot.done { background: var(--text-3); } .sdot.failed { background: var(--danger); }
+.term { flex-grow: 1; min-height: 0; overflow: auto; padding: 6px 12px 8px; background: var(--bg); font: 12px/1.5 var(--mono); color: #C9CDD2; white-space: pre-wrap; cursor: text; }
+.term .ok { color: var(--success); } .term .err { color: var(--danger); } .term .dim { color: var(--text-3); }
+.term .cursor { display: inline-block; width: 7px; height: 14px; background: #C9CDD2; vertical-align: -2px; }
+
+/* menus (the existing RockyMenu components in Swift) */
+.menu { position: absolute; z-index: 50; min-width: 220px; padding: 5px; border-radius: 9px; background: var(--panel); box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 10px 30px rgba(0,0,0,0.5); animation: menu-in 120ms var(--ease-out); }
+@keyframes menu-in { from { opacity: 0; transform: translateY(-3px) scale(0.98); } to { opacity: 1; transform: none; } }
+.menu-header { max-width: 300px; padding: 6px 8px 8px; margin-bottom: 4px; border-bottom: 1px solid var(--hairline); font: 11px var(--mono); color: var(--text-3); word-break: break-all; }
+.menu-item { width: 100%; height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-radius: 6px; font-size: 13px; color: var(--text); }
+.menu-item svg { color: var(--text-2); }
+.menu-item .m-kbd { margin-left: auto; padding-left: 16px; font-size: 11.5px; color: var(--text-3); }
+.menu-item:hover, .menu-item:focus-visible { background: rgba(255,255,255,0.07); outline: none; }
+.menu-item.danger, .menu-item.danger svg { color: var(--danger); }
+.menu-sep { height: 1px; margin: 4px 2px; background: var(--hairline); }
+.toast { position: absolute; left: 50%; bottom: 272px; z-index: 60; transform: translateX(-50%); padding: 8px 12px; border-radius: 8px; background: var(--panel); box-shadow: 0 0 0 1px rgba(255,255,255,0.1), 0 8px 24px rgba(0,0,0,0.45); font-size: 12px; color: var(--text-2); opacity: 0; pointer-events: none; transition: opacity var(--dur-base) ease-out; white-space: nowrap; }
+.toast.show { opacity: 1; }
+
+/* ---------- MOT-01 spinner: continuous and smooth, never stepped ---------- */
+.spinner { animation: rocky-spin 0.9s linear infinite; }
+@keyframes rocky-spin { to { transform: rotate(360deg); } }
+/* ---------- MOT-02 entrance ---------- */
+.enter { animation: rocky-enter var(--dur-enter) var(--ease-out) both; }
+@keyframes rocky-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes rocky-fade { from { opacity: 0; } to { opacity: 1; } }
+/* ---------- MOT-03 shimmer ---------- */
+.shimmer {
+  color: transparent;
+  background: linear-gradient(90deg, var(--text-2) 0%, var(--text-2) 30%, var(--text) 50%, var(--text-2) 70%, var(--text-2) 100%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  animation: rocky-shimmer 2.1s linear infinite;   /* 1.6 s sweep (76 %) + 0.5 s rest */
+}
+@keyframes rocky-shimmer { 0% { background-position: 100% 0; } 76% { background-position: 0% 0; } 100% { background-position: 0% 0; } }
+.window.inactive .spinner, .window.inactive .shimmer { animation-play-state: paused; }
+.reduce-motion .spinner { animation: none; }
+.reduce-motion .shimmer { animation: none; background: none; color: var(--text-2); }
+.reduce-motion .enter { animation: rocky-fade 150ms ease-out both; }
+.reduce-motion .panel { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: none; }
+  .shimmer { animation: none; background: none; color: var(--text-2); }
+  .enter { animation: rocky-fade 150ms ease-out both; }
+  .panel { transition: none; }
+}
+
+/* ---------- requirement pins (document only) ---------- */
+.spec-on .window [data-req] { outline: 1px dashed rgba(120,189,245,0.6); outline-offset: -1px; position: relative; }
+.spec-on .window [data-req]::after { content: attr(data-req); position: absolute; top: 1px; right: 1px; z-index: 30; padding: 2px 4px; border-radius: 3px; background: var(--accent); color: #0E1116; font: 600 9px/1 var(--mono); pointer-events: none; }
+.spec-on .window [data-scope="out"] { outline: 1px dashed rgba(232,169,75,0.85); outline-offset: 1px; }
+.spec-on .window [data-scope="out"][data-req]::after { background: var(--attention); }
+
+/* ---------- spec panel (document only) ---------- */
+.spec { overflow-y: auto; overflow-x: hidden; background: #16181C; border-left: 1px solid var(--hairline); padding: 22px 24px 80px; font-size: 12.5px; line-height: 1.55; color: var(--text-2); }
+.spec h1 { margin: 0 0 6px; font-size: 16px; color: var(--text); }
+.spec h2 { margin: 30px 0 8px; font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); }
+.spec p { margin: 6px 0; }
+.spec strong { color: var(--text); font-weight: 600; }
+.spec code { overflow-wrap: anywhere; }
+.req { margin: 0 -12px 6px; padding: 12px 12px 10px; border: 1px solid transparent; border-radius: 8px; transition: background 0.3s, border-color 0.3s; scroll-margin-top: 12px; }
+.req.flash { background: rgba(120,189,245,0.08); border-color: rgba(120,189,245,0.4); }
+.req > header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.req .id { font: 600 10.5px var(--mono); color: var(--accent); background: none; padding: 0; }
+.req h3 { flex-grow: 1; margin: 0; font-size: 13px; font-weight: 600; color: var(--text); }
+.scope { font-size: 10px; padding: 1px 6px; border-radius: 4px; border: 1px solid; white-space: nowrap; }
+.scope.in { color: var(--success); border-color: rgba(124,192,138,0.4); }
+.scope.out { color: var(--attention); border-color: rgba(232,169,75,0.5); }
+.req dl { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 5px 10px; margin: 8px 0 0; }
+.req dt { padding-top: 1px; font-size: 11px; color: var(--text-3); }
+.req dd { margin: 0; }
+.req ul { margin: 2px 0 0; padding-left: 16px; }
+.req li { margin: 2px 0; }
+.spec table { width: 100%; border-collapse: collapse; margin: 6px 0; font-size: 11.5px; }
+.spec th { text-align: left; font-weight: 600; color: var(--text-3); padding: 4px 6px 4px 0; border-bottom: 1px solid var(--hairline); }
+.spec td { padding: 4px 6px 4px 0; border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: middle; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; vertical-align: -1px; margin-right: 5px; box-shadow: 0 0 0 1px rgba(255,255,255,0.14); }
+.gallery td:first-child { width: 26px; }
+.legend { display: flex; gap: 14px; margin: 10px 0 0; font-size: 11.5px; }
+.legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; border: 1px dashed; }
+.legend .l-in::before { border-color: var(--accent); } .legend .l-out::before { border-color: var(--attention); }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <h1 class="doc-title">Rocky · Sidebar, top bar and terminal panel (M2.5)</h1>
+  <p class="doc-sub">Interactive spec. Everything in the window responds: hover, click, right-click, type in the search and the message box, press Run, open terminals, fold the panel (⌘J), drag both dividers, hold ⌘. Turn on <strong>Requirement pins</strong> and click any element to jump to its requirement on the right.</p>
+
+  <div class="demo" aria-label="Demo controls">
+    <span class="demo-label">Demo controls, not part of Rocky</span>
+    <button type="button" id="demoSend">Send a message</button>
+    <button type="button" id="demoBackground">Background agent finishes</button>
+    <button type="button" id="demoPermission">Permission request</button>
+    <button type="button" id="demoError">Agent error</button>
+    <span class="sep"></span>
+    <button type="button" id="demoInactive" aria-pressed="false">Window not key</button>
+    <button type="button" id="demoReduce" aria-pressed="false">Reduce Motion</button>
+    <button type="button" id="demoPins" aria-pressed="false">Requirement pins</button>
+    <button type="button" id="demoDiff" aria-pressed="false">Future: diff stats</button>
+    <span class="sep"></span>
+    <button type="button" id="demoWelcome" aria-pressed="false">Welcome screen</button>
+  </div>
+
+  <!-- ===================================================================================== -->
+  <!-- THE WINDOW. Everything inside #win is Rocky.                                           -->
+  <!-- ===================================================================================== -->
+  <div class="window" id="win">
+
+    <nav class="sidebar" aria-label="Workspaces">
+      <!-- SB-01 top row; WIN-01: its height is the title bar height H -->
+      <div class="sb-top" data-req="SB-01">
+        <span class="lights" data-req="WIN-01" aria-hidden="true"><span class="light close"></span><span class="light min"></span><span class="light zoom"></span></span>
+        <button class="icon-btn" style="margin-left: 6px" data-action="hide-sidebar" aria-label="Hide sidebar" title="Hide sidebar" data-icon="sidebar"></button>
+      </div>
+      <!-- SB-02 search filter -->
+      <div class="sb-search">
+        <label class="search" data-req="SB-02">
+          <span data-icon="search"></span>
+          <span class="sr-only">Search workspaces</span>
+          <input id="search" type="text" placeholder="Search" autocomplete="off" spellcheck="false">
+          <span class="kbd" id="searchKbd">⌘K</span>
+          <button type="button" class="icon-btn xs" id="searchClear" data-action="clear-search" aria-label="Clear search" data-icon="close" hidden></button>
+        </label>
+      </div>
+      <!-- SB-03..SB-05, ROW-*: rendered by renderSidebar() -->
+      <div class="sb-list" id="sbList" data-req="SB-05"></div>
+      <!-- SB-06 footer, SB-08 settings -->
+      <div class="sb-footer">
+        <button class="text-btn" data-action="add-repo" data-req="SB-06"><span data-icon="folderPlus"></span><span>Add repository</span></button>
+        <span class="grow"></span>
+        <button class="icon-btn" data-action="settings" aria-label="Settings" title="Settings  ⌘," data-icon="gear" data-req="SB-08"></button>
+      </div>
+    </nav>
+
+    <!-- WIN-03 sidebar divider -->
+    <div class="divider" id="divider" data-req="WIN-03" aria-hidden="true"></div>
+
+    <main class="main">
+      <!-- TB-01 top bar row -->
+      <header class="topbar" data-req="TB-01">
+        <div class="lights-slot" data-req="WIN-02">
+          <span class="lights" aria-hidden="true"><span class="light close"></span><span class="light min"></span><span class="light zoom"></span></span>
+          <button class="icon-btn" data-action="show-sidebar" aria-label="Show sidebar" title="Show sidebar" data-icon="sidebar"></button>
+        </div>
+        <div class="tb-content" id="tbContent">
+          <span class="crumb-repo" id="crumbRepo"></span>
+          <span class="crumb-sep" aria-hidden="true">/</span>
+          <button class="branch" data-action="copy-branch" title="Copy branch name" data-req="TB-02"><span class="b-icon" data-icon="branch" data-size="13"></span><span id="branchText"></span></button>
+          <span class="grow"></span>
+          <span class="port" id="port"></span>
+          <button class="icon-btn" data-action="open-menu" aria-label="Open in" title="Open in Finder or Terminal" data-icon="open" data-req="TB-03"></button>
+          <button class="run" id="runBtn" data-action="run" data-req="TB-04"></button>
+        </div>
+      </header>
+
+      <!-- TAB-01 -->
+      <div class="tabs" id="tabs"></div>
+
+      <div class="content" id="content">
+        <!-- Chat (MOT-02, MOT-03) above the terminal panel (TERM-*) -->
+        <div class="chat-area">
+          <div class="chat" id="chat"><div class="col" id="chatCol" data-req="MOT-02"></div></div>
+          <div class="file-view" id="fileView" hidden></div>
+          <div class="composer-wrap" id="composerWrap">
+            <div class="composer" id="composerBox">
+              <label class="sr-only" for="composerInput">Message</label>
+              <textarea id="composerInput" rows="2"></textarea>
+              <div class="composer-bar">
+                <button class="model-btn" id="modelBtn" data-action="model"></button>
+                <span class="grow"></span>
+                <button class="icon-btn" data-action="plus-menu" aria-label="Add" title="Add attachment or switch plan mode" data-icon="plus"></button>
+                <button class="c-btn" id="sendBtn" data-action="send"></button>
+              </div>
+            </div>
+            <div class="stopped" id="stoppedBox" hidden>
+              <span class="grow" id="stoppedReason"></span>
+              <button class="fill-btn" data-action="restart">Restart</button>
+            </div>
+          </div>
+        </div>
+        <!-- TERM-01 divider between the chat and the panel -->
+        <div class="pdivider" id="pdivider" data-req="TERM-01" aria-hidden="true"></div>
+        <!-- TERM-02..TERM-06 panel -->
+        <section class="panel" aria-label="Terminal panel">
+          <div class="pbar" id="pbar" data-req="TERM-02"></div>
+          <div class="term" id="term" data-req="TERM-06"></div>
+        </section>
+      </div>
+
+      <!-- WEL-01: shown instead of the tabs, chat and panel while no workspace is selected -->
+      <div class="welcome" id="welcome" data-req="WEL-01">
+        <div class="welcome-dog" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1229 946" role="img" aria-label="Rocky">
+<g fill="currentColor" fill-opacity="0.25">
+<path d="M0 0 C0.91 -0 1.83 -0.01 2.77 -0.01 C16.99 -0.01 30.46 0.88 44.31 4.31 C45.71 4.63 47.1 4.94 48.49 5.26 C78.64 12.59 108.43 29.05 125.5 55.56 C132.51 67.42 135.89 79.87 138.31 93.31 C138.37 93.64 138.37 93.64 138.68 95.33 C149.31 158.38 126.47 219.1 98.31 274.31 C96.38 274 96.38 274 94.31 273.31 C93.46 270.9 92.87 268.67 92.31 266.19 C88.08 249.83 79.17 234.18 68.31 221.31 C67.82 220.66 67.32 220 66.81 219.33 C61.68 212.73 54.62 206.8 46.31 205.31 C44.93 203.69 43.6 202.01 42.31 200.31 C41.13 199.2 39.92 198.12 38.69 197.06 C38 196.47 37.31 195.87 36.59 195.26 C34.99 193.89 33.39 192.53 31.78 191.18 C26.23 186.38 21.88 181.75 18.31 175.31 C17.85 174.49 17.39 173.67 16.91 172.83 C9.05 157.43 10.95 138.55 10.8 121.77 C10.77 118.19 10.73 114.61 10.68 111.03 C10.54 99.64 10.42 88.25 10.31 76.87 C10.23 69.36 10.15 61.85 10.05 54.34 C10 50.09 9.96 45.84 9.92 41.59 C9.9 38.33 9.85 35.06 9.8 31.8 C9.8 31.22 9.8 31.22 9.79 28.27 C9.69 22.2 9.34 17.63 6.31 12.31 C2.96 9.2 0.3 8.05 -4.19 7.81 C-8.69 8.06 -11.36 9.14 -14.69 12.31 C-19.14 20.36 -18.89 29.9 -19.19 38.84 C-19.23 39.98 -19.27 41.13 -19.31 42.31 C-19.44 46.1 -19.56 49.89 -19.69 53.69 C-19.73 54.99 -19.78 56.29 -19.82 57.64 C-20.35 73.52 -20.76 89.4 -20.97 105.29 C-20.97 105.65 -20.97 105.65 -21 107.51 C-21.1 114.69 -21.18 121.87 -21.24 129.05 C-21.26 131.07 -21.28 133.09 -21.3 135.11 C-21.33 137.56 -21.35 140.01 -21.36 142.46 C-21.49 153.17 -22.24 163.98 -26.94 173.75 C-27.27 174.46 -27.61 175.17 -27.96 175.9 C-32.22 184.21 -38.76 190.2 -45.69 196.31 C-46.51 197.07 -47.34 197.82 -48.19 198.59 C-49.99 200.21 -51.83 201.77 -53.69 203.31 C-54.13 203.7 -54.13 203.7 -56.38 205.69 C-58.69 207.31 -58.69 207.31 -61 207.69 C-71.93 210.23 -81.01 223.51 -86.69 232.31 C-92.6 242.24 -97.17 252.3 -100.69 263.31 C-101.29 265.1 -101.89 266.9 -102.5 268.69 C-102.89 269.88 -103.28 271.08 -103.69 272.31 C-105.01 272.31 -106.33 272.31 -107.69 272.31 C-112.67 262.61 -117.26 252.78 -121.67 242.81 C-122.68 240.51 -123.7 238.22 -124.73 235.92 C-137.74 206.62 -137.74 206.62 -141.31 193.25 C-141.6 192.2 -141.88 191.15 -142.18 190.07 C-153.43 147.92 -160.13 97.86 -137.24 58.29 C-121.34 32.56 -94.2 16.4 -65.69 8.31 C-65.02 8.12 -64.36 7.93 -63.67 7.73 C-52.52 4.55 -41.17 2.76 -29.69 1.31 C-29.34 1.26 -29.34 1.26 -27.55 1.02 C-18.42 -0.08 -9.19 0.03 0 0 Z M-95.69 131.31 C-99.37 136.65 -99.37 142.04 -98.69 148.31 C-96.65 154.09 -93.05 157.68 -88.06 161.12 C-82.14 163.21 -76.24 163.21 -70.31 161.12 C-65.32 157.68 -61.72 154.09 -59.69 148.31 C-59 142.04 -59 136.65 -62.69 131.31 C-66.56 126.81 -70.25 123.69 -76.3 123.03 C-84.87 122.76 -90 124.7 -95.69 131.31 Z M53.74 130.03 C49.64 135.57 48.54 140.48 49.31 147.31 C50.97 152.91 53.8 156.23 58.63 159.4 C63.56 162.07 69.18 162.24 74.5 160.66 C79.62 158.39 82.66 155.22 85.31 150.31 C87.15 144.81 87.12 139.4 84.75 134.06 C81.93 129.02 77.72 126.12 72.31 124.31 C65.17 123.45 58.76 124.55 53.74 130.03 Z "  transform="translate(314.6875,29.6875)"/>
+<path d="M0 0 C0.29 0.18 0.29 0.18 1.77 1.09 C1.25 2.08 0.73 3.08 0.2 4.1 C-24.11 51.17 -20.49 103.3 -5.23 152.9 C0.82 171.56 9.36 189.4 17.73 207.11 C23.18 218.64 28.19 230.31 32.96 242.14 C33.52 243.47 34.13 244.79 34.77 246.09 C35.36 251.55 33.73 255.13 31.27 259.84 C30.91 260.55 30.54 261.26 30.17 261.99 C27 267.97 23.38 273.11 18.77 278.09 C18.55 278.34 18.55 278.34 17.4 279.61 C6.18 291.85 -6.66 301.09 -22.23 307.09 C-23.1 307.43 -23.96 307.77 -24.86 308.12 C-42.56 313.72 -63.74 311.1 -80.04 302.84 C-100.89 290.81 -115.34 272.47 -125.34 250.96 C-126.15 249.26 -127.01 247.59 -127.88 245.93 C-136.99 227.99 -140.38 206.45 -135.52 186.79 C-130.07 171.22 -120.64 158.55 -110.02 146.18 C-109.55 145.63 -109.08 145.09 -108.6 144.53 C-108.14 143.99 -107.68 143.45 -107.2 142.89 C-102.71 137.6 -98.91 131.96 -95.23 126.09 C-94.59 125.1 -93.96 124.1 -93.31 123.08 C-85.82 111.16 -79.11 98.81 -72.7 86.28 C-60.58 62.61 -47.76 38.4 -29.23 19.09 C-28.5 18.31 -27.77 17.53 -27.02 16.72 C-7.88 -3.22 -7.88 -3.22 0 0 Z "  transform="translate(167.2265625,75.91015625)"/>
+<path d="M0 0 C16.19 2.43 28.66 13.89 38.24 26.58 C51.49 44.89 61.2 66.04 71.68 86.01 C78.13 98.23 84.75 109.91 93 121 C93.25 121.34 93.25 121.34 94.51 123.05 C101.31 132.3 108.17 141.54 115.77 150.16 C131.05 167.53 143.77 184.99 143.3 209.11 C141.03 238.21 124.63 263.35 105 284 C104.43 284.64 103.86 285.27 103.27 285.93 C93.9 296.02 81.56 303.61 69 309 C68.06 309.43 67.12 309.87 66.15 310.31 C51.22 316.11 32.1 315.09 17.44 309.12 C6.23 304.12 -3.76 297.04 -13 289 C-13.7 288.4 -14.39 287.8 -15.11 287.18 C-23.87 279.06 -31.28 267.78 -32.27 255.69 C-32.72 239.72 -25.8 226.03 -17.83 212.53 C-7.36 194.76 0.67 174.91 6 155 C6.25 154.06 6.51 153.12 6.77 152.16 C10.64 137.69 13.21 123.34 14.73 108.45 C14.96 106.38 15.25 104.33 15.55 102.27 C19.6 70.12 14.95 35.28 -0.03 6.5 C-1.09 3.77 -1.06 2.68 0 0 Z "  transform="translate(452,75)"/>
+<path d="M0 0 C15.55 6.04 27.35 12.67 35 28 C35 28.66 35 29.32 35 30 C35.66 30 36.32 30 37 30 C35.29 42.41 24.43 54.32 17 64 C16.55 64.59 16.09 65.19 15.63 65.8 C8.73 74.8 1.46 83.46 -6 92 C-6.72 92.84 -7.45 93.68 -8.2 94.54 C-17.78 105.43 -28.02 116.06 -39.47 125.01 C-41.48 126.59 -43.41 128.22 -45.33 129.91 C-48.92 133 -52.7 135.72 -56.62 138.38 C-56.98 138.61 -56.98 138.61 -58.75 139.82 C-68.51 146.42 -78.49 152.38 -88.88 157.94 C-89.77 158.42 -90.66 158.91 -91.58 159.41 C-96.43 161.96 -100.47 163.87 -106 164 C-110.03 161.51 -112.45 158.47 -115.31 154.75 C-124.26 143.27 -135.21 132.55 -147 124 C-147.09 121.73 -147.09 121.73 -146 119 C-143.06 117.28 -139.85 116.32 -136.62 115.25 C-134.69 114.56 -132.77 113.87 -130.84 113.16 C-129.86 112.81 -128.88 112.45 -127.87 112.09 C-114.38 106.98 -101.97 100 -90 92 C-89.31 91.54 -88.62 91.09 -87.92 90.62 C-63.42 74.26 -39.79 53.59 -22 30 C-21.04 28.74 -20.08 27.49 -19.12 26.23 C-13.42 18.75 -7.94 11.15 -2.64 3.38 C-1 1 -1 1 0 0 Z "  transform="translate(1121,257)"/>
+<path d="M0 0 C5.91 0.4 10.59 1.82 16 4.12 C56.03 20.37 100.4 25.82 143 31 C143.81 31.11 144.63 31.21 145.47 31.32 C153.46 32.31 161.53 32.63 169.56 33.06 C169.98 33.08 169.98 33.08 172.08 33.2 C183.85 33.81 195.59 34.19 207.38 34.19 C208.62 34.19 209.86 34.19 211.14 34.19 C217.22 34.15 223.24 33.94 229.3 33.5 C239.66 32.78 250.05 32.78 260.44 32.76 C263.86 32.75 267.29 32.72 270.71 32.69 C306.18 32.52 343.15 41.55 372 63 C372.51 63.37 372.51 63.37 375.12 65.23 C406.97 88.41 427.25 124.47 434 163 C436.74 180.79 436.33 198.64 435.5 216.56 C433.97 249.93 435.94 282.87 440 316 C422.25 327.16 395.54 326.14 375.56 323 C346.08 316.2 317.39 298.9 300.94 273.02 C295.29 263.62 291.52 253.61 287.84 243.32 C286.08 238.46 284.12 233.71 282 229 C281.67 228.25 281.35 227.51 281.01 226.74 C273.26 210.98 258.05 199.93 242 194 C241.23 193.66 240.45 193.31 239.66 192.96 C216.9 184.73 188.65 197.67 167.5 205.41 C127.32 220.09 87.9 232.19 44.78 232.19 C41.84 232.19 38.89 232.21 35.94 232.22 C18.44 232.28 1.87 230.89 -15 226 C-16.21 225.66 -17.42 225.33 -18.66 224.98 C-39.42 218.69 -56.42 206.85 -72 192 C-72.54 191.49 -73.07 190.99 -73.62 190.47 C-78.03 186.2 -81.75 181.67 -85.31 176.69 C-85.59 176.3 -85.59 176.3 -87.01 174.32 C-105.41 148.12 -115.86 117.6 -122.25 86.44 C-122.43 85.59 -122.6 84.75 -122.78 83.88 C-123.65 79.51 -124.2 75.47 -124 71 C-120.12 69.6 -116.82 70.31 -112.81 70.94 C-107.14 71.75 -101.72 72.43 -96 72 C-95.46 71.96 -95.46 71.96 -92.72 71.76 C-71.7 69.59 -52.97 60.47 -37.47 46.33 C-36.1 45.09 -34.69 43.88 -33.29 42.68 C-27.09 37.35 -21.97 31.49 -17 25 C-16.32 24.11 -15.64 23.23 -14.94 22.31 C-10.44 16.27 -6.45 10.01 -2.57 3.55 C-1 1 -1 1 0 0 Z "  transform="translate(595,329)"/>
+</g>
+<g fill="currentColor">
+<path d="M0 0 C0.51 0 0.51 0 3.1 0.01 C18.57 0.08 33.54 0.65 48.62 4.44 C49.5 4.66 50.38 4.88 51.29 5.1 C74.78 11.18 95.76 20.9 114.3 36.62 C114.89 37.11 115.48 37.61 116.09 38.12 C117.27 39.13 118.41 40.19 119.54 41.26 C122.9 43.16 126.45 43.15 130.25 43.44 C148.6 45.2 161.66 52.6 174.62 65.44 C175.4 66.16 176.18 66.88 176.99 67.62 C191.8 81.56 200.82 99.9 210.07 117.71 C226.94 150.15 246.5 179.97 270.41 207.67 C286.57 226.56 294.84 245.06 293.88 270.24 C293.1 280.09 290.78 289.81 288.62 299.44 C289.24 299.64 289.24 299.64 292.38 300.68 C296 301.89 299.61 303.13 303.21 304.38 C337.35 316.18 372.13 324.08 407.88 329.19 C408.22 329.24 408.22 329.24 409.98 329.49 C432.96 332.81 456 333.76 479.2 333.64 C483.08 333.62 486.97 333.62 490.86 333.62 C503.36 333.61 515.81 333.39 528.3 332.67 C565.83 330.54 604.57 334.41 638.62 351.44 C643.59 351.73 647.29 351.14 651.91 349.38 C653.09 348.94 654.27 348.49 655.49 348.04 C656.74 347.55 658 347.05 659.25 346.56 C659.57 346.44 659.57 346.44 661.19 345.81 C684.41 336.83 706.05 325.94 725.62 310.44 C726.45 309.81 727.27 309.17 728.12 308.52 C733.68 304.2 738.86 299.55 743.98 294.74 C746.54 292.34 749.11 290.01 751.82 287.79 C754.04 285.93 755.9 284.19 757.75 282 C758.34 281.31 758.92 280.62 759.53 279.91 C760.22 279.09 760.91 278.28 761.62 277.44 C762.52 276.41 763.42 275.39 764.32 274.37 C793.61 240.92 815.75 201.65 829.62 159.44 C829.92 158.56 830.21 157.68 830.51 156.77 C835.58 141.23 839.22 125.32 841.83 109.19 C843.36 99.8 844.99 92.72 852.79 86.69 C859.81 81.89 866.24 81.67 874.62 82.44 C882.88 84.87 889.33 90.04 893.62 97.44 C894.86 101.06 894.86 101.06 895.81 104.88 C896.14 106.13 896.46 107.39 896.79 108.68 C909.65 166.7 885.56 234.86 854.95 283.38 C841 305.16 826.11 326.22 808.59 345.29 C806.8 347.24 805.09 349.23 803.38 351.25 C791.81 364.51 778.55 375.76 764.62 386.44 C763.59 387.24 762.55 388.05 761.49 388.88 C754.03 394.45 746.18 399.12 738.06 403.69 C737.55 403.98 737.55 403.98 734.95 405.44 C715.05 416.44 715.05 416.44 710.62 416.44 C711.21 420.75 712.26 424.37 713.95 428.38 C723.09 450.45 723.09 450.45 725.69 462 C725.87 462.78 726.05 463.56 726.23 464.37 C729.29 479.18 729.91 494.24 729.74 509.32 C729.71 512.18 729.7 515.03 729.68 517.88 C729.65 525.99 729.58 534.09 729.51 542.19 C728.49 661.2 728.49 661.2 765.48 700.96 C776.17 713.29 778.54 726.99 777.89 742.8 C776.92 756.11 774.33 769.33 772.14 782.49 C771.38 787.04 770.64 791.6 769.9 796.15 C769 801.66 768.1 807.16 767.2 812.67 C765.48 823.12 763.81 833.58 762.21 844.05 C761.9 846.07 761.59 848.1 761.28 850.12 C759.74 860.19 759.74 860.19 759.03 864.93 C758.54 868.21 758.04 871.5 757.53 874.78 C757.46 875.24 757.46 875.24 757.12 877.59 C755.43 888.33 752.04 899.98 743.48 907.26 C736.68 912.05 730.31 913.69 721.97 913.7 C721.23 913.7 720.49 913.71 719.73 913.71 C717.28 913.72 714.82 913.72 712.36 913.71 C710.59 913.72 708.82 913.72 707.05 913.73 C702.25 913.74 697.46 913.74 692.66 913.74 C688.65 913.74 684.65 913.74 680.64 913.75 C671.18 913.76 661.72 913.76 652.26 913.75 C642.51 913.75 632.77 913.76 623.02 913.78 C614.64 913.8 606.26 913.8 597.88 913.8 C592.88 913.8 587.88 913.8 582.88 913.82 C578.18 913.83 573.48 913.83 568.77 913.81 C567.05 913.81 565.33 913.81 563.61 913.82 C552.11 913.87 542.27 913.79 533.42 905.47 C525.74 896.76 524.93 887.55 525.45 876.42 C525.87 871.7 527.57 867.66 529.62 863.44 C529.84 862.98 529.84 862.98 530.91 860.67 C537.42 847.68 548.06 836.85 561.62 831.44 C565.27 830.34 568.92 829.35 572.62 828.43 C575.57 827.46 576.86 826.94 578.62 824.44 C585.51 801.55 577.59 767.32 566.88 746.44 C561.3 736.31 553.79 730.32 544.28 724.16 C531.12 715.65 518.5 704.65 508.62 692.44 C507.84 691.49 507.06 690.55 506.25 689.57 C497.12 678.37 488.09 666.26 481.53 653.37 C479.63 650.44 479.63 650.44 477.46 649.63 C473.79 649.38 470.79 650.31 467.34 651.43 C465.87 651.89 464.39 652.35 462.91 652.8 C462.13 653.05 461.36 653.3 460.55 653.55 C417.26 667.17 372.7 676.23 327.62 681.44 C326.93 681.52 326.23 681.6 325.52 681.68 C299.21 684.71 272.79 684.89 246.34 685.05 C243.38 685.06 240.42 685.09 237.47 685.11 C235.39 685.13 233.32 685.13 231.25 685.13 C230.63 685.14 230.63 685.14 227.49 685.17 C226.4 685.17 225.31 685.17 224.19 685.18 C221.62 685.44 221.62 685.44 219.62 687.44 C218.92 690.42 218.32 693.36 217.78 696.38 C217.6 697.3 217.43 698.23 217.25 699.18 C216.68 702.27 216.12 705.35 215.56 708.44 C215.16 710.62 214.76 712.79 214.35 714.97 C209.65 740.51 205.1 766.08 200.58 791.65 C196.58 814.21 192.48 836.74 187.96 859.2 C187.53 861.33 187.1 863.47 186.68 865.61 C186.09 868.58 185.49 871.54 184.88 874.5 C184.72 875.36 184.55 876.22 184.37 877.11 C181.75 889.7 176.68 900.67 165.84 908.16 C152.67 915.77 137.43 914.59 122.72 914.55 C121.06 914.55 119.4 914.55 117.74 914.55 C112.35 914.55 106.95 914.54 101.55 914.53 C100.63 914.53 99.71 914.52 98.76 914.52 C90.05 914.5 81.34 914.47 72.63 914.44 C61.54 914.39 50.45 914.37 39.36 914.37 C31.53 914.37 23.7 914.35 15.87 914.31 C11.2 914.29 6.54 914.28 1.87 914.29 C-2.51 914.3 -6.9 914.28 -11.28 914.24 C-12.88 914.23 -14.48 914.23 -16.08 914.24 C-26.65 914.31 -35.13 913.09 -43.3 905.7 C-48.87 899.91 -51.58 893.23 -51.88 885.25 C-51.3 870.33 -45.24 856.77 -34.56 846.31 C-29.03 841.74 -22.62 838.26 -16.38 834.74 C-11.83 832.13 -8.26 829.97 -5.38 825.44 C-5.02 824.89 -4.66 824.33 -4.29 823.77 C-2.99 820.46 -3.1 817.28 -3.15 813.78 C-3.15 813.03 -3.16 812.28 -3.17 811.5 C-3.29 804.08 -3.96 796.76 -4.74 789.39 C-5.22 784.86 -5.66 780.32 -6.11 775.79 C-6.21 774.77 -6.3 773.75 -6.41 772.7 C-7.87 757.58 -9.08 742.45 -10.31 727.31 C-10.38 726.53 -10.44 725.76 -10.51 724.95 C-12.41 701.7 -14.25 678.45 -16.06 655.19 C-16.17 653.85 -16.27 652.5 -16.38 651.16 C-17.28 639.57 -18.18 627.98 -19.07 616.39 C-19.34 612.91 -19.61 609.43 -19.88 605.96 C-20 604.44 -20.12 602.93 -20.23 601.41 C-20.55 597.08 -20.93 592.76 -21.38 588.44 C-21.47 587.45 -21.56 586.46 -21.66 585.45 C-22.66 577.87 -25.89 572.74 -30.25 566.56 C-31.62 564.54 -32.99 562.51 -34.35 560.48 C-35.03 559.47 -35.71 558.46 -36.41 557.42 C-61.81 518.91 -73.41 475.95 -80.66 430.96 C-81.56 425.42 -82.48 419.89 -83.39 414.35 C-83.72 412.32 -84.06 410.29 -84.39 408.26 C-86.02 398.32 -87.82 388.41 -89.78 378.53 C-91.02 372.13 -91.74 365.86 -92.08 359.34 C-92.99 350.46 -98.29 341.59 -103.38 334.44 C-104.37 334.11 -105.35 333.78 -106.38 333.44 C-107.56 334.77 -108.75 336.1 -109.94 337.44 C-110.3 337.85 -110.3 337.85 -112.16 339.94 C-114.07 342.09 -115.94 344.26 -117.81 346.44 C-134.33 365.23 -158.53 382.96 -184.52 384.64 C-188.08 384.74 -191.63 384.76 -195.19 384.75 C-196.38 384.77 -197.58 384.78 -198.81 384.8 C-209.73 384.8 -219.59 382.93 -229.31 377.88 C-229.99 377.53 -230.66 377.18 -231.35 376.82 C-261.65 360.7 -283.39 328.69 -293.71 296.63 C-300.91 272.83 -300.14 249.05 -288.56 226.81 C-285.27 221.02 -281.41 215.73 -277.38 210.44 C-276.59 209.41 -275.8 208.38 -274.99 207.31 C-271.65 202.95 -268.3 198.59 -264.87 194.29 C-253.39 179.8 -244.74 163.86 -236.06 147.59 C-212.77 103.97 -212.77 103.97 -199.38 85.44 C-198.97 84.87 -198.56 84.3 -198.15 83.71 C-185.72 66.37 -169.73 49.83 -148.38 44.44 C-145.32 44.06 -142.26 43.85 -139.19 43.62 C-130.72 42.97 -126.48 40.42 -120.38 34.44 C-87.5 7.08 -41.44 -0.26 0 0 Z M-50.06 18.75 C-51.02 18.97 -51.99 19.18 -52.98 19.41 C-85.72 26.96 -117.23 41.75 -135.75 71 C-158.27 109.76 -154.1 157.46 -143.38 199.44 C-139.01 215.34 -133.2 230.46 -126.38 245.44 C-125.74 246.85 -125.1 248.25 -124.46 249.66 C-120.94 257.43 -117.41 265.19 -113.85 272.93 C-113.55 273.6 -113.24 274.27 -112.92 274.96 C-111.15 278.82 -109.3 282.64 -107.38 286.44 C-106.06 286.44 -104.74 286.44 -103.38 286.44 C-102.81 284.9 -102.25 283.35 -101.69 281.81 C-101.32 280.8 -100.94 279.79 -100.56 278.75 C-99.78 276.57 -99.03 274.39 -98.31 272.19 C-92.14 253.68 -81.18 232.02 -63.26 222.29 C-61.31 221.44 -61.31 221.44 -58.38 220.44 C-59.94 225.48 -62.23 228.55 -65.88 232.38 C-79.41 246.82 -89.41 264.25 -94.38 283.44 C-94.55 284.01 -94.72 284.59 -94.9 285.18 C-95.93 290.11 -95.64 295.25 -95.67 300.27 C-95.68 301.66 -95.7 303.04 -95.73 304.43 C-96.1 321.63 -91.52 335.03 -79.69 347.75 C-68.34 358.66 -56.75 359.92 -41.83 359.71 C-31.78 359.37 -23.38 355.78 -16.38 348.44 C-11.6 342.56 -10.58 337.66 -10.75 330.19 C-10.73 329.3 -10.71 328.42 -10.69 327.51 C-10.74 321.18 -10.74 321.18 -13.43 318.04 C-16.92 316.14 -20.44 314.55 -24.12 313.06 C-30.36 310.44 -35.99 307.58 -41.38 303.44 C-42.19 302.83 -43.01 302.23 -43.86 301.61 C-51.63 294.91 -56.19 285.54 -57.38 275.44 C-57.83 267.13 -55.61 260.9 -50.38 254.44 C-38.74 242.64 -21.53 239.18 -5.56 239 C11.91 239.1 28.65 243.52 41.55 255.96 C45.72 260.93 47.72 265.93 47.55 272.45 C47.12 275.54 46.47 278.43 45.62 281.44 C45.39 282.31 45.15 283.17 44.9 284.07 C42.48 291.27 37.97 296.17 32.62 301.44 C32.34 301.73 32.34 301.73 30.91 303.19 C23.92 309.76 14.5 313.32 5.59 316.48 C3.62 317.44 3.62 317.44 1.62 320.44 C1.4 323.07 1.3 325.56 1.31 328.19 C1.3 328.88 1.28 329.57 1.26 330.28 C1.26 336.22 2.66 340.92 6.39 345.7 C17.31 356.28 29.13 361.11 44.45 360.91 C57.46 360.36 68.22 353.72 77.04 344.36 C86.4 333.02 89.35 320.01 89.12 305.56 C89.11 304.33 89.1 303.11 89.09 301.84 C88.89 292.76 87.88 284.98 84.62 276.44 C84.2 275.22 83.78 274 83.34 272.74 C78.61 259.61 71.78 248.18 62.13 238.07 C59.49 235.3 57.01 232.44 54.56 229.5 C53.83 228.62 53.1 227.75 52.34 226.85 C50.74 224.6 50.03 223.13 49.62 220.44 C67.29 225.96 77.77 247.2 85.8 262.39 C89.09 268.86 91.46 275.3 93.06 282.37 C93.53 284.36 93.53 284.36 94.62 287.44 C96.75 288.39 96.75 288.39 98.62 288.44 C130.23 227.8 153.53 158.56 134.77 90.07 C127.19 66.05 110.89 47.07 88.63 35.28 C85.26 33.55 81.86 31.9 78.43 30.29 C76.87 29.55 75.31 28.78 73.76 28 C59.29 20.95 43.36 18.14 27.62 15.44 C26.72 15.26 25.82 15.08 24.89 14.9 C20.82 14.32 16.85 14.28 12.74 14.27 C11.88 14.27 11.03 14.26 10.14 14.26 C8.33 14.25 6.51 14.25 4.7 14.25 C1.99 14.25 -0.72 14.23 -3.42 14.21 C-19.17 14.16 -34.68 15.19 -50.06 18.75 Z M-152.15 60.35 C-160.56 64.9 -167.21 70.33 -173.98 77.07 C-175.14 78.21 -176.34 79.3 -177.55 80.39 C-198.76 99.85 -211.06 130.35 -224.38 155.44 C-235.02 175.49 -246.59 193.63 -261.06 211.12 C-276.78 230.32 -286.85 250.08 -284.38 275.44 C-280.73 302.92 -266.51 327.86 -247.38 347.44 C-246.75 348.11 -246.12 348.79 -245.48 349.49 C-233.63 362.03 -216.98 369.96 -199.78 370.75 C-173.55 371.49 -153.08 362.5 -134.01 344.52 C-124.93 335.7 -113.3 322.73 -112.12 309.57 C-112.42 305.94 -113.43 303.62 -115.06 300.38 C-117.18 296.13 -118.98 291.89 -120.64 287.44 C-123.24 280.6 -126.31 274.03 -129.48 267.44 C-145.76 233.48 -158.03 199.88 -163.38 162.44 C-163.49 161.67 -163.6 160.9 -163.71 160.11 C-167.64 129.8 -163.78 96.72 -149.11 69.69 C-147.66 66.97 -146.45 64.32 -145.38 61.44 C-148.06 59.52 -148.95 59.3 -152.15 60.35 Z M137.62 59.44 C136.55 62.64 136.62 64.18 138.1 67.2 C138.44 67.92 138.78 68.64 139.13 69.37 C139.31 69.75 139.31 69.75 140.25 71.69 C156.07 106.11 156.58 144.55 150.62 181.44 C150.42 182.88 150.21 184.33 150 185.77 C145.08 218.56 132.5 250.47 116.11 279.14 C108.57 292.43 103.28 305.38 106.09 321 C112.28 341.41 130.65 354.89 148.33 364.98 C158.81 370.47 168.72 373.14 180.56 372.94 C181.14 372.93 181.14 372.93 184.03 372.9 C192.29 372.69 199.06 371.92 206.62 368.44 C207.22 368.19 207.82 367.93 208.44 367.67 C240.08 354.27 261.61 325.13 274.92 294.46 C281.98 276.15 282.96 257.65 275.38 239.44 C270.12 229.17 262.34 220.35 254.81 211.69 C235.3 189.21 219.37 164.82 205.74 138.43 C201.3 129.85 196.66 121.39 192 112.93 C190.72 110.6 189.45 108.27 188.19 105.93 C183.63 97.55 178.67 89.85 172.62 82.44 C171.93 81.56 171.23 80.69 170.52 79.79 C162.73 70.54 152.43 62.7 140.62 59.44 C139.63 59.44 138.64 59.44 137.62 59.44 Z M858.62 101.44 C855.61 108.74 854.67 116.69 853.44 124.44 C851.04 138.55 847.29 151.92 842.62 165.44 C842.28 166.45 841.93 167.46 841.58 168.5 C834.26 189.62 824.53 209.46 813.75 229 C813.13 230.12 812.51 231.25 811.88 232.41 C808.49 238.44 804.89 244 800.62 249.44 C799.81 250.56 799 251.69 798.2 252.82 C785.85 270.34 772.37 285.74 757.25 300.94 C756.51 301.68 755.78 302.42 755.02 303.18 C747.85 310.33 740.42 316.8 732.19 322.69 C731.8 322.97 731.8 322.97 729.83 324.38 C709.59 338.76 689.32 349.56 666.1 358.44 C663.88 359.34 661.75 360.33 659.62 361.44 C659.87 364.98 660.43 366.25 663 368.77 C664.06 369.61 665.12 370.43 666.19 371.25 C677.23 380.15 687.69 390.2 696.14 401.62 C697.62 403.44 697.62 403.44 700.62 405.44 C707.66 405.41 713.36 401.86 719.44 398.62 C720.54 398.04 721.65 397.46 722.79 396.86 C732.51 391.66 741.67 385.86 750.62 379.44 C751.2 379.03 751.78 378.62 752.37 378.2 C758.93 373.54 764.98 368.48 770.86 362.99 C773.02 361 775.2 359.07 777.43 357.15 C781.81 353.33 785.95 349.3 790.06 345.19 C790.81 344.44 791.56 343.69 792.33 342.92 C797.02 338.17 801.41 333.36 805.53 328.1 C807.51 325.59 809.56 323.18 811.65 320.76 C817.34 314.17 822.48 307.31 827.43 300.15 C828.59 298.49 829.78 296.84 830.97 295.19 C835.39 289.01 839.21 282.75 842.68 276.01 C844.75 272.01 846.99 268.22 849.44 264.44 C868.31 234.1 879.31 198.06 883.35 162.72 C883.57 160.85 883.85 158.99 884.14 157.13 C884.9 151.3 884.85 145.46 884.87 139.58 C884.87 137.4 884.91 135.23 884.94 133.06 C885.02 121.74 884.35 110.51 878.62 100.44 C875.44 97.62 872.84 96.17 868.62 95.88 C864.23 96.15 861.19 97.86 858.62 101.44 Z M279.18 314.88 C278.97 315.23 278.97 315.23 277.94 317 C277.43 317.82 276.93 318.63 276.41 319.48 C275.82 320.45 275.23 321.43 274.62 322.44 C269.5 330.54 264.31 338.25 257.7 345.24 C255.79 347.27 254.02 349.35 252.25 351.5 C247.93 356.46 242.79 360.4 237.62 364.44 C236.99 364.97 236.36 365.51 235.7 366.06 C216.13 382.03 190.38 387.1 165.81 384.62 C165.4 384.59 165.4 384.59 163.29 384.41 C158.77 383.96 156.12 383.49 152.62 380.44 C150.12 379.15 147.6 377.91 145.06 376.69 C124.87 366.76 110.73 353.5 97.62 335.44 C93.33 336.93 92.3 339.47 90.38 343.44 C87.09 349.79 83.36 355.1 78.62 360.44 C78.1 361.05 77.57 361.66 77.02 362.29 C58.53 382.25 29.14 392.22 2.66 393.65 C-25.1 394.53 -50.58 385.89 -73.38 370.44 C-74.37 371.1 -75.35 371.76 -76.38 372.44 C-60.98 466.22 -43.51 560.4 38.75 620.13 C47.87 626.49 57.5 631.71 67.31 636.88 C68.71 637.61 70.1 638.35 71.5 639.09 C74.87 640.88 78.25 642.66 81.62 644.44 C82.62 643.78 83.61 643.12 84.62 642.44 C83.88 628.71 78.94 616.06 72.57 604.03 C69.92 598.86 69.1 595.26 69.62 589.44 C69.96 588.78 70.28 588.12 70.62 587.44 C74.36 587 76.07 587.02 79.12 589.31 C88.83 600.57 92.61 615.31 95.88 629.5 C96.03 630.15 96.18 630.79 96.33 631.46 C99.46 646.03 100.04 661 100.62 675.84 C100.71 677.79 100.79 679.74 100.87 681.69 C101.08 686.85 101.29 692.02 101.5 697.18 C101.67 701.46 101.84 705.74 102.02 710.02 C103.03 734.8 104.01 759.59 104.88 784.38 C104.92 785.53 104.96 786.68 105 787.87 C105.21 793.87 105.4 799.88 105.55 805.89 C105.62 808.35 105.72 810.8 105.81 813.25 C105.85 814.69 105.89 816.13 105.92 817.57 C105.96 818.76 106 819.96 106.04 821.2 C105.52 825.22 104.16 827.31 101.62 830.44 C99.23 831.89 97.02 833.09 94.5 834.25 C87.52 837.72 82.07 841.81 76.62 847.44 C76.34 847.72 76.34 847.72 74.89 849.14 C66.13 858.43 62.26 870.54 62.38 883.06 C62.37 883.9 62.36 884.73 62.35 885.59 C62.37 891.07 62.56 895.38 66.62 899.44 C69.29 899.65 71.86 899.73 74.53 899.73 C75.34 899.73 76.16 899.74 77 899.75 C79.71 899.77 82.42 899.77 85.13 899.77 C87.02 899.78 88.9 899.79 90.78 899.79 C94.74 899.81 98.7 899.81 102.65 899.81 C107.71 899.81 112.77 899.84 117.82 899.87 C121.72 899.89 125.61 899.9 129.51 899.89 C131.37 899.9 133.24 899.91 135.1 899.92 C137.71 899.94 140.33 899.94 142.95 899.92 C143.71 899.93 144.47 899.95 145.26 899.96 C151.75 899.88 156.65 897.69 161.8 893.79 C170.52 884.25 171.63 869.15 173.94 856.81 C174.24 855.22 174.54 853.62 174.85 852.02 C175.32 849.56 175.79 847.1 176.25 844.63 C177.23 839.5 178.22 834.38 179.25 829.27 C183.7 806.91 187.68 784.48 191.63 762.03 C194.16 747.62 196.76 733.24 199.43 718.86 C201.12 709.8 202.76 700.73 204.39 691.65 C204.96 688.51 205.53 685.37 206.1 682.23 C208.09 671.2 210.02 660.17 211.84 649.12 C212.2 646.99 212.56 644.86 212.91 642.72 C213.59 638.69 214.24 634.65 214.89 630.61 C215.19 628.78 215.49 626.96 215.8 625.13 C215.93 624.31 216.05 623.48 216.18 622.63 C216.8 619.04 217.31 616.86 219.51 613.89 C221.62 612.44 221.62 612.44 225.31 612.56 C226.41 612.85 227.5 613.14 228.62 613.44 C233.13 622.44 227.67 636.58 225.56 645.81 C224.98 648.4 224.39 650.98 223.82 653.57 C223.47 655.17 223.1 656.76 222.73 658.36 C221.85 662.35 221.34 665.51 222.62 669.44 C224.42 671.23 227.08 670.58 229.5 670.6 C230.13 670.6 230.13 670.6 233.34 670.63 C234.74 670.63 236.15 670.64 237.55 670.64 C239 670.65 240.45 670.65 241.9 670.66 C246.58 670.68 251.26 670.69 255.94 670.69 C256.73 670.69 257.52 670.69 258.33 670.69 C281.91 670.71 305.2 670.26 328.62 667.44 C330.78 667.2 332.95 666.97 335.11 666.75 C397.19 659.9 459.24 642.66 516.61 618.2 C531.19 612.03 531.19 612.03 537.62 612.44 C539.86 614.37 539.86 614.37 541.62 617.44 C542.46 618.7 543.3 619.96 544.14 621.22 C545.05 622.65 545.97 624.07 546.88 625.5 C547.87 627.04 548.86 628.58 549.85 630.11 C551.42 632.57 553 635.02 554.56 637.48 C564.07 652.16 574.79 666.34 587.05 678.83 C588.8 680.61 590.52 682.41 592.24 684.21 C607.65 700.12 624.43 711.31 644.56 720.5 C660.27 727.74 669.49 738.17 675.62 754.44 C682.41 775.95 689.82 815.32 679.53 836.71 C675.39 842.64 669.48 844.19 662.9 846.29 C657.24 848.12 652.9 850.2 648.62 854.44 C648.31 854.74 648.31 854.74 646.74 856.28 C637.69 865.84 635.13 877.33 635.3 890.21 C635.73 894.51 636.65 896.37 639.62 899.44 C642.78 901.02 646.18 900.59 649.65 900.6 C650.48 900.6 651.31 900.61 652.16 900.61 C654.92 900.63 657.67 900.64 660.42 900.64 C662.33 900.65 664.24 900.65 666.15 900.66 C670.17 900.67 674.18 900.67 678.19 900.68 C683.33 900.68 688.46 900.71 693.6 900.74 C697.55 900.75 701.5 900.76 705.45 900.76 C707.34 900.76 709.23 900.77 711.12 900.79 C713.78 900.8 716.43 900.8 719.08 900.79 C719.86 900.8 720.64 900.81 721.44 900.82 C727.07 900.78 731.03 899.52 735.42 896 C743.56 886.88 743.75 873.03 745.44 861.41 C746.19 856.26 746.96 851.12 747.73 845.97 C747.89 844.92 748.05 843.87 748.21 842.79 C749.63 833.34 751.14 823.92 752.69 814.5 C753.13 811.87 753.56 809.24 753.98 806.61 C754.05 806.17 754.05 806.17 754.41 803.96 C754.56 803.09 754.7 802.21 754.85 801.31 C755.76 795.7 756.68 790.1 757.61 784.49 C758.45 779.45 759.27 774.41 760.09 769.36 C760.4 767.45 760.71 765.55 761.03 763.64 C767.2 727.04 767.2 727.04 755.81 710.81 C753.36 707.57 750.81 704.49 748.06 701.5 C733.95 685.54 728.58 662.63 723.62 642.44 C723.37 641.41 723.11 640.38 722.85 639.33 C721.06 631.93 719.85 624.63 719.06 617.06 C718.94 615.91 718.82 614.76 718.69 613.58 C715.74 584.71 714.91 556.03 716.26 527.05 C718.37 480.83 710.55 435.35 678.55 399.8 C676.27 397.32 673.95 394.88 671.62 392.44 C671.31 392.09 671.31 392.09 669.74 390.32 C646.49 365.14 610.43 353.02 577.62 347.44 C576.62 347.26 575.61 347.08 574.56 346.9 C569.41 346.3 564.32 346.29 559.13 346.3 C558.58 346.3 558.58 346.3 555.78 346.3 C553.44 346.3 551.1 346.3 548.76 346.31 C545.23 346.31 541.7 346.31 538.17 346.3 C527.47 346.3 516.84 346.42 506.16 347.21 C436.42 351.78 351.93 342.38 287.82 314.2 C284.56 313.06 281.79 312.28 279.18 314.88 Z M-7.23 355.66 C-7.81 356.27 -8.4 356.87 -9 357.5 C-17.82 365.74 -27.9 368.81 -39.38 371.44 C-39.38 372.43 -39.38 373.42 -39.38 374.44 C-37.63 375.08 -35.88 375.7 -34.12 376.31 C-33.15 376.66 -32.18 377.01 -31.17 377.37 C-21.55 380.08 -12.08 380.8 -2.12 380.75 C-0.95 380.75 0.23 380.74 1.44 380.74 C13.21 380.59 23.83 379.33 34.62 374.44 C34.46 373.94 34.46 373.94 33.62 371.44 C31.29 370.67 29.08 370.09 26.69 369.56 C16.93 367.18 9.39 363.5 1.73 356.89 C-1.34 354.77 -3.91 353.47 -7.23 355.66 Z M-5.38 600.44 C-6.58 604.92 -6.26 609.08 -5.83 613.63 C-5.76 614.45 -5.69 615.27 -5.62 616.11 C-5.39 618.83 -5.14 621.55 -4.9 624.27 C-4.73 626.2 -4.56 628.13 -4.4 630.06 C-4.04 634.17 -3.68 638.28 -3.32 642.39 C-2.46 652.07 -1.63 661.76 -0.79 671.45 C-0.51 674.69 -0.23 677.93 0.05 681.16 C1.58 698.73 3.01 716.3 4.38 733.88 C5.48 748.04 6.59 762.21 7.82 776.37 C7.86 776.92 7.86 776.92 8.11 779.71 C8.55 784.83 9 789.95 9.46 795.06 C9.61 796.84 9.77 798.62 9.93 800.39 C10 801.17 10.07 801.95 10.14 802.75 C11.2 814.97 11.55 825.72 3.94 835.95 C-1.12 841.39 -7.59 845.09 -13.86 848.98 C-25.39 856.29 -33.03 865.42 -37.38 878.44 C-37.9 883.41 -37.95 887.29 -35.69 891.81 C-31.88 896.13 -29.12 898.61 -23.38 899.44 C-20.99 899.53 -18.61 899.58 -16.23 899.58 C-15.53 899.59 -14.83 899.59 -14.11 899.59 C-11.81 899.6 -9.51 899.6 -7.21 899.61 C-5.6 899.61 -4 899.61 -2.4 899.62 C0.95 899.62 4.3 899.62 7.65 899.62 C11.96 899.62 16.26 899.64 20.56 899.65 C23.86 899.66 27.17 899.67 30.47 899.67 C32.06 899.67 33.65 899.67 35.23 899.68 C37.44 899.69 39.66 899.69 41.87 899.68 C42.5 899.68 42.5 899.68 45.68 899.68 C48.62 899.44 48.62 899.44 50.62 897.44 C50.36 895.09 50.02 892.76 49.62 890.44 C48.34 872.12 52.67 855.34 64.89 841.26 C70.24 835.37 75.92 830.74 82.62 826.44 C84.14 825.35 85.64 824.24 87.12 823.12 C87.75 822.65 88.38 822.18 89.03 821.7 C90.62 820.44 90.62 820.44 92.62 818.44 C92.8 815.35 92.85 812.37 92.8 809.28 C92.79 808.34 92.78 807.41 92.78 806.44 C92.66 795.6 92.25 784.78 91.82 773.95 C91.74 771.74 91.65 769.54 91.57 767.33 C91.39 762.74 91.21 758.14 91.03 753.55 C90.84 748.91 90.66 744.27 90.48 739.63 C89.95 725.5 89.38 711.38 88.75 697.26 C88.63 694.57 88.52 691.89 88.4 689.21 C88.24 685.45 88.05 681.68 87.85 677.92 C87.75 676 87.66 674.08 87.58 672.16 C87.51 671.04 87.45 669.93 87.38 668.78 C87.33 667.83 87.28 666.88 87.23 665.91 C86.45 662.73 85.12 661.51 82.62 659.44 C80.52 658.25 78.38 657.15 76.2 656.12 C74.92 655.5 73.64 654.88 72.37 654.26 C71.7 653.94 71.04 653.62 70.36 653.3 C58.88 647.77 47.87 642.06 37.62 634.44 C36.58 633.68 35.54 632.92 34.46 632.14 C31.48 629.95 28.54 627.71 25.62 625.44 C24.75 624.75 23.87 624.07 22.96 623.37 C14.07 616.27 5.67 608.48 -2.38 600.44 C-3.37 600.44 -4.36 600.44 -5.38 600.44 Z M521.54 630.18 C520.83 630.46 520.13 630.74 519.41 631.03 C517.93 631.63 516.45 632.23 514.97 632.83 C512.7 633.74 510.43 634.65 508.17 635.55 C506.73 636.13 505.29 636.72 503.85 637.3 C503.17 637.57 502.49 637.84 501.79 638.12 C495.65 640.63 495.65 640.63 493.62 643.44 C493.76 648.01 496.23 651.64 498.56 655.44 C498.96 656.09 499.36 656.75 499.77 657.42 C506.3 667.95 514.09 677.48 522.62 686.44 C523.19 687.03 523.75 687.63 524.34 688.25 C532.9 697.25 541.63 705.1 551.83 712.18 C572.36 726.54 583.22 742.97 588.62 767.44 C588.7 767.77 588.7 767.77 589.08 769.48 C593.36 788.95 599.02 817.38 589.88 836 C585.54 840.7 580.52 841.82 574.38 842.81 C562.34 845.01 554.16 849.88 546.9 859.79 C541.59 868 538.28 877.57 539.62 887.44 C541.26 892.89 543.73 896.5 548.62 899.44 C552.14 900.05 552.14 900.05 556.07 900.04 C556.43 900.04 556.43 900.04 558.25 900.05 C560.61 900.06 562.97 900.03 565.33 900 C566.97 899.99 568.62 899.99 570.27 899.99 C573.71 899.98 577.14 899.96 580.58 899.92 C585 899.88 589.41 899.86 593.83 899.86 C597.22 899.86 600.61 899.84 604.01 899.82 C605.64 899.81 607.26 899.81 608.89 899.8 C611.16 899.79 613.43 899.77 615.7 899.74 C616.35 899.74 616.35 899.74 619.62 899.71 C622.62 899.44 622.62 899.44 624.62 897.44 C624.72 895.15 624.7 892.85 624.62 890.56 C624.36 873.5 628.88 857.92 640.69 845.22 C647.27 838.91 654.74 835.84 663.19 832.75 C666.62 831.44 666.62 831.44 668.62 829.44 C675.07 803.77 671.71 769.18 658.31 746.25 C650.5 735.18 638.51 730.86 626.56 725.51 C590.39 709.13 563.63 675.1 542.62 642.44 C541.17 640.18 539.72 637.93 538.25 635.69 C537.64 634.74 537.04 633.8 536.41 632.83 C534.66 630.48 533.11 628.97 530.62 627.44 C527.37 627.44 524.52 628.97 521.54 630.18 Z "  transform="translate(314.375,15.5625)"/>
+<path d="M0 0 C4.99 3.45 8.59 7.03 10.62 12.81 C11.31 19.08 11.31 24.47 7.62 29.81 C3.75 34.31 0.06 37.44 -5.99 38.1 C-13.17 38.32 -17.53 37.26 -23.06 32.5 C-27.82 26.97 -28.88 22.61 -28.66 15.43 C-28 9.37 -24.88 5.69 -20.38 1.81 C-14.26 -2.41 -6.87 -2.42 0 0 Z "  transform="translate(244.375,154.1875)"/>
+<path d="M0 0 C5.04 2.82 7.95 7.03 9.75 12.44 C10.52 18.87 9.69 24.18 5.75 29.44 C0.69 34.07 -4.01 35.82 -10.84 35.71 C-15.66 35.16 -19.54 33.31 -22.82 29.72 C-26.92 24.18 -28.03 19.27 -27.25 12.44 C-25.59 6.84 -22.76 3.52 -17.93 0.35 C-12.31 -2.69 -5.77 -2.56 0 0 Z "  transform="translate(391.25,155.5625)"/>
+</g>
+</svg></div>
+        <p class="welcome-text">Welcome to Rocky</p>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- ======================================================================================= -->
+<!-- THE SPEC                                                                                 -->
+<!-- ======================================================================================= -->
+<aside class="spec" id="spec">
+  <h1>Requirements</h1>
+  <p>Plan: <code>docs/superpowers/plans/2026-09-23-m2.5-sidebar-topbar.md</code>. Scope: sidebar, top bar, tabs, the terminal panel, and the motion of the chat (spinner, message entrance, shimmer). Not the diff or pull request features.</p>
+  <p>Every item gives exact <strong>Values</strong> (points at 100 % zoom), where it goes in our <strong>SwiftUI</strong> code, and when it is <strong>Done</strong>. When the mock and the text disagree, the text wins.</p>
+  <p><strong>Drawn for context, unchanged:</strong> the message box with its model and + menus and Send/Stop, the Restart box of a stopped agent, file tab content, reply footers, the permission sheet and the question card.</p>
+  <div class="legend"><span class="l-in">Requirement pin</span><span class="l-out">Drawn, out of scope</span></div>
+
+  <!-- ============================== TOKENS ============================== -->
+  <h2>Tokens</h2>
+
+  <section class="req" id="REQ-TOK-01">
+    <header><code class="id">TOK-01</code><h3>Color tokens</h3><span class="scope in">In scope</span></header>
+    <p>Add the new tokens to <code>Theme.swift</code> and use them in the sidebar, top bar, tabs and terminal panel instead of <code>.secondary</code>, <code>.tertiary</code>, <code>Color.green</code>, <code>Color.accentColor</code> or inline opacities, so contrast is the measured one below.</p>
+    <table>
+      <tr><th>Token</th><th>Value</th><th>Use</th></tr>
+      <tr><td><code>background</code>, <code>sidebar</code>, <code>panel</code></td><td>#23272E, #1E2127, #1A1D22</td><td>exist</td></tr>
+      <tr><td><code>composer</code>, <code>composerBorder</code></td><td>#2A2F37, white 10 %</td><td>exist: message box</td></tr>
+      <tr><td><code>hairline</code></td><td>white 8 %</td><td>exists: dividers, under tabs</td></tr>
+      <tr><td><code>hairlineSoft</code></td><td>white 6 %</td><td>above the sidebar footer</td></tr>
+      <tr><td><code>panelBar</code></td><td>white 3 %</td><td>terminal panel bar (today inline <code>Color.white.opacity(0.03)</code>)</td></tr>
+      <tr><td><code>textPrimary</code></td><td><span class="sw" style="background:#E6E8EB"></span>#E6E8EB</td><td>titles; 13.1 : 1 on sidebar</td></tr>
+      <tr><td><code>textSecondary</code></td><td><span class="sw" style="background:#A3A9B1"></span>#A3A9B1</td><td>repo in top bar, fallback titles, unselected tabs; 6.8 : 1</td></tr>
+      <tr><td><code>textTertiary</code></td><td><span class="sw" style="background:#858C95"></span>#858C95</td><td>hints, PORT, a finished process's last line; 4.75 : 1</td></tr>
+      <tr><td><code>separatorGlyph</code></td><td><span class="sw" style="background:#5C636C"></span>#5C636C</td><td>the "/" in the top bar (decorative)</td></tr>
+      <tr><td><code>fillHover</code> / <code>fillSelected</code></td><td>white 4 % / 8 %</td><td>row and panel tab hover / selection</td></tr>
+      <tr><td><code>fillControl</code></td><td>white 5 %</td><td>search field</td></tr>
+      <tr><td><code>fillIconHover</code> / <code>fillPressed</code></td><td>white 6 % / 10 %</td><td>icon buttons</td></tr>
+      <tr><td><code>fillButton</code> / <code>fillButtonHover</code></td><td>white 8 % / 12 %</td><td>Run, Restart, empty-state button</td></tr>
+      <tr><td><code>accent</code></td><td><span class="sw" style="background:#78BDF5"></span>#78BDF5</td><td>unread dot, focus ring (same value as <code>plan</code>). Never a selection fill.</td></tr>
+      <tr><td><code>attention</code></td><td><span class="sw" style="background:#E8A94B"></span>#E8A94B</td><td>needs you</td></tr>
+      <tr><td><code>danger</code></td><td><span class="sw" style="background:#F0876A"></span>#F0876A</td><td>error glyph, failed process dot, destructive menu items</td></tr>
+      <tr><td><code>success</code></td><td><span class="sw" style="background:#7CC08A"></span>#7CC08A</td><td>running process dot</td></tr>
+      <tr><td><code>repoPalette</code></td><td><span class="sw" style="background:#4C7BD9"></span><span class="sw" style="background:#8E6BE0"></span><span class="sw" style="background:#3A9C8C"></span><span class="sw" style="background:#C9784A"></span><span class="sw" style="background:#C2577A"></span><span class="sw" style="background:#6E8C3A"></span></td><td>monograms (SB-03)</td></tr>
+    </table>
+    <dl><dt>Done when</dt><dd>No sidebar, top bar, tab or panel view uses a hard-coded color, <code>Color.accentColor</code>, <code>Color.green</code> or a hierarchical style.</dd></dl>
+  </section>
+
+  <section class="req" id="REQ-TOK-02">
+    <header><code class="id">TOK-02</code><h3>Type, sizes and zoom</h3><span class="scope in">In scope</span></header>
+    <table>
+      <tr><th>Text</th><th>Size / weight at 100 %</th></tr>
+      <tr><td>Row title, search, footer button</td><td>13 regular</td></tr>
+      <tr><td>Repository name</td><td>13 semibold</td></tr>
+      <tr><td>Conversation tabs, Run</td><td>12.5 regular / Run medium</td></tr>
+      <tr><td>Panel tabs, New terminal</td><td>12 regular</td></tr>
+      <tr><td>Branch in top bar</td><td>12 monospaced</td></tr>
+      <tr><td>⌘ hints, PORT, ⌘K</td><td>11 (PORT monospaced)</td></tr>
+      <tr><td>Monogram letter</td><td>10 bold, white</td></tr>
+    </table>
+    <dl>
+      <dt>Zoom</dt><dd>Rocky has a browser-like zoom (⌘+ / ⌘- / ⌘0). Every size in this spec is at 100 %. Text goes through <code>Font.rocky(_:weight:design:)</code>; every size that holds text or an icon (row height, button sizes, search field, tab and panel bar heights, glyphs, spinner) goes through <code>Zoom.shared(_:)</code>. Paddings between groups stay fixed.</dd>
+      <dt>Radii</dt><dd>Row and search 7 · icon button 6 (small 5, extra small 4) · Run and panel tabs 6 · monogram 4 · menu 9 · message box 12 · Send/Stop 7.</dd>
+      <dt>Spacing</dt><dd>4-point grid. Sidebar list inset 8. Row leading padding 24, so the glyph sits 16 right of the monogram.</dd>
+      <dt>Done when</dt><dd>At 150 % zoom the sidebar, top bar, tabs and panel bar grow together and nothing clips.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-TOK-03">
+    <header><code class="id">TOK-03</code><h3>Motion tokens</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Values</dt><dd>
+        <ul>
+          <li>Hover color and fill: 120 ms ease-out.</li>
+          <li>State changes (fold a repository, fold the panel, sidebar toggle, a tool settles): 150 ms ease-out.</li>
+          <li>Message entrance: 220 ms, curve <code>(0.2, 0.7, 0.2, 1)</code>.</li>
+          <li>Spinner: one full turn every 0.9 s, linear, continuous. Shimmer: 1.6 s sweep, 0.5 s rest.</li>
+        </ul>
+      </dd>
+      <dt>SwiftUI</dt><dd>One place (<code>Theme.Motion</code>) so every view uses the same values.</dd>
+    </dl>
+  </section>
+
+  <!-- ============================== CURSOR ============================== -->
+  <h2>Cursor and hover</h2>
+
+  <section class="req" id="REQ-CUR-01">
+    <header><code class="id">CUR-01</code><h3>Pointing hand on everything clickable</h3><span class="scope in">In scope</span></header>
+    <p>Every element that does something on click shows the pointing hand: buttons, sidebar rows, repository headers, conversation, file and panel tabs, tab close buttons, the branch, menu items, file badges, the model button. User decision on 2026-09-23; macOS itself keeps the arrow on buttons and uses the hand for links.</p>
+    <dl>
+      <dt>Not</dt><dd>Text fields and the message box (I-beam), the terminal (its own cursor), the sidebar divider (resize left-right), the panel divider (resize up-down), plain text.</dd>
+      <dt>SwiftUI</dt><dd>One shared modifier, <code>func clickable() -&gt; some View { pointerStyle(.link) }</code> (macOS 15, our minimum), applied inside the shared button styles (CUR-02) and directly on views clicked through gestures: <code>WorkspaceTab</code>, <code>FileBadge</code>, <code>MenuItem</code>. <code>Composer.swift</code> already sets <code>NSCursor.pointingHand</code> for badges inside the text view; keep it.</dd>
+      <dt>Done when</dt><dd>Every <code>Button</code> and every <code>onTapGesture</code> in <code>Sources/RockyUI</code> goes through a style or view that applies <code>.clickable()</code> (<code>rg -n "Button\(|onTapGesture" Sources/RockyUI</code>).</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-CUR-02">
+    <header><code class="id">CUR-02</code><h3>Hover and pressed feedback</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Values</dt><dd>
+        <ul>
+          <li>Icon buttons: no fill at rest, icon <code>textSecondary</code>. Hover: <code>fillIconHover</code>, icon <code>textPrimary</code>. Pressed: <code>fillPressed</code>. Sizes 28, 22 (rows, headers, panel bar), 18 (inside the search field).</li>
+          <li>Text buttons (footer, New terminal): same, label included.</li>
+          <li>Filled buttons (Run, Restart): <code>fillButton</code>, hover <code>fillButtonHover</code>, pressed white 16 %.</li>
+          <li>Rows and panel tabs: hover <code>fillHover</code>, selected <code>fillSelected</code> (selected wins).</li>
+          <li>All 120 ms ease-out.</li>
+        </ul>
+      </dd>
+      <dt>SwiftUI</dt><dd><code>RockyIconButtonStyle(size:)</code> and <code>RockyFilledButtonStyle</code> in a new <code>ButtonStyles.swift</code>; they read <code>isPressed</code>, track hover with <code>.onHover</code> and apply <code>.clickable()</code>. They replace <code>.buttonStyle(.borderless)</code> in <code>WindowChrome</code>, <code>RootView</code>, <code>WorkspaceTab</code> and <code>WorkspacePanelView</code>. <code>ComposerButton</code> (Send/Stop) keeps its look and gains <code>.clickable()</code>.</dd>
+    </dl>
+  </section>
+
+  <!-- ============================== WINDOW ============================== -->
+  <h2>Window</h2>
+
+  <section class="req" id="REQ-WIN-01">
+    <header><code class="id">WIN-01</code><h3>Title bar height and traffic lights</h3><span class="scope in">In scope</span></header>
+    <p>The sidebar top row (SB-01) and the top bar row (TB-01) are both exactly as tall as the title bar, <strong>H</strong>, and the traffic lights sit centered in that height.</p>
+    <dl>
+      <dt>Values</dt><dd>H is whatever AppKit gives a title bar with a compact toolbar: expected 38 pt; measure it and use that number for both rows. Traffic lights start 16 pt from the left edge. H does not scale with zoom (it is AppKit's).</dd>
+      <dt>SwiftUI</dt><dd>Today <code>.windowStyle(.hiddenTitleBar)</code> (<code>RockyApp.swift</code>) leaves the lights in the standard 28 pt bar. Approach: an empty toolbar in <code>.unifiedCompact</code> style with a hidden toolbar background, so AppKit itself centers the lights. Fallback: move the three <code>standardWindowButton</code>s in an <code>NSWindow</code> hook and re-apply after resize and full screen. If neither works, keep 28 pt; nothing else depends on H.</dd>
+      <dt>Done when</dt><dd>The lights are centered on the sidebar top row, the top bar row has the same height, and both survive full screen and back.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-WIN-02">
+    <header><code class="id">WIN-02</code><h3>Hidden sidebar</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Behavior</dt><dd>With the sidebar hidden, the traffic lights and a Show sidebar button sit at the left of the top bar row, and the top bar content starts after them.</dd>
+      <dt>Values</dt><dd>Content inset 116: 16 margin, 52 lights, 8 gap, 28 button, 12 gap. <code>titleBarLeadingInset</code> goes from 110 to 116 (<code>RootView</code>). Toggle 150 ms ease-out (exists).</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-WIN-03">
+    <header><code class="id">WIN-03</code><h3>Sidebar width and divider</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Values</dt><dd>Default 260, range 200–420, persisted in <code>@AppStorage("sidebarWidth")</code>; 1 pt <code>hairline</code>, 9 pt grab area, resize cursor. Unchanged from today's <code>SidebarDivider</code>; listed so the rewrite keeps it.</dd>
+    </dl>
+  </section>
+
+  <!-- ============================== SIDEBAR ============================== -->
+  <h2>Sidebar</h2>
+
+  <section class="req" id="REQ-SB-01">
+    <header><code class="id">SB-01</code><h3>Top row</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Layout</dt><dd>Height H. Traffic lights, 6 pt gap, Hide sidebar (<code>sidebar.left</code>, 28 pt icon button). Nothing else.</dd>
+      <dt>Behavior</dt><dd>Workspaces are created with the "+" on each repository header (SB-03) or ⌘N (KBD-01). "Add Repository" leaves this row for the footer (SB-06): today's "+" here reads as "new workspace". The row stays a window-drag area (<code>windowDragBackground()</code>).</dd>
+      <dt>Dropped</dt><dd>A New workspace button with the <code>square.and.pencil</code> icon was tried and removed: that icon reads as "new conversation", and the repository "+" already does the job (user feedback, 2026-09-23).</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-SB-02">
+    <header><code class="id">SB-02</code><h3>Search filter</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Layout</dt><dd>28 pt field, inset 10, <code>fillControl</code>, radius 7. Magnifier 14 pt <code>textTertiary</code>, placeholder "Search", hint "⌘K" on the right; with text, the hint becomes an 18 pt clear button. Focused: 2 pt ring, <code>accent</code> at 55 %.</dd>
+      <dt>Behavior</dt><dd>Filters as you type, case-insensitive substring over the row title, branch, workspace name and repository name. Repositories without matches hide; folded repositories show their matches while filtering. No match: "No workspaces match “text”". Esc clears and returns focus to the list; ↓ from the field focuses the first row; ⌘K focuses the field.</dd>
+      <dt>SwiftUI</dt><dd><code>TextField</code> + <code>@FocusState</code>. Matching in RockyKit (<code>WorkspaceFilter.matches(query:title:branch:name:repo:)</code>) with unit tests.</dd>
+      <dt>Done when</dt><dd>Typing "rou" leaves only "Fix invoice rounding" and its repository header.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-SB-03">
+    <header><code class="id">SB-03</code><h3>Repository header</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Layout</dt><dd>28 pt. Leading 8: monogram 16×16 (radius 4, first letter uppercased, white 10 bold), 8 gap, name 13 semibold, then on hover a 22 pt "…" button, then a 22 pt "+" (always visible, <code>textTertiary</code>). 10 pt above each header, 4 above the first.</dd>
+      <dt>Monogram color</dt><dd><code>repoPalette[fnv1a32(repo.id) % 6]</code> over the UTF-8 bytes of the id. Never <code>hashValue</code>: Swift seeds it per launch.</dd>
+      <dt>Behavior</dt><dd>"+" creates a workspace here (<code>model.createWorkspace(repoId:)</code>). "…" and right-click open the same menu: New Workspace (⌘N), Settings…, divider, Remove from Rocky (destructive). It replaces today's <code>ellipsis.circle</code> button; use <code>MenuButton</code>, <code>MenuItem</code> and <code>rockyContextMenu</code> (Rocky draws its own menus, with an icon and a shortcut per row).</dd>
+      <dt>Done when</dt><dd>A repository keeps its monogram color across launches (unit test pins two ids).</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-SB-04">
+    <header><code class="id">SB-04</code><h3>Folding repositories</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Behavior</dt><dd>Clicking the repository name folds or unfolds it. Folded: a 10 pt chevron after the name points right, and the header shows the aggregate glyph at 12 pt before the "+" (the most urgent state of its workspaces, ROW-03 order; nothing when all are idle). Expanded: the chevron appears only on hover, pointing down. Try it: doculift starts folded and shows an error, because one of its setups failed, which outranks the agent working next to it.</dd>
+      <dt>Motion</dt><dd>Chevron rotates 90° in 150 ms; rows come and go with an opacity transition, 150 ms ease-out.</dd>
+      <dt>SwiftUI</dt><dd>Persist folded ids in <code>@AppStorage("foldedRepoIds")</code>. Today sections are <code>.collapsible(false)</code> because the system chevron moved the menu button; the custom header removes that problem.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-SB-05">
+    <header><code class="id">SB-05</code><h3>List order and spacing</h3><span class="scope in">In scope</span></header>
+    <dl><dt>Values</dt><dd>Repositories in <code>model.repos</code> order, workspaces in <code>model.workspaces[repo.id]</code> order. 2 pt between rows. Only the list scrolls; the top row, search and footer stay put.</dd></dl>
+  </section>
+
+  <section class="req" id="REQ-SB-06">
+    <header><code class="id">SB-06</code><h3>Footer</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Layout</dt><dd>44 pt, <code>hairlineSoft</code> line on top, padding 10. Left: text button <code>folder.badge.plus</code> 15 pt + "Add repository" 13 pt. Right: Settings (SB-08).</dd>
+      <dt>Behavior</dt><dd>Add repository opens today's folder picker (<code>RootView.addRepository()</code>).</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-SB-07">
+    <header><code class="id">SB-07</code><h3>Empty state</h3><span class="scope in">In scope</span></header>
+    <dl><dt>Behavior</dt><dd>With no repositories, the list shows "No repositories yet" (13, <code>textSecondary</code>) and an "Add repository" filled button, 40 pt from the top. The detail area shows the welcome screen (WEL-01).</dd></dl>
+  </section>
+
+  <section class="req" id="REQ-WEL-01">
+    <header><code class="id">WEL-01</code><h3>Welcome screen</h3><span class="scope in">In scope</span></header>
+    <p>While no workspace is selected, the detail area shows only the dog as line art and "Welcome to Rocky". Try it: "Welcome screen" in the demo controls.</p>
+    <dl>
+      <dt>When</dt><dd>No workspace selected. Rocky reopens the last workspace and conversation on launch (<code>AppModel.lastWorkspaceId</code>, <code>lastConversationIds</code> in UserDefaults, reselected in <code>bootstrap()</code>), so it shows on the first launch, with no repositories, when the last workspace no longer exists, or after the selected workspace is removed. It replaces today's <code>ContentUnavailableView</code> ("No workspace selected", the colored logo on a white tile, and "Add a repository, then create a workspace from its menu.") in <code>RootView.detail</code>.</dd>
+      <dt>Layout</dt><dd>Centered in the whole detail area (no top bar content, no tabs, no terminal panel; the top row stays a window-drag area of height H), 48 pt above true center: the dog 200 pt wide, 20 pt gap, "Welcome to Rocky" 15 semibold <code>textSecondary</code>. Nothing else: no button, no hint. Zoom-scaled.</dd>
+      <dt>Dog</dt><dd><strong>Line art</strong> (user decision, 2026-09-23): <code>Resources/rocky-logo-line.svg</code>, everything in <code>fill="currentColor"</code>, drawn in <code>textTertiary</code>:
+        <ul>
+          <li>Outline, nose and mouth at full opacity.</li>
+          <li>The logo's orange patches (head, ears, back, tail) as a tint of the same color at 25 % (<code>fill-opacity="0.25"</code>), so the pattern still reads; the white parts are empty.</li>
+          <li>Eyes as small solid dots (60 % of the logo's eye size) with no highlight: the first version kept the logo's eyes, which in light gray on the dark background turned into big rings with dark dots (user feedback).</li>
+        </ul>
+        A grayscale variant (<code>rocky-logo-mono.svg</code>) was compared and not chosen; it stays in <code>Resources</code> unused.</dd>
+      <dt>Motion</dt><dd>Fades in over 300 ms when it appears (opacity only, also with Reduce Motion).</dd>
+      <dt>Assets</dt><dd>Traced on 2026-09-23 from <code>Resources/AppIcon-source.jpg</code> with vtracer, background removed: <code>rocky-logo.svg</code> (color, transparent), <code>rocky-logo-mono.svg</code>, <code>rocky-logo-line.svg</code>. The colored one is for places that want the brand color.</dd>
+      <dt>SwiftUI</dt><dd>As built by dev-1: the v2 SVG is copied to <code>Sources/RockyUI/Resources/Icons/rocky-line.svg</code> and drawn as a template <code>NSImage</code>, the same way as the agent logos, tinted <code>textTertiary</code>. No asset catalog. When the SVG in <code>Resources/</code> changes, copy it there again.</dd>
+      <dt>Done when</dt><dd>With nothing selected the window shows only the dog and the line of text, crisp at 100 % and 180 % zoom.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-SB-08">
+    <header><code class="id">SB-08</code><h3>Global settings button</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Layout</dt><dd>28 pt icon button (<code>gearshape</code>) at the right end of the footer, tooltip "Settings ⌘,".</dd>
+      <dt>Behavior</dt><dd>Opens Settings as a panel over the Rocky window, not a separate window (user decision, 2026-09-23, built by dev-1). The gear and ⌘, (Rocky ▸ Settings…) open the same panel; Esc, a click outside it or its × close it. Content as before: zoom, panel folding, terminal font, shell environment, agent updates, adapter paths, data and log folders. Repository settings stay in the repository menu (SB-03).</dd>
+      <dt>SwiftUI</dt><dd>As built: the <code>Settings</code> scene and <code>SettingsView</code> are gone. The gear and a <code>CommandGroup(replacing: .appSettings)</code> for ⌘, call <code>SettingsPresenter.shared.show()</code>; <code>SettingsModal</code> (<code>Sources/RockyUI/SettingsView.swift</code>) draws <code>SettingsContent</code> in the panel. The gear uses <code>RockyIconButtonStyle</code>.</dd>
+      <dt>Done when</dt><dd>The gear and ⌘, open the same panel; clicking the gear again while it is open keeps a single panel; Esc, a click outside and × close it.</dd>
+    </dl>
+  </section>
+
+  <!-- ============================== ROW ============================== -->
+  <h2>Workspace row</h2>
+
+  <section class="req" id="REQ-ROW-01">
+    <header><code class="id">ROW-01</code><h3>Anatomy</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Layout</dt><dd>One line, 28 pt, radius 7. Leading padding 24, glyph slot 16×16, 8 gap, title (fills, truncates at the tail), trailing slot. Trailing slot, in order of precedence: hover actions (ROW-05), ⌘ hints (KBD-01), diff stats (OUT-01, not built: renders nothing). The branch leaves the row for the top bar (TB-02).</dd>
+      <dt>Tooltip</dt><dd>Line 1 the title; line 2 "<em>branch</em> · <em>workspace name</em>" (the name, "tokyo", is otherwise only in the path); line 3 the failure text in the error state.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-ROW-02">
+    <header><code class="id">ROW-02</code><h3>Title</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Rule</dt><dd>The title of the workspace's oldest open conversation that has one (<code>ChatSessionRecord.title</code>). Without one, <code>workspace.name</code> in <code>textSecondary</code>. Try it: select "oslo" and send a message.</dd>
+      <dt>SwiftUI</dt><dd><code>model.conversations</code> only holds workspaces shown this launch, so the sidebar needs <code>RockyStore.conversationTitles() -&gt; [String: String]</code> (one query at launch), kept in <code>AppModel.workspaceTitles</code> and updated where a title is saved and when a conversation closes.</dd>
+      <dt>Done when</dt><dd>After a relaunch every row shows its task title without visiting the workspace (store test: oldest open titled conversation wins; closed ones are ignored).</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-ROW-03">
+    <header><code class="id">ROW-03</code><h3>Status glyph and priority</h3><span class="scope in">In scope</span></header>
+    <p>One glyph slot; when several states apply, the first in this table wins. It replaces today's trailing spinner.</p>
+    <table class="gallery">
+      <tr><th></th><th>State</th><th>Source</th></tr>
+      <tr><td><span class="glyph"><span class="dot dot-needs"></span></span></td><td><strong>Needs you</strong>: amber 8 pt dot, 3 pt halo at 20 %</td><td>a chat of the workspace has <code>pendingPermission</code> or <code>pendingQuestion</code></td></tr>
+      <tr><td><span class="glyph g-error" data-icon="error" data-size="14"></span></td><td><strong>Error</strong>: <code>danger</code> triangle, 14 pt</td><td>new <code>ChatSessionModel.failure</code>, or the Setup script ended with a non-zero exit</td></tr>
+      <tr><td><span class="glyph" data-icon="spinner" data-size="14"></span></td><td><strong>Working</strong>: spinner 14 pt (MOT-01)</td><td><code>model.isAgentWorking(workspaceId:)</code></td></tr>
+      <tr><td><span class="glyph"><span class="dot dot-unread"></span></span></td><td><strong>Unread</strong>: <code>accent</code> 7 pt dot</td><td>ROW-04</td></tr>
+      <tr><td><span class="glyph g-idle" data-icon="branch" data-size="14"></span></td><td><strong>Idle</strong>: branch glyph, <code>textTertiary</code></td><td>none of the above</td></tr>
+    </table>
+    <dl>
+      <dt>Failure</dt><dd><code>ChatSessionModel.state</code> becomes <code>.stopped(message)</code> both on errors and on an explicit stop (<code>.stopped("Stopped")</code>). Add <code>failure: String?</code>, set on the error paths only, cleared when the chat starts again (Restart) or a turn starts. A failed Setup reads "Setup exited with N. See the Setup tab." in the tooltip.</dd>
+      <dt>SwiftUI</dt><dd>A pure <code>WorkspaceStatus</code> enum in RockyKit (<code>needsYou, failed, working, unread, idle</code>) with <code>resolve(…)</code>; <code>AppModel.status(workspaceId:)</code> feeds it. Leave room for <code>pullRequest</code> and <code>merged</code> (OUT-02) between <code>unread</code> and <code>idle</code>.</dd>
+      <dt>Done when</dt><dd>Unit tests cover the order for every pair of states.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-ROW-04">
+    <header><code class="id">ROW-04</code><h3>Unread, in memory</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Rule</dt><dd>Set when a turn ends normally (<code>.running</code> → <code>.ready</code>) in a workspace that is not <code>selectedWorkspaceId</code>; cleared when it becomes selected. A failed turn sets the error state instead. Not persisted (user decision, 2026-09-23). Try it: "Background agent finishes".</dd>
+      <dt>SwiftUI</dt><dd><code>AppModel.unreadWorkspaceIds: Set&lt;String&gt;</code>, fed by an <code>onTurnEnded</code> closure that <code>ChatSessionModel</code> calls on <code>.running</code> → <code>.ready</code>.</dd>
+      <dt>Done when</dt><dd><code>AppModelTests</code>: a turn ending in another workspace marks it; selecting it clears it; a turn ending in the selected workspace marks nothing.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-ROW-05">
+    <header><code class="id">ROW-05</code><h3>Hover actions and context menu</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Layout</dt><dd>On hover, and while the row has keyboard focus, two 22 pt icon buttons replace the trailing slot, 4 pt from the right: Remove workspace (<code>archivebox</code>) and More (<code>ellipsis</code>). Fade 120 ms.</dd>
+      <dt>Behavior</dt><dd>Remove workspace opens today's confirmation dialog (unchanged). More and right-click open the same menu: Open in Finder, Copy Branch Name, divider, Remove Workspace… (destructive). Everything reachable on hover is also reachable by right-click and keyboard focus.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-ROW-06">
+    <header><code class="id">ROW-06</code><h3>Selection, and why the list is custom</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Behavior</dt><dd>Click selects (<code>model.selectedWorkspaceId</code>); selected row <code>fillSelected</code>.</dd>
+      <dt>Decision</dt><dd>Replace <code>List(selection:)</code> with <code>ScrollView</code> + <code>LazyVStack</code>: the sidebar <code>List</code> paints the system accent selection, which cannot take this design's fill. The custom list must provide arrow keys (KBD-01), the <code>.isSelected</code> trait, and scrolling the selected row into view.</dd>
+    </dl>
+  </section>
+
+  <!-- ============================== TOP BAR ============================== -->
+  <h2>Top bar and tabs</h2>
+
+  <section class="req" id="REQ-TB-01">
+    <header><code class="id">TB-01</code><h3>Top bar row</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Layout</dt><dd>Height H, padding 16 left and 12 right, gap 10. Leading: repository name (13, <code>textSecondary</code>), "/" (<code>separatorGlyph</code>), branch (TB-02). Trailing: PORT (11 mono, <code>textTertiary</code>, today's tooltip), Open (TB-03), Run (TB-04).</dd>
+      <dt>Replaces</dt><dd>Today's two-line header with the workspace name and the full path (<code>WorkspaceDetailView.header</code>). The path moves into the Open menu; the name into the row tooltip.</dd>
+      <dt>SwiftUI</dt><dd>Keep <code>.windowDragBackground()</code> and <code>titleBarLeadingInset</code>.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-TB-02">
+    <header><code class="id">TB-02</code><h3>Branch, click to copy</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Layout</dt><dd>Branch glyph 13 pt <code>textTertiary</code> + branch 12 mono <code>textPrimary</code>, 24 pt hit area, padding 6, radius 5; hover <code>fillIconHover</code>.</dd>
+      <dt>Behavior</dt><dd>Click copies the branch to <code>NSPasteboard.general</code>; the label reads "Copied" in <code>accent</code> for 1.2 s.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-TB-03">
+    <header><code class="id">TB-03</code><h3>Open menu</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Behavior</dt><dd>28 pt icon button (<code>arrow.up.forward.square</code>). Menu header: the worktree path (11 mono, <code>textTertiary</code>). Items: Open in Finder (<code>NSWorkspace</code>), New Terminal (opens a terminal in the panel, TERM-07), Copy Path.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-TB-04">
+    <header><code class="id">TB-04</code><h3>Run / Stop</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Layout</dt><dd>26 pt high, padding 10, radius 6, <code>RockyFilledButtonStyle</code>. <code>play.fill</code> 11 pt + "Run" 12.5 medium; while the Run script runs <code>stop.fill</code> + "Stop".</dd>
+      <dt>Behavior</dt><dd>Unchanged: Run starts the run script, shows its output in the panel's Run tab and unfolds the panel (TERM-07); Stop stops it. The workspace without a run script gets today's message.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-TAB-01">
+    <header><code class="id">TAB-01</code><h3>Conversation and file tabs</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Layout</dt><dd>Row 34 pt, <code>hairline</code> below. Tab: padding 10, gap 7, 12.5 pt, max width 240 (truncates). Unselected <code>textSecondary</code>, hover and selected <code>textPrimary</code>; selected has a 2 pt <code>textPrimary</code> underline on the hairline. Close: 10 pt ×, 16 pt hit box, visible on hover or when selected.</dd>
+      <dt>Content</dt><dd>Conversations first (agent logo, title or "New conversation"), then files opened from a badge (file icon colored by type, file name), as today. A running conversation shows the spinner (MOT-01, 12 pt) in place of its logo. The "+" at the end opens today's menu: New Claude Code conversation, New OpenCode conversation.</dd>
+      <dt>SwiftUI</dt><dd><code>WorkspaceTab</code> (clicked through <code>onTapGesture</code>) needs <code>.clickable()</code>; its close button takes <code>RockyIconButtonStyle(size: 16)</code>.</dd>
+    </dl>
+  </section>
+
+  <!-- ============================== TERMINAL ============================== -->
+  <h2>Terminal panel</h2>
+
+  <section class="req" id="REQ-TERM-01">
+    <header><code class="id">TERM-01</code><h3>Split and divider</h3><span class="scope in">In scope</span></header>
+    <p>The chat sits above the panel and they share the height. Try it: drag the line between them.</p>
+    <dl>
+      <dt>Values</dt><dd>Divider 1 pt <code>hairline</code> with a 9 pt grab area and the up-down resize cursor. Panel height default 220 (bar included), minimum 140; the chat keeps at least 200. Height persisted in <code>@AppStorage("terminalPanelHeight")</code>. No divider grab area while the panel is empty or folded.</dd>
+      <dt>Decision</dt><dd>Replace today's <code>VSplitView</code> with a custom split, the same way <code>RootView</code> replaced <code>NavigationSplitView</code>. Two reasons: AppKit draws <code>VSplitView</code>'s own divider (not our hairline, which today is drawn a second time inside the panel), and today's layout swaps <code>VSplitView</code> for a <code>VStack</code> when the panel folds or is empty, which loses the height and cannot animate (TERM-05).</dd>
+      <dt>SwiftUI</dt><dd>A <code>PanelDivider</code> like <code>SidebarDivider</code>, turned 90°, in <code>WorkspaceDetailView</code>; the chat takes the remaining height.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-TERM-02">
+    <header><code class="id">TERM-02</code><h3>Panel bar and tabs</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Layout</dt><dd>32 pt bar, <code>panelBar</code> fill, padding 8 left and 6 right, gap 4. Tabs 24 pt, radius 6, padding 8, 12 pt, a 6 pt status dot (TERM-03), 6 gap, title. Unselected <code>textSecondary</code>; hover <code>fillHover</code> and <code>textPrimary</code>; selected <code>fillSelected</code> and <code>textPrimary</code>. Then a 22 pt "+" (New terminal). Right: only the 22 pt fold chevron (TERM-05).</dd>
+      <dt>Removed</dt><dd>Today's state text at the right of the bar ("Running", "Exited 0", "Stopped by signal 15"). It describes the selected tab but sits far from it, so it reads as the state of the whole panel, and a signal number means nothing to the user (user feedback, 2026-09-23). TERM-03 says where the state goes instead.</dd>
+      <dt>Names</dt><dd>Scripts keep Setup, Run, Archive and come first; terminals are "Terminal 1" … "Terminal N" by position (exists). Only terminals have a close button (visible on hover or when selected, like conversation tabs); scripts cannot be closed.</dd>
+      <dt>Changes</dt><dd>The selected tab loses today's <code>accentColor</code> fill at 20 %: the rest of the design selects with neutral fills and keeps the accent for unread and focus. The bar gets hover states and the pointing hand.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-TERM-03">
+    <header><code class="id">TERM-03</code><h3>Where a process's state shows</h3><span class="scope in">In scope</span></header>
+    <p>Three places, each next to the thing it describes: the dot on the tab, the tab's tooltip, and the last line of the terminal once the process ends.</p>
+    <table class="gallery">
+      <tr><th></th><th>Dot</th><th>Tooltip</th><th>Last line in the terminal</th></tr>
+      <tr><td><span class="sdot running" style="display:inline-block"></span></td><td><code>success</code></td><td>"Run: running"</td><td>none</td></tr>
+      <tr><td><span class="sdot done" style="display:inline-block"></span></td><td><code>textTertiary</code></td><td>"Setup: exited with code 0"</td><td>"Process exited with code 0", <code>textTertiary</code></td></tr>
+      <tr><td><span class="sdot done" style="display:inline-block"></span></td><td><code>textTertiary</code></td><td>"Run: stopped" (Rocky sent the signal: Stop, closing)</td><td>"Process stopped", <code>textTertiary</code></td></tr>
+      <tr><td><span class="sdot failed" style="display:inline-block"></span></td><td><code>danger</code></td><td>"Setup: failed, exit code 1"</td><td>"Process exited with code 1", <code>danger</code></td></tr>
+      <tr><td><span class="sdot failed" style="display:inline-block"></span></td><td><code>danger</code></td><td>"Run: could not start"</td><td>"Process could not start", <code>danger</code></td></tr>
+    </table>
+    <dl>
+      <dt>SwiftUI</dt><dd>These words live in RockyUI (for example <code>PTYState.tooltipText</code> and <code>endLine</code> in an extension next to <code>WorkspacePanelView</code>); <code>PTYState.description</code> stays as it is for logs. The end line is drawn under the terminal output (a one-line view below <code>TerminalHostView</code>, 12 mono, padding as the terminal), not written into the PTY.</dd>
+      <dt>Changes</dt><dd>Today the dot is green or gray only, so a failed Setup looks like a finished one; now it matches the sidebar's error state (ROW-03). Try it: unfold doculift and select "rome".</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-TERM-04">
+    <header><code class="id">TERM-04</code><h3>Empty panel</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Behavior</dt><dd>With no terminal or script yet, the panel is only its bar, and the bar holds one text button: <code>terminal</code> icon + "New terminal" (12 pt, <code>textSecondary</code>). No fold chevron, no state, no divider grab area. Try it: select "paris".</dd>
+      <dt>Changes</dt><dd>Today the empty bar shows a "Terminal" label that looks like a tab but does nothing, next to a separate "+". One clear control replaces both.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-TERM-05">
+    <header><code class="id">TERM-05</code><h3>Folding the panel</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Behavior</dt><dd>The chevron (down while open, up while folded; tooltip "Hide the terminal panel; its terminals keep running (⌘J)") and ⌘J fold the panel to its bar and back without stopping anything; the choice is global and remembered (<code>terminalPanelCollapsed</code>). Choosing a tab, opening a terminal or Run unfolds it. All of this exists.</dd>
+      <dt>Motion</dt><dd>New: folding and unfolding animate the height, 150 ms ease-out, and the chat takes the space; instant with Reduce Motion. Switching workspaces never animates it (each workspace's view is rebuilt, <code>.id(workspace.id)</code> in <code>RootView</code>). Folded, no tab shows as selected (exists); the dots keep showing each process's state.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-TERM-06">
+    <header><code class="id">TERM-06</code><h3>Terminal area</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Values</dt><dd>SwiftTerm through <code>TerminalHostView</code>, background <code>background</code>, padding 12 horizontal, 6 top, 8 bottom; font from Settings × zoom (exists). Its cursor is the terminal's own; CUR-01 does not apply inside it.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-TERM-07">
+    <header><code class="id">TERM-07</code><h3>How the rest of the window reaches the panel</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Behavior</dt><dd>
+        <ul>
+          <li>Top bar Run (TB-04): starts the Run script, selects the Run tab, unfolds the panel. Stop: the Run dot turns gray and its terminal ends with "Process stopped".</li>
+          <li>Open ▸ New Terminal (TB-03) and the bar's "+": a new "Terminal N", selected, panel unfolded.</li>
+          <li>A failed Setup: the row shows the error glyph (ROW-03) and the Setup tab a <code>danger</code> dot. Try it: unfold doculift and select "rome".</li>
+        </ul>
+      </dd>
+    </dl>
+  </section>
+
+  <!-- ============================== MOTION ============================== -->
+  <h2>Motion in the chat and everywhere</h2>
+
+  <section class="req" id="REQ-MOT-01">
+    <header><code class="id">MOT-01</code><h3>Rocky spinner replaces CircularProgress</h3><span class="scope in">In scope</span></header>
+    <p><span style="display:inline-flex;vertical-align:-3px;margin-right:6px" data-icon="spinner" data-size="14"></span>A faint full ring with a quarter arc that turns smoothly. It replaces today's Material-style arc everywhere, in one place: the <code>CircularProgress</code> view.</p>
+    <dl>
+      <dt>Geometry</dt><dd>In a 16-unit box: ring radius 5.5, stroke 1.8, ring opacity 22 %; arc from 12 to 3 o'clock, round caps. Color: the current foreground. Sizes 14 (sidebar, default), 12 (tabs, folded headers, model menu), zoom-scaled.</dd>
+      <dt>Motion</dt><dd>One full turn every 0.9 s, linear, continuous, at the display's refresh rate. It must look fluid: never stepped, no jump at the loop (user decision, 2026-09-23). Frozen at its angle while the window is not key; static with Reduce Motion.</dd>
+      <dt>SwiftUI</dt><dd>Rewrite <code>CircularProgress.swift</code>, keeping the type name and signature so its 7 call sites compile unchanged.
+        <ul>
+          <li><strong>Not <code>TimelineView(.animation)</code></strong> (today's code): it runs the body every display frame, once per spinner, against the energy goal (spec Section 1).</li>
+          <li>An <code>NSViewRepresentable</code> with two <code>CAShapeLayer</code>s (ring, arc) and a <code>CABasicAnimation</code> on <code>transform.rotation.z</code>, 0 → 2π, 0.9 s, linear, <code>repeatCount = .infinity</code>. The render server interpolates; the app does no work per frame.</li>
+          <li>Pause with layer <code>speed = 0</code> and <code>timeOffset</code> (resumes from the same angle) when the window does not appear active; no animation with Reduce Motion. Stroke colors from the environment in <code>updateNSView</code>.</li>
+          <li>Delete <code>arc(at:)</code> and <code>easeInOut(_:)</code>.</li>
+        </ul>
+      </dd>
+      <dt>Done when</dt><dd>Every spinner turns as smoothly as this one, and Time Profiler shows no per-frame work in Rocky while five spinners turn.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-MOT-02">
+    <header><code class="id">MOT-02</code><h3>Message entrance</h3><span class="scope in">In scope</span></header>
+    <p>A message you send and every new row of the agent's turn fade in while rising 6 pt, instead of appearing at once. Try it: type in the message box and press Return.</p>
+    <dl>
+      <dt>Values</dt><dd>Opacity 0 → 1 and offset y 6 → 0 in 220 ms, curve <code>(0.2, 0.7, 0.2, 1)</code>. Reduce Motion: opacity only, 150 ms.</dd>
+      <dt>Animate</dt><dd>Only rows created live while the conversation is on screen: the message just sent, the agent's text, thoughts and tool calls of the turn in progress, and the reply footer when the turn ends.</dd>
+      <dt>Never</dt><dd>
+        <ul>
+          <li>History: rows from the store or replayed by <code>session/load</code>.</li>
+          <li>Switching tabs, workspaces, or coming back from a file tab.</li>
+          <li><code>LazyVStack</code> re-creating rows while scrolling, so the trigger cannot be <code>onAppear</code>.</li>
+          <li>Each streamed chunk: the reply animates once, when its row first appears.</li>
+          <li>A lone tool row that becomes an "N tool calls" group (<code>ChatRow.id</code> changes from the item id to <code>tools-&lt;first id&gt;</code>).</li>
+        </ul>
+      </dd>
+      <dt>SwiftUI</dt><dd>Each row gets an <strong>entrance key</strong> that survives regrouping: <code>.item</code> → its item id; <code>.tools</code> → its first item's id (the same key the lone row had); <code>.turnFooter</code> → <code>"footer-" + summary.id</code>. <code>ChatView</code> keeps <code>settledKeys: Set&lt;String&gt;</code>, filled with every key when the conversation appears; a row animates only if its key is not settled, and its key joins the set as it starts. Put <code>ChatRow.entranceKey</code> in RockyKit next to <code>ChatLayout</code> so the regrouping case has a unit test.</dd>
+      <dt>Done when</dt><dd>Opening a long conversation shows it at once; sending and the reply that follows animate; scrolling never replays an entrance.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-MOT-03">
+    <header><code class="id">MOT-03</code><h3>Shimmer for live activity</h3><span class="scope in">In scope</span></header>
+    <p>While a tool runs or the agent works, the chat shows the activity's label with a light band sweeping across it, instead of a spinner. Try it: send a message and watch "Working" and "Run".</p>
+    <dl>
+      <dt>Where</dt><dd><code>ToolCallRow</code> while live and pending or in progress; <code>ToolGroupRow</code> while live with a running call (its "N tool calls" title shimmers); <code>ThinkingRow</code>. These three stop using <code>CircularProgress</code>.</dd>
+      <dt>Working row</dt><dd><code>ThinkingRow</code> today shows only the arc and the elapsed time. It becomes the word <strong>"Working"</strong>, shimmering, followed by the elapsed time ("8s", "1m 5s"; monospaced digits, <code>textTertiary</code>, not shimmering). Not "Thinking": <code>ThoughtRow</code> already uses that label for the agent's thoughts. Consider renaming <code>ThinkingRow</code> to <code>WorkingRow</code>.</dd>
+      <dt>Values</dt><dd>Base <code>textSecondary</code>; a band 40 % of the text's width, peaking at <code>textPrimary</code>, sweeps left to right in 1.6 s linear, rests 0.5 s, repeats. When the call completes, the label settles to its normal color in 150 ms, same text and font, no layout change.</dd>
+      <dt>Rules</dt><dd>Paused while the window is not key; static <code>textSecondary</code> with Reduce Motion; only live rows shimmer.</dd>
+      <dt>SwiftUI</dt><dd>New <code>ShimmerText</code>: the <code>Text</code> in <code>textSecondary</code>, overlaid by the same <code>Text</code> in <code>textPrimary</code> masked by a moving <code>LinearGradient</code>, driven by <code>TimelineView(.animation(minimumInterval: 1.0 / 30, paused: …))</code>.</dd>
+    </dl>
+  </section>
+
+  <!-- ============================== KEYBOARD / A11Y ============================== -->
+  <h2>Keyboard and accessibility</h2>
+
+  <section class="req" id="REQ-KBD-01">
+    <header><code class="id">KBD-01</code><h3>Keyboard</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>New</dt><dd>
+        <ul>
+          <li>↑ / ↓ with the list focused: move through visible rows (folded repositories skipped).</li>
+          <li>⌘1 … ⌘9: select the 1st … 9th visible workspace, from anywhere.</li>
+          <li>⌘N: new workspace in the selected workspace's repository (first repository if none; disabled with none).</li>
+          <li>⌘K: focus the search. Esc: clear it.</li>
+          <li>Holding ⌘ for 400 ms shows "⌘1" … "⌘9" in the rows. Try it here (the browser keeps ⌘1–9 for its own tabs).</li>
+        </ul>
+      </dd>
+      <dt>Existing, keep</dt><dd>⌘J fold the panel · ⌘U attach · ⇧Tab plan mode · ⌘, settings · ⌘+ ⌘- ⌘0 zoom. None of the new shortcuts collides with them.</dd>
+      <dt>Focus ring</dt><dd>Keyboard focus only: 2 pt <code>accent</code> ring inside the element's radius.</dd>
+      <dt>SwiftUI</dt><dd>⌘1–⌘9, ⌘N and ⌘K as menu commands in <code>RockyApp</code>. ⌘N through <code>CommandGroup(replacing: .newItem)</code>: without it, ⌘N opens a second window (the app is a <code>WindowGroup</code>). Arrows: <code>.focusable()</code> + <code>.onKeyPress</code>. ⌘ hold: a local <code>NSEvent</code> monitor for <code>.flagsChanged</code>.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-A11Y-01">
+    <header><code class="id">A11Y-01</code><h3>Accessibility</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Labels</dt><dd>Row: "<em>title</em>, <em>state</em>", traits button and selected. Repository header: "<em>name</em>, collapsed/expanded, <em>n</em> workspaces". Panel tab: "<em>name</em>, <em>state</em>". Icon-only buttons keep text labels (<code>Label</code> + <code>.labelStyle(.iconOnly)</code>).</dd>
+      <dt>Contrast</dt><dd>Primary 13.1 : 1, secondary 6.8 : 1, tertiary 4.75 : 1 on the sidebar. States are carried by shape as well as color: dot, ring, triangle, branch.</dd>
+    </dl>
+  </section>
+
+  <!-- ============================== OUT OF SCOPE ============================== -->
+  <h2>Out of scope (drawn so the layout leaves room)</h2>
+
+  <section class="req" id="REQ-OUT-01">
+    <header><code class="id">OUT-01</code><h3>Diff stats in rows</h3><span class="scope out">Future module</span></header>
+    <p>The "+388 −862" in the rows. It needs a module that does not exist yet: per-worktree FSEvents with a 500 ms debounce and <code>git diff --shortstat</code> against <code>baseRef</code> (spec Section 1). The trailing slot renders nothing until then. The mock hides them too; "Future: diff stats" shows where they will go.</p>
+    <dl><dt>Later</dt><dd>11 mono, tabular digits, <code>+A</code> in <code>success</code> and <code>−D</code> in #E48A8A, thousands as "2.3k". Hidden on hover and while ⌘ is held.</dd></dl>
+  </section>
+
+  <section class="req" id="REQ-OUT-02">
+    <header><code class="id">OUT-02</code><h3>Pull request glyphs</h3><span class="scope out">M3</span></header>
+    <table class="gallery">
+      <tr><td><span class="glyph g-pr" data-icon="pr" data-size="14"></span></td><td>Pull request open, <code>success</code>, between Unread and Idle in ROW-03.</td></tr>
+      <tr><td><span class="glyph g-merged" data-icon="merge" data-size="14"></span></td><td>Merged, #B48CF2, title dimmed to <code>textTertiary</code>.</td></tr>
+    </table>
+  </section>
+
+  <section class="req" id="REQ-OUT-03">
+    <header><code class="id">OUT-03</code><h3>Changes panel</h3><span class="scope out">M3</span></header>
+    <p>Viewing the changed files and their diff (spec Section 4). No written plan yet.</p>
+  </section>
+</aside>
+
+<script>
+/*
+ * Demo behavior. Not code to port: the requirements on the right are what matters.
+ * It mirrors the SwiftUI rules where they are subtle:
+ *  - renderChat() redraws a conversation with no animation (history, switching)   -> MOT-02 "Never"
+ *  - append() inserts one live row with the entrance                              -> MOT-02 "Animate"
+ *  - update() changes a row in place (streamed text, a tool that completes)        -> MOT-02 streaming
+ */
+(() => {
+  'use strict';
+
+  const $ = (s) => document.querySelector(s);
+  const win = $('#win');
+  const sbList = $('#sbList');
+  const tabsEl = $('#tabs');
+  const chatCol = $('#chatCol');
+  const chatScroll = $('#chat');
+  const fileView = $('#fileView');
+  const search = $('#search');
+  const composer = $('#composerInput');
+  const sendBtn = $('#sendBtn');
+  const pbar = $('#pbar');
+  const termEl = $('#term');
+
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const fmt = (s) => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>');
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  let seq = 0;
+  const uid = () => 'i' + (++seq);
+  const clock = () => new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+  // ---------- icons (SF Symbol stand-ins) ----------
+  const svg = (size, body, width) => `<svg width="${size}" height="${size}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+  const spinner = (size, label = 'Working') => `<svg class="spinner" width="${size}" height="${size}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" role="img" aria-label="${label}"><circle cx="8" cy="8" r="5.5" stroke-opacity="0.22"/><path d="M8 2.5a5.5 5.5 0 0 1 5.5 5.5"/></svg>`;
+  const FILE_COLOR = { ts: '#5B8DEF', md: '#A3A9B1', json: '#E8A94B' };
+  const I = {
+    sidebar: svg(16, '<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2.25"/><path d="M6.25 2.75v10.5"/>', 1.3),
+    search: svg(14, '<circle cx="7" cy="7" r="4.5"/><path d="M10.4 10.4l3.35 3.35"/>', 1.5),
+    plus: svg(14, '<path d="M8 3v10M3 8h10"/>', 1.5),
+    chevron: svg(10, '<path d="M6 3.5L10.5 8 6 12.5"/>', 2),
+    chevDown: svg(12, '<path d="M3.5 6l4.5 4.5L12.5 6"/>', 1.8),
+    chevUp: svg(12, '<path d="M3.5 10l4.5-4.5 4.5 4.5"/>', 1.8),
+    close: svg(10, '<path d="M4 4l8 8M12 4l-8 8"/>', 1.8),
+    archive: svg(14, '<rect x="1.75" y="2.75" width="12.5" height="3.25" rx="1"/><path d="M2.75 6v6.25a1.5 1.5 0 0 0 1.5 1.5h7.5a1.5 1.5 0 0 0 1.5-1.5V6M6.5 9h3"/>', 1.3),
+    ellipsis: '<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.2" fill="currentColor"/><circle cx="8" cy="8" r="1.2" fill="currentColor"/><circle cx="12.5" cy="8" r="1.2" fill="currentColor"/></svg>',
+    open: svg(15, '<path d="M9.5 2.5h4v4M13.5 2.5L8 8M12 9.5V12a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 12V5.5A1.5 1.5 0 0 1 4 4h2.5"/>', 1.3),
+    play: '<svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 2.75v10.5L13 8z" fill="currentColor"/></svg>',
+    stop: '<svg width="10" height="10" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="1.5" fill="currentColor"/></svg>',
+    folderPlus: svg(15, '<path d="M1.75 4.25a1.5 1.5 0 0 1 1.5-1.5h2.9l1.5 1.5h5.1a1.5 1.5 0 0 1 1.5 1.5v6a1.5 1.5 0 0 1-1.5 1.5h-9.5a1.5 1.5 0 0 1-1.5-1.5z"/><path d="M8 7.25v3.5M6.25 9h3.5"/>', 1.3),
+    gear: svg(16, '<path d="M8 1.75l1.1 1.6 1.9-.5.5 1.9 1.6 1.1-.9 1.7.9 1.7-1.6 1.1-.5 1.9-1.9-.5L8 14.25l-1.1-1.6-1.9.5-.5-1.9-1.6-1.1.9-1.7-.9-1.7 1.6-1.1.5-1.9 1.9.5z"/><circle cx="8" cy="8" r="2.25"/>', 1.3),
+    terminal: svg(14, '<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2"/><path d="M4.5 6.5L6.5 8l-2 1.5M8 10h3"/>', 1.3),
+    edit: svg(14, '<path d="M11.6 2.4a1.3 1.3 0 0 1 1.9 1.9L6 11.8 3 12.6l.8-3z"/>', 1.3),
+    read: svg(14, '<path d="M1.75 8s2.25-4.25 6.25-4.25S14.25 8 14.25 8 12 12.25 8 12.25 1.75 8 1.75 8z"/><circle cx="8" cy="8" r="1.75"/>', 1.3),
+    copy: svg(14, '<rect x="5" y="5" width="8.5" height="8.5" rx="1.5"/><path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5"/>', 1.3),
+    finder: svg(14, '<rect x="1.75" y="2.25" width="12.5" height="11.5" rx="2"/><path d="M8 2.25v11.5M5 6v1.5M11 6v1.5M5 10.5c1.8 1 4.2 1 6 0"/>', 1.3),
+    trash: svg(14, '<path d="M2.75 4.25h10.5M6.25 4.25V2.75h3.5v1.5M4 4.25l.6 9a1 1 0 0 0 1 .95h4.8a1 1 0 0 0 1-.95l.6-9"/>', 1.3),
+    sliders: svg(14, '<path d="M2 5h12M2 11h12"/><circle cx="6" cy="5" r="1.75" fill="#1A1D22"/><circle cx="10.5" cy="11" r="1.75" fill="#1A1D22"/>', 1.3),
+    paperclip: svg(14, '<path d="M13 7.5l-5.2 5.2a3.2 3.2 0 0 1-4.5-4.5L8.6 2.9a2.1 2.1 0 0 1 3 3l-5.3 5.3a1 1 0 0 1-1.5-1.5l4.8-4.8"/>', 1.3),
+    map: svg(14, '<path d="M1.75 3.75l4-1.5 4.5 1.5 4-1.5v10l-4 1.5-4.5-1.5-4 1.5z"/><path d="M5.75 2.25v10M10.25 3.75v10"/>', 1.3),
+    arrowUp: svg(13, '<path d="M8 13V3.5M3.75 7.5L8 3.25l4.25 4.25"/>', 2.2),
+    stopFill: '<svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor"/></svg>',
+    branch: (s) => svg(s, '<circle cx="4.5" cy="3.5" r="1.6"/><circle cx="4.5" cy="12.5" r="1.6"/><circle cx="11.5" cy="4.5" r="1.6"/><path d="M4.5 5.1v5.8M11.5 6.1c0 3-3.2 3.1-6.2 4.7"/>', 1.4),
+    error: (s) => svg(s, '<path d="M8 2.25l6.25 11H1.75z"/><path d="M8 6.5v2.75"/><circle cx="8" cy="11.25" r="0.35" fill="currentColor"/>', 1.4),
+    pr: (s) => svg(s, '<circle cx="4.5" cy="3.5" r="1.6"/><circle cx="4.5" cy="12.5" r="1.6"/><circle cx="11.5" cy="12.5" r="1.6"/><path d="M4.5 5.1v5.8M11.5 10.9V6.5a2 2 0 0 0-2-2H7.5M9 3L7.5 4.5 9 6"/>', 1.4),
+    merge: (s) => svg(s, '<circle cx="4.5" cy="3.5" r="1.6"/><circle cx="4.5" cy="12.5" r="1.6"/><circle cx="11.5" cy="8.5" r="1.6"/><path d="M4.5 5.1v5.8M4.5 5.1c0 2.4 2.2 3.4 5.4 3.4"/>', 1.4),
+    spinner: (s) => spinner(s),
+  };
+  const fileIcon = (path) => { const ext = path.split('.').pop(); return `<span style="color:${FILE_COLOR[ext] || '#A3A9B1'};display:flex">${svg(13, '<path d="M4 1.75h5.25L12.5 5v9.25H4z"/><path d="M9.25 1.75V5h3.25"/>', 1.4)}</span>`; };
+  const baseName = (path) => path.split('/').pop();
+  const agentTile = (agent, small) => `<span class="agent ${agent}${small ? ' sm' : ''}" aria-hidden="true">${agent === 'claude' ? 'C' : 'O'}</span>`;
+  const AGENT_NAME = { claude: 'Claude Code', opencode: 'OpenCode' };
+  const AGENT_MODEL = { claude: 'Opus 5.5', opencode: 'Default model' };
+  document.querySelectorAll('[data-icon]').forEach((el) => {
+    const icon = I[el.dataset.icon];
+    el.insertAdjacentHTML('afterbegin', typeof icon === 'function' ? icon(Number(el.dataset.size) || 14) : icon);
+  });
+
+  // ---------- data ----------
+  const PALETTE = ['#4C7BD9', '#8E6BE0', '#3A9C8C', '#C9784A', '#C2577A', '#6E8C3A'];   // SB-03: index from FNV-1a in Rocky
+  const repos = [
+    { id: 'celes', name: 'celes-platform', color: 0, folded: false },
+    { id: 'veritas', name: 'veritas', color: 1, folded: false },
+    { id: 'rocky', name: 'rocky', color: 3, folded: false },
+    { id: 'doculift', name: 'doculift', color: 2, folded: true },
+  ];
+  const item = (kind, text, extra = {}) => ({ id: uid(), kind, text, ...extra });
+  const footer = (agent, duration, time) => item('footer', '', { agent, duration, time });
+  const conv = (id, agent, title, items) => ({ id, agent, title, items });
+  // Terminal sessions (PTYSession). kind: setup | run | archive | terminal. state: running | exited | signaled | failed.
+  const P = (s) => `<span class="dim">${esc(s)}</span>`;
+  const session = (kind, state, lines, extra = {}) => ({ id: uid(), kind, state, lines, ...extra });
+  const now = Date.now();
+  const FILES = {
+    'src/openapi.ts': [
+      '<span class="kw">import</span> { routes } <span class="kw">from</span> <span class="str">"./routes"</span>;',
+      '',
+      '<span class="cm">// Walks the router and writes openapi.json.</span>',
+      '<span class="kw">export function</span> buildDocument() {',
+      '  <span class="kw">return</span> { openapi: <span class="str">"3.1.0"</span>, paths: routes.map(toPath) };',
+      '}',
+    ].join('\n'),
+    'src/routes/providers.ts': [
+      '<span class="kw">export const</span> providers = [',
+      '  { method: <span class="str">"GET"</span>, path: <span class="str">"/providers"</span> },',
+      '  { method: <span class="str">"POST"</span>, path: <span class="str">"/providers"</span> },',
+      '];',
+    ].join('\n'),
+  };
+  const workspaces = [
+    { id: 'w1', repo: 'celes', name: 'tokyo', branch: 'jhzl/openapi-export', port: 41000, diff: [388, 862], files: ['src/openapi.ts'],
+      sessions: [
+        session('setup', 'exited', [P('$ pnpm install'), 'Lockfile is up to date, resolution step is skipped', 'Packages: +812', '<span class="ok">Done in 6.4s</span>'], { code: 0 }),
+        session('terminal', 'running', [P('me@mac tokyo % ') + 'git status -sb', '## jhzl/openapi-export', ' M src/openapi.ts', '?? test/openapi.test.ts', P('me@mac tokyo % ')]),
+      ],
+      convs: [
+        conv('c1', 'claude', 'OpenAPI export for providers', [
+          item('user', 'Export the provider endpoints as an OpenAPI 3.1 document and add a test that validates the schema.'),
+          item('tool', '', { icon: 'read', label: 'Read', file: 'src/routes/providers.ts', live: false }),
+          item('agent', 'I\'ll add an `openapi` script that walks the router and writes `openapi.json`, then a test that loads it with the validator.'),
+          footer('claude', '24s', '4:02 PM'),
+        ]),
+        conv('c2', 'opencode', 'Review the migration', [
+          item('user', 'Review the v5 migration for missing indexes.'),
+          item('agent', 'Nothing is missing: `attachments` and `toolKind` are read with their message and never filtered on.'),
+          footer('opencode', '9s', '3:41 PM'),
+        ]),
+      ] },
+    { id: 'w2', repo: 'celes', name: 'lima', branch: 'jhzl/invoice-rounding', port: 41010, diff: [12, 3], needsYou: true, files: [], sessions: [],
+      convs: [conv('c3', 'claude', 'Fix invoice rounding', [
+        item('user', 'Round invoice totals half-up to two decimals.'),
+        item('tool', '', { icon: 'edit', label: 'Edit', file: 'src/billing/round.ts', live: false }),
+        item('agent', 'The change is in. I need permission to run `pnpm test billing` to check it.'),
+      ])] },
+    { id: 'w3', repo: 'celes', name: 'oslo', branch: 'jhzl/oslo', port: 41020, files: [], sessions: [], convs: [conv('c8', 'claude', null, [])] },
+    { id: 'w4', repo: 'veritas', name: 'quito', branch: 'jhzl/list-prs', port: 41030, diff: [2300, 1900], files: [], sessions: [],
+      convs: [conv('c4', 'claude', 'List repo PRs by author', [
+        item('user', 'List the open pull requests in this repo grouped by author.'),
+        item('agent', 'Done: `prs:list` prints them grouped by author, newest first.'),
+        footer('claude', '41s', '2:15 PM'),
+      ])] },
+    { id: 'w5', repo: 'veritas', name: 'bergen', branch: 'jhzl/acp-handshake', port: 41040, diff: [41, 17], unread: true, files: [], sessions: [],
+      convs: [conv('c5', 'claude', 'Refactor ACP handshake', [
+        item('user', 'Retry the ACP handshake once when the adapter exits during initialize.'),
+        item('agent', 'The handshake now retries once and reports the second failure with the adapter\'s stderr.'),
+        footer('claude', '1m 12s', '4:07 PM'),
+      ])] },
+    { id: 'w6', repo: 'rocky', name: 'lagos', branch: 'jhzl/terminal-panel', port: 41050, diff: [64, 20], failure: 'Agent exited (1): claude-agent-acp ended unexpectedly.', files: [], sessions: [],
+      convs: [conv('c6', 'claude', 'Collapse the empty terminal panel', [
+        item('user', 'Hide the terminal panel while nothing runs in it.'),
+      ])] },
+    { id: 'w7', repo: 'doculift', name: 'paris', branch: 'jhzl/ocr-retry', port: 41060, diff: [120, 8], files: [], sessions: [], turn: { convId: 'c7', startedAt: now - 42000 },
+      convs: [conv('c7', 'claude', 'Retry OCR on timeouts', [
+        item('user', 'Retry OCR when the provider times out, up to three times.'),
+        item('tool', '', { icon: 'terminal', label: 'Run', detail: 'pnpm test ocr', live: true }),
+      ])] },
+    { id: 'w8', repo: 'doculift', name: 'rome', branch: 'jhzl/rome', port: 41070, files: [],
+      sessions: [session('setup', 'exited', [P('$ pnpm install --frozen-lockfile'), '<span class="err">ERR_PNPM_NO_LOCKFILE  Cannot install with "frozen-lockfile" because pnpm-lock.yaml is absent</span>'], { code: 1 })],
+      convs: [conv('c9', 'claude', null, [])] },
+    { id: 'w9', repo: 'doculift', name: 'cairo', branch: 'jhzl/scanned-invoices', port: 41080, diff: [5, 1], files: [], sessions: [],
+      convs: [conv('c10', 'claude', 'Parse scanned invoices', [
+        item('user', 'Parse the scanned invoices in fixtures/ and extract their totals.'),
+        item('agent', 'Totals match for every fixture.'),
+        footer('claude', '33s', '1:50 PM'),
+      ])] },
+  ];
+  workspaces.forEach((w) => { w.activeConv = w.convs[0] && w.convs[0].id; w.selectedFile = null; });
+  const CITIES = ['nairobi', 'lisbon', 'kyoto', 'bogota', 'hanoi', 'dakar', 'quebec', 'tunis'];
+  const REPLY = 'The schema test passes. `openapi.json` now covers every provider endpoint, and the test fails when a route is added without a schema.';
+
+  const state = { selected: 'w1', filter: '', showDiff: false, panelCollapsed: false };
+  const repoOf = (id) => repos.find((r) => r.id === id);
+  const wsOf = (id) => workspaces.find((w) => w.id === id);
+  const selectedWs = () => wsOf(state.selected);
+  const activeConv = (w) => w.convs.find((c) => c.id === w.activeConv) || w.convs[0];
+
+  // ---------- ROW-02, ROW-03 ----------
+  const RANK = { needs: 0, error: 1, working: 2, unread: 3 };
+  const STATE_LABEL = { needs: 'Needs you', error: 'Error', working: 'Working', unread: 'Unread reply', idle: 'Idle' };
+  const setupFailure = (w) => { const s = w.sessions.find((x) => x.kind === 'setup' && x.state === 'exited' && x.code !== 0); return s ? `Setup exited with ${s.code}. See the Setup tab.` : null; };
+  const failureOf = (w) => w.failure || setupFailure(w);
+  function status(w) {
+    if (w.needsYou) return 'needs';
+    if (failureOf(w)) return 'error';
+    if (w.turn) return 'working';
+    if (w.unread) return 'unread';
+    return 'idle';
+  }
+  function glyph(st, size) {
+    switch (st) {
+      case 'working': return spinner(size);
+      case 'needs': return '<span class="dot dot-needs" role="img" aria-label="Needs you"></span>';
+      case 'error': return `<span class="g-error" role="img" aria-label="Error">${I.error(size)}</span>`;
+      case 'unread': return '<span class="dot dot-unread" role="img" aria-label="Unread reply"></span>';
+      default: return `<span class="g-idle" role="img" aria-label="Idle">${I.branch(size)}</span>`;
+    }
+  }
+  function titleOf(w) {
+    const titled = w.convs.find((c) => c.title);
+    return titled ? { text: titled.title, fallback: false } : { text: w.name, fallback: true };
+  }
+  function aggregate(list) {
+    let best = null;
+    for (const w of list) {
+      const st = status(w);
+      if (st !== 'idle' && (best === null || RANK[st] < RANK[best])) best = st;
+    }
+    return best;
+  }
+  const count = (n) => (n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(n));
+  const matches = (w, r, q) => !q || [titleOf(w).text, w.branch, w.name, r.name].some((s) => s.toLowerCase().includes(q));
+
+  // ---------- sidebar ----------
+  let visibleOrder = [];
+  let pinned = new Set();
+  const pinOnce = (id) => (pinned.has(id) ? '' : (pinned.add(id), ` data-req="${id}"`));
+
+  function renderSidebar() {
+    const q = state.filter.trim().toLowerCase();
+    pinned = new Set();
+    visibleOrder = [];
+    let html = '';
+    let index = 0;
+    for (const r of repos) {
+      const list = workspaces.filter((w) => w.repo === r.id && matches(w, r, q));
+      if (q && !list.length) continue;
+      const folded = r.folded && !q;
+      html += repoHeader(r, list, folded);
+      if (folded) continue;
+      for (const w of list) { index += 1; visibleOrder.push(w.id); html += rowHTML(w, index); }
+    }
+    if (!repos.length) html = `<div class="sb-empty" data-req="SB-07"><p>No repositories yet</p><button class="fill-btn" data-action="add-repo">${I.folderPlus}<span>Add repository</span></button></div>`;
+    sbList.innerHTML = html || `<p class="no-match">No workspaces match “${esc(state.filter.trim())}”</p>`;
+  }
+
+  function repoHeader(r, list, folded) {
+    const agg = folded ? aggregate(list) : null;
+    return `<div class="repo"${pinOnce('SB-03')}>` +
+      `<button class="repo-name" data-action="fold" data-repo="${r.id}" aria-expanded="${!folded}" aria-label="${esc(r.name)}, ${folded ? 'collapsed' : 'expanded'}, ${list.length} workspaces"${folded ? pinOnce('SB-04') : ''}>` +
+        `<span class="monogram" style="background:${PALETTE[r.color]}" aria-hidden="true">${esc(r.name[0].toUpperCase())}</span>` +
+        `<span class="repo-label">${esc(r.name)}</span>` +
+        `<span class="chev${folded ? '' : ' open'}" aria-hidden="true">${I.chevron}</span>` +
+        `<span class="grow"></span>` +
+        (agg ? `<span class="glyph">${glyph(agg, 12)}</span>` : '') +
+      `</button>` +
+      `<button class="icon-btn sm repo-more" data-action="repo-menu" data-repo="${r.id}" aria-label="${esc(r.name)} actions" title="More">${I.ellipsis}</button>` +
+      `<button class="icon-btn sm" data-action="new-ws" data-repo="${r.id}" aria-label="New workspace in ${esc(r.name)}" title="New workspace">${I.plus}</button>` +
+    `</div>`;
+  }
+
+  function rowHTML(w, index) {
+    const st = status(w);
+    const t = titleOf(w);
+    const selected = w.id === state.selected;
+    let glyphPin = '';
+    if (st === 'unread' && !pinned.has('ROW-04')) glyphPin = pinOnce('ROW-04');
+    else if (st === 'working' && !pinned.has('MOT-01')) glyphPin = pinOnce('MOT-01');
+    else glyphPin = pinOnce('ROW-03');
+    const diff = state.showDiff && w.diff
+      ? `<span class="diff" data-scope="out"${pinOnce('OUT-01')}><span class="add">+${count(w.diff[0])}</span> <span class="del">−${count(w.diff[1])}</span></span>`
+      : '';
+    const hint = index <= 9 ? `<span class="hint">⌘${index}</span>` : '';
+    const failure = failureOf(w);
+    const tooltip = `${t.text}\n${w.branch} · ${w.name}${failure ? '\n' + failure : ''}`;
+    return `<div class="row-wrap${selected ? ' selected' : ''}" data-ws="${w.id}"${pinOnce('ROW-01')}>` +
+      `<button class="row" data-action="select" data-ws="${w.id}" aria-current="${selected}" aria-label="${esc(t.text)}, ${STATE_LABEL[st]}" title="${esc(tooltip)}">` +
+        `<span class="glyph"${glyphPin}>${glyph(st, 14)}</span>` +
+        `<span class="row-title${t.fallback ? ' fallback' : ''}"${pinOnce('ROW-02')}>${esc(t.text)}</span>` +
+        `<span class="row-trailing">${diff}${hint}</span>` +
+      `</button>` +
+      `<span class="row-actions">` +
+        `<button class="icon-btn sm" data-action="remove-ws" data-ws="${w.id}" aria-label="Remove workspace" title="Remove workspace…"${pinOnce('ROW-05')}>${I.archive}</button>` +
+        `<button class="icon-btn sm" data-action="row-menu" data-ws="${w.id}" aria-label="More actions" title="More">${I.ellipsis}</button>` +
+      `</span>` +
+    `</div>`;
+  }
+  const focusSelectedRow = () => { const el = sbList.querySelector(`.row[data-ws="${state.selected}"]`); if (el) el.focus(); };
+
+  // ---------- top bar ----------
+  const runSession = (w) => w.sessions.find((s) => s.kind === 'run');
+  function renderTopbar() {
+    const w = selectedWs();
+    $('#tbContent').style.visibility = w ? '' : 'hidden';
+    if (!w) return;
+    $('#crumbRepo').textContent = repoOf(w.repo).name;
+    $('#branchText').textContent = w.branch;
+    const port = $('#port');
+    port.textContent = 'PORT ' + w.port;
+    port.title = `This workspace owns ports ${w.port}–${w.port + 9}: $PORT and $CONDUCTOR_PORT are ${w.port}.`;
+    const run = runSession(w);
+    $('#runBtn').innerHTML = run && run.state === 'running' ? `${I.stop}<span>Stop</span>` : `${I.play}<span>Run</span>`;
+  }
+
+  // ---------- tabs (TAB-01) ----------
+  function renderTabs() {
+    const w = selectedWs();
+    if (!w) { tabsEl.innerHTML = ''; return; }
+    const active = activeConv(w);
+    let html = '';
+    w.convs.forEach((c, i) => {
+      const selected = !w.selectedFile && active && c.id === active.id;
+      const live = w.turn && w.turn.convId === c.id;
+      const icon = live ? spinner(12) : agentTile(c.agent);
+      html += `<div class="tab-wrap${selected ? ' selected' : ''}"${i === 0 ? ' data-req="TAB-01"' : ''}>` +
+        `<button class="tab" data-action="tab" data-conv="${c.id}" aria-current="${selected}">${icon}<span class="t-label">${esc(c.title || 'New conversation')}</span></button>` +
+        `<button class="tab-close" data-action="close-tab" data-conv="${c.id}" aria-label="Close tab" title="Close the tab">${I.close}</button>` +
+      `</div>`;
+    });
+    w.files.forEach((path) => {
+      const selected = w.selectedFile === path;
+      html += `<div class="tab-wrap${selected ? ' selected' : ''}">` +
+        `<button class="tab" data-action="file-tab" data-path="${esc(path)}" aria-current="${selected}" title="${esc(path)}">${fileIcon(path)}<span class="t-label">${esc(baseName(path))}</span></button>` +
+        `<button class="tab-close" data-action="close-file" data-path="${esc(path)}" aria-label="Close tab" title="Close the tab">${I.close}</button>` +
+      `</div>`;
+    });
+    html += `<button class="icon-btn tab-new" data-action="new-tab" aria-label="New conversation" title="New conversation">${I.plus}</button>`;
+    tabsEl.innerHTML = html;
+  }
+
+  // ---------- chat (MOT-02, MOT-03) ----------
+  const elapsed = (t) => { const s = Math.max(0, Math.floor((Date.now() - t) / 1000)); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`; };
+  function itemHTML(it, fresh) {
+    const enter = fresh ? ' enter' : '';
+    switch (it.kind) {
+      case 'user': return `<div class="msg-user${enter}" data-item="${it.id}">${fmt(it.text)}</div>`;
+      case 'agent': return `<div class="msg-agent${enter}" data-item="${it.id}">${fmt(it.text)}</div>`;
+      case 'error': return `<div class="msg-error${enter}" data-item="${it.id}">${esc(it.text)}</div>`;
+      case 'footer': return `<div class="turn-footer${enter}" data-item="${it.id}">${agentTile(it.agent, true)}<span>${AGENT_NAME[it.agent]} · ${it.duration} · ${it.time}</span><button class="icon-btn xs" data-action="copy-reply" aria-label="Copy the reply" title="Copy the reply">${I.copy}</button></div>`;
+      case 'tool': {
+        const detail = it.file
+          ? `<button class="file-badge" data-action="open-file" data-path="${esc(it.file)}" title="${esc(it.file)}">${fileIcon(it.file)}<span>${esc(baseName(it.file))}</span></button>`
+          : `<span class="badge">${esc(it.detail)}</span>`;
+        return `<div class="tool${enter}" data-item="${it.id}"><span class="tool-icon">${I[it.icon] || I.terminal}</span><span class="tool-label${it.live ? ' shimmer' : ''}">${esc(it.label)}</span>${detail}</div>`;
+      }
+      default: return '';
+    }
+  }
+  const workingHTML = (turn, fresh) => `<div class="working${fresh ? ' enter' : ''}" id="working" data-req="MOT-03"><span class="shimmer">Working</span><span class="elapsed" id="elapsed">${elapsed(turn.startedAt)}</span></div>`;
+  const pinToBottom = () => { chatScroll.scrollTop = chatScroll.scrollHeight; };
+  const isShown = (w, c) => state.selected === w.id && !w.selectedFile && activeConv(w) && activeConv(w).id === c.id;
+
+  function renderChat() {
+    const w = selectedWs();
+    const c = w && activeConv(w);
+    const showFile = Boolean(w && w.selectedFile);
+    chatScroll.hidden = showFile;
+    fileView.hidden = !showFile;
+    $('#composerWrap').hidden = showFile;
+    if (showFile) { fileView.innerHTML = FILES[w.selectedFile] || esc(`// ${w.selectedFile}`); return; }
+    if (!c) { chatCol.innerHTML = ''; return; }
+    const live = w.turn && w.turn.convId === c.id;
+    let html = c.items.map((it) => itemHTML(it, false)).join('');
+    if (live) html += workingHTML(w.turn, false);
+    chatCol.innerHTML = html || '<p class="chat-empty">New conversation. Send a message to start.</p>';
+    renderComposer();
+    pinToBottom();
+  }
+  function renderComposer() {
+    const w = selectedWs();
+    if (!w) return;
+    const c = activeConv(w);
+    const stopped = Boolean(w.failure);
+    $('#composerBox').hidden = stopped;
+    $('#stoppedBox').hidden = !stopped;
+    $('#stoppedReason').textContent = w.failure || '';
+    composer.placeholder = `Ask ${AGENT_NAME[c.agent]} to make changes…`;
+    $('#modelBtn').innerHTML = `${agentTile(c.agent, true)}<span>${AGENT_MODEL[c.agent]}</span>`;
+    const running = Boolean(w.turn && w.turn.convId === c.id);
+    sendBtn.disabled = !running && !composer.value.trim();
+    sendBtn.innerHTML = running ? I.stopFill : I.arrowUp;
+    sendBtn.setAttribute('aria-label', running ? 'Stop' : 'Send');
+    sendBtn.title = running ? 'Stop the agent\'s turn' : 'Send (Return)';
+  }
+  function append(w, c, it) {
+    c.items.push(it);
+    if (!isShown(w, c)) return;
+    const empty = chatCol.querySelector('.chat-empty');
+    if (empty) empty.remove();
+    const working = $('#working');
+    if (working) working.insertAdjacentHTML('beforebegin', itemHTML(it, true));
+    else chatCol.insertAdjacentHTML('beforeend', itemHTML(it, true));
+    pinToBottom();
+  }
+  function update(w, c, it) {
+    if (!isShown(w, c)) return;
+    const el = chatCol.querySelector(`[data-item="${it.id}"]`);
+    if (!el) return;
+    if (it.kind === 'agent') el.innerHTML = fmt(it.text);
+    if (it.kind === 'tool') el.querySelector('.tool-label').classList.toggle('shimmer', Boolean(it.live));
+    pinToBottom();
+  }
+
+  // ---------- terminal panel (TERM-*) ----------
+  const SCRIPT_ORDER = { setup: 0, run: 1, archive: 2, terminal: 3 };
+  const sortSessions = (w) => w.sessions.sort((a, b) => SCRIPT_ORDER[a.kind] - SCRIPT_ORDER[b.kind]);
+  function sessionTitle(w, s) {
+    if (s.kind !== 'terminal') return s.kind[0].toUpperCase() + s.kind.slice(1);
+    return `Terminal ${w.sessions.filter((x) => x.kind === 'terminal').indexOf(s) + 1}`;
+  }
+  // TERM-03: words for the tab tooltip, and the line a finished process leaves in its terminal.
+  function stateText(s) {
+    if (s.state === 'running') return 'running';
+    if (s.state === 'exited') return s.code === 0 ? 'exited with code 0' : `failed, exit code ${s.code}`;
+    if (s.state === 'signaled') return 'stopped';
+    return 'could not start';
+  }
+  function endLine(s) {
+    if (s.state === 'running') return '';
+    if (s.state === 'exited') return `\n<span class="${s.code === 0 ? 'dim' : 'err'}">Process exited with code ${s.code}</span>`;
+    if (s.state === 'signaled') return '\n<span class="dim">Process stopped</span>';
+    return '\n<span class="err">Process could not start</span>';
+  }
+  const dotClass = (s) => (s.state === 'running' ? 'running' : (s.state === 'failed' || (s.state === 'exited' && s.code !== 0)) ? 'failed' : 'done');
+  const selectedSession = (w) => w.sessions.find((s) => s.id === w.activeSession) || w.sessions[w.sessions.length - 1];
+
+  function renderPanel() {
+    const w = selectedWs();
+    const sessions = w ? w.sessions : [];
+    const folded = state.panelCollapsed;
+    win.classList.toggle('panel-empty', !sessions.length);
+    win.classList.toggle('panel-folded', folded && sessions.length > 0);
+    if (!sessions.length) {
+      pbar.innerHTML = `<button class="text-btn sm" data-action="new-terminal" data-req="TERM-04">${I.terminal}<span>New terminal</span></button>`;
+      termEl.innerHTML = '';
+      return;
+    }
+    const sel = selectedSession(w);
+    let html = '';
+    sessions.forEach((s, i) => {
+      const selected = !folded && s.id === sel.id;
+      const closable = s.kind === 'terminal';
+      html += `<div class="ptab-wrap${selected ? ' selected' : ''}${closable ? ' closable' : ''}"${i === 0 ? ' data-req="TERM-03"' : ''}>` +
+        `<button class="ptab" data-action="ptab" data-session="${s.id}" aria-label="${sessionTitle(w, s)}, ${stateText(s)}" title="${sessionTitle(w, s)}: ${stateText(s)}"><span class="sdot ${dotClass(s)}"></span><span>${sessionTitle(w, s)}</span></button>` +
+        (closable ? `<button class="tab-close" data-action="close-terminal" data-session="${s.id}" aria-label="Close terminal" title="Close the terminal">${I.close}</button>` : '') +
+      `</div>`;
+    });
+    html += `<button class="icon-btn sm" data-action="new-terminal" aria-label="New terminal" title="New terminal">${I.plus}</button>`;
+    html += '<span class="grow"></span>';
+    html += `<button class="icon-btn sm" data-action="fold-panel" data-req="TERM-05" aria-label="${folded ? 'Show panel' : 'Hide panel'}" title="${folded ? 'Show the terminal panel (⌘J)' : 'Hide the terminal panel; its terminals keep running (⌘J)'}">${folded ? I.chevUp : I.chevDown}</button>`;
+    pbar.innerHTML = html;
+    termEl.innerHTML = sel.lines.join('\n') + (sel.kind === 'terminal' && sel.state === 'running' ? '<span class="cursor"></span>' : '') + endLine(sel);
+    termEl.scrollTop = termEl.scrollHeight;
+  }
+  function showSession(w, s) { w.activeSession = s.id; state.panelCollapsed = false; renderPanel(); }
+  function newTerminal(w) {
+    const s = session('terminal', 'running', [P(`me@mac ${w.name} % `)]);
+    w.sessions.push(s);
+    sortSessions(w);
+    showSession(w, s);
+  }
+  async function toggleRun(w) {
+    let run = runSession(w);
+    if (run && run.state === 'running') {
+      run.state = 'signaled'; run.signal = 15;
+      run.lines.push(P('^C'));
+      renderTopbar(); renderPanel();
+      return;
+    }
+    if (!run) { run = session('run', 'running', []); w.sessions.push(run); sortSessions(w); }
+    run.state = 'running';
+    run.lines = [P(`$ pnpm dev --port ${w.port}`)];
+    renderTopbar();
+    showSession(w, run);
+    const out = ['', '  VITE v6.2.0  ready in 412 ms', '', `  <span class="ok">➜</span>  Local:   http://localhost:${w.port}/`, '  ➜  press h + enter to show help'];
+    for (const line of out) {
+      await wait(260);
+      if (run.state !== 'running') return;
+      run.lines.push(line);
+      if (state.selected === w.id && selectedSession(w) === run) renderPanel();
+    }
+  }
+
+  function renderAll() {
+    win.classList.toggle('no-ws', !selectedWs());      // WEL-01
+    renderSidebar(); renderTopbar(); renderTabs(); renderChat(); renderPanel();
+  }
+  function select(id) {
+    const w = wsOf(id);
+    if (!w) return;
+    state.selected = id;
+    w.unread = false;                                   // ROW-04
+    $('#demoWelcome').setAttribute('aria-pressed', 'false');
+    win.classList.add('switching');                     // TERM-05: switching workspaces does not animate the panel
+    renderAll();
+    requestAnimationFrame(() => requestAnimationFrame(() => win.classList.remove('switching')));
+  }
+
+  // ---------- a live turn ----------
+  async function runTurn(w, text) {
+    const c = activeConv(w);
+    if (!c.title) c.title = text.split('\n')[0].slice(0, 40) + (text.length > 40 ? '…' : '');   // ChatSessionRecord.title(from:)
+    append(w, c, item('user', text));
+    const turn = { convId: c.id, startedAt: Date.now() };
+    w.turn = turn;
+    w.unread = false;
+    const alive = () => w.turn === turn;
+    renderSidebar(); renderTabs(); renderComposer();
+    if (isShown(w, c)) { chatCol.insertAdjacentHTML('beforeend', workingHTML(turn, true)); pinToBottom(); }
+    await wait(1100);
+    if (!alive()) return;
+    const tool = item('tool', '', { icon: 'terminal', label: 'Run', detail: 'npm test -- openapi', live: true });
+    append(w, c, tool);
+    await wait(2600);
+    if (!alive()) return;
+    tool.live = false;
+    update(w, c, tool);
+    await wait(300);
+    if (!alive()) return;
+    const words = REPLY.split(/(\s+)/);
+    const reply = item('agent', words.shift());
+    append(w, c, reply);
+    for (const word of words) {
+      if (!alive()) return;
+      reply.text += word; update(w, c, reply); await wait(26);
+    }
+    finishTurn(w, c, turn, true);
+  }
+  function finishTurn(w, c, turn, completed) {
+    if (w.turn !== turn) return;
+    w.turn = null;
+    c.items.forEach((it) => { if (it.live) { it.live = false; update(w, c, it); } });
+    if (isShown(w, c)) { const el = $('#working'); if (el) el.remove(); }
+    if (completed) {
+      append(w, c, footer(c.agent, elapsed(turn.startedAt), clock()));
+      if (state.selected !== w.id) w.unread = true;     // ROW-04
+    }
+    renderSidebar(); renderTabs(); renderComposer();
+  }
+  function sendOrStop() {
+    const w = selectedWs();
+    if (!w) return;
+    const c = activeConv(w);
+    if (w.turn && w.turn.convId === c.id) { finishTurn(w, c, w.turn, false); toast('Stopped the turn (chat.cancel()).'); return; }
+    const text = composer.value.trim();
+    if (!text || w.turn) return;
+    composer.value = '';
+    runTurn(w, text);
+  }
+
+  // ---------- menus and toast ----------
+  let menuEl = null;
+  function closeMenu() { if (menuEl) { menuEl.remove(); menuEl = null; } }
+  function openMenu({ x, y, alignRight, header, items }) {
+    closeMenu();
+    const m = document.createElement('div');
+    m.className = 'menu';
+    m.setAttribute('role', 'menu');
+    m.innerHTML = (header ? `<div class="menu-header">${esc(header)}</div>` : '') + items.map((it, i) => (it === '-'
+      ? '<div class="menu-sep"></div>'
+      : `<button class="menu-item${it.danger ? ' danger' : ''}" role="menuitem" data-i="${i}">${it.icon || ''}<span>${esc(it.label)}</span>${it.kbd ? `<span class="m-kbd">${it.kbd}</span>` : ''}</button>`)).join('');
+    win.appendChild(m);
+    const box = win.getBoundingClientRect();
+    const left = Math.max(6, Math.min(x - box.left - (alignRight ? m.offsetWidth : 0), box.width - m.offsetWidth - 6));
+    let top = y - box.top;
+    if (top + m.offsetHeight > box.height - 6) top = Math.max(6, top - m.offsetHeight - 36);   // open upward near the bottom
+    m.style.left = `${left}px`;
+    m.style.top = `${top}px`;
+    m.addEventListener('click', (e) => {
+      const b = e.target.closest('.menu-item');
+      if (!b) return;
+      const chosen = items[Number(b.dataset.i)];
+      closeMenu();
+      if (chosen.run) chosen.run();
+    });
+    menuEl = m;
+  }
+  const menuBelow = (anchor, opts) => { const r = anchor.getBoundingClientRect(); openMenu({ ...opts, x: r.right, y: r.bottom + 4, alignRight: true }); };
+
+  let toastTimer = null;
+  function toast(message) {
+    let t = win.querySelector('.toast');
+    if (!t) { t = document.createElement('div'); t.className = 'toast'; t.setAttribute('role', 'status'); win.appendChild(t); }
+    t.textContent = message;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('show'), 2000);
+  }
+  function copyText(text) { try { if (navigator.clipboard) navigator.clipboard.writeText(text); } catch (e) { /* file:// may refuse */ } }
+  const worktreePath = (w) => `~/dev/${repoOf(w.repo).name}-worktrees/${w.name}`;
+
+  const repoMenu = (r) => ({ items: [
+    { label: 'New Workspace', icon: I.plus, kbd: '⌘N', run: () => newWorkspace(r) },
+    { label: 'Settings…', icon: I.sliders, run: () => toast('Demo: opens RepoSettingsView, as today.') },
+    '-',
+    { label: 'Remove from Rocky', icon: I.trash, danger: true, run: () => toast('Demo: removes the repository, as today.') },
+  ] });
+  const rowMenu = (w) => ({ items: [
+    { label: 'Open in Finder', icon: I.finder, run: () => toast(`Demo: reveals ${w.name} in Finder.`) },
+    { label: 'Copy Branch Name', icon: I.copy, run: () => { copyText(w.branch); toast(`Copied ${w.branch}`); } },
+    '-',
+    { label: 'Remove Workspace…', icon: I.archive, danger: true, run: () => toast('Demo: shows today\'s Remove confirmation dialog.') },
+  ] });
+  const openMenuFor = (w) => ({ header: worktreePath(w), items: [
+    { label: 'Open in Finder', icon: I.finder, run: () => toast('Demo: NSWorkspace opens the worktree in Finder.') },
+    { label: 'New Terminal', icon: I.terminal, run: () => newTerminal(w) },
+    { label: 'Copy Path', icon: I.copy, run: () => { copyText(worktreePath(w)); toast('Copied the path'); } },
+  ] });
+  const newTabMenu = () => ({ items: [
+    { label: 'New Claude Code conversation', icon: agentTile('claude'), run: () => newConversation('claude') },
+    { label: 'New OpenCode conversation', icon: agentTile('opencode'), run: () => newConversation('opencode') },
+  ] });
+  const plusMenu = () => ({ items: [
+    { label: 'Add attachment', icon: I.paperclip, kbd: '⌘U', run: () => toast('Demo: opens the file picker, as today.') },
+    { label: 'Plan mode', icon: I.map, kbd: '⇧Tab', run: () => toast('Demo: switches plan mode, as today.') },
+  ] });
+
+  // ---------- actions ----------
+  function newWorkspace(r) {
+    if (!r) return;
+    const city = CITIES.shift() || `ws${workspaces.length + 1}`;
+    const last = Math.max(...workspaces.map((w) => w.port));
+    const w = { id: uid(), repo: r.id, name: city, branch: `jhzl/${city}`, port: last + 10, files: [], sessions: [], convs: [conv(uid(), 'claude', null, [])], selectedFile: null };
+    w.activeConv = w.convs[0].id;
+    workspaces.push(w);
+    r.folded = false;
+    select(w.id);
+    toast('Demo: runs git worktree add and the setup script, as today.');
+  }
+  function newConversation(agent) {
+    const w = selectedWs();
+    const c = conv(uid(), agent, null, []);
+    w.convs.push(c);
+    w.activeConv = c.id;
+    w.selectedFile = null;
+    renderTabs(); renderChat();
+  }
+  function closeTab(id) {
+    const w = selectedWs();
+    w.convs = w.convs.filter((c) => c.id !== id);
+    if (!w.convs.length) w.convs.push(conv(uid(), 'claude', null, []));
+    if (!w.convs.some((c) => c.id === w.activeConv)) w.activeConv = w.convs[w.convs.length - 1].id;
+    renderSidebar(); renderTabs(); renderChat();
+  }
+  function openFile(path) {
+    const w = selectedWs();
+    if (!w.files.includes(path)) w.files.push(path);
+    w.selectedFile = path;
+    renderTabs(); renderChat();
+  }
+  function closeFile(path) {
+    const w = selectedWs();
+    w.files = w.files.filter((p) => p !== path);
+    if (w.selectedFile === path) w.selectedFile = null;
+    renderTabs(); renderChat();
+  }
+  let copiedTimer = null;
+  function copyBranch(button) {
+    const w = selectedWs();
+    copyText(w.branch);
+    $('#branchText').textContent = 'Copied';
+    button.classList.add('copied');
+    clearTimeout(copiedTimer);
+    copiedTimer = setTimeout(() => { button.classList.remove('copied'); renderTopbar(); }, 1200);
+  }
+
+  win.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-action]');
+    if (!b || !win.contains(b)) return;
+    const w = selectedWs();
+    switch (b.dataset.action) {
+      case 'select': select(b.dataset.ws); break;
+      case 'fold': { const r = repoOf(b.dataset.repo); r.folded = !r.folded; renderSidebar(); break; }
+      case 'new-ws': newWorkspace(repoOf(b.dataset.repo)); break;
+      case 'repo-menu': menuBelow(b, repoMenu(repoOf(b.dataset.repo))); break;
+      case 'row-menu': menuBelow(b, rowMenu(wsOf(b.dataset.ws))); break;
+      case 'remove-ws': toast('Demo: shows today\'s Remove confirmation dialog.'); break;
+      case 'hide-sidebar': win.classList.add('sb-hidden'); break;
+      case 'show-sidebar': win.classList.remove('sb-hidden'); break;
+      case 'add-repo': toast('Demo: opens the folder picker (NSOpenPanel), as today.'); break;
+      case 'settings': toast('Demo: opens the Settings panel over the window (SettingsModal), same as ⌘,.'); break;
+      case 'clear-search': search.value = ''; onSearch(); search.focus(); break;
+      case 'copy-branch': copyBranch(b); break;
+      case 'open-menu': menuBelow(b, openMenuFor(w)); break;
+      case 'run': toggleRun(w); break;
+      case 'tab': w.activeConv = b.dataset.conv; w.selectedFile = null; renderTabs(); renderChat(); break;
+      case 'close-tab': closeTab(b.dataset.conv); break;
+      case 'file-tab': openFile(b.dataset.path); break;
+      case 'close-file': closeFile(b.dataset.path); break;
+      case 'open-file': openFile(b.dataset.path); break;
+      case 'new-tab': menuBelow(b, newTabMenu()); break;
+      case 'model': toast('Demo: the model menu (ModelMenu.swift), unchanged.'); break;
+      case 'plus-menu': menuBelow(b, plusMenu()); break;
+      case 'send': sendOrStop(); break;
+      case 'restart': w.failure = null; renderAll(); toast('Demo: chat.start() restarts the agent.'); break;
+      case 'copy-reply': toast('Copied the reply'); break;
+      case 'ptab': showSession(w, w.sessions.find((s) => s.id === b.dataset.session)); break;
+      case 'close-terminal': {
+        w.sessions = w.sessions.filter((s) => s.id !== b.dataset.session);
+        if (w.activeSession === b.dataset.session) w.activeSession = null;
+        renderPanel();
+        break;
+      }
+      case 'new-terminal': newTerminal(w); break;
+      case 'fold-panel': state.panelCollapsed = !state.panelCollapsed; renderPanel(); break;
+      default: break;
+    }
+  });
+
+  sbList.addEventListener('contextmenu', (e) => {
+    const row = e.target.closest('.row-wrap');
+    const header = e.target.closest('.repo');
+    if (!row && !header) return;
+    e.preventDefault();
+    const opts = row ? rowMenu(wsOf(row.dataset.ws)) : repoMenu(repoOf(header.querySelector('[data-repo]').dataset.repo));
+    openMenu({ ...opts, x: e.clientX, y: e.clientY });
+  });
+  document.addEventListener('mousedown', (e) => { if (menuEl && !menuEl.contains(e.target)) closeMenu(); });
+
+  // ---------- search (SB-02) ----------
+  function onSearch() {
+    state.filter = search.value;
+    $('#searchKbd').hidden = Boolean(search.value);
+    $('#searchClear').hidden = !search.value;
+    renderSidebar();
+  }
+  search.addEventListener('input', onSearch);
+  search.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' && visibleOrder.length) { e.preventDefault(); select(visibleOrder[0]); focusSelectedRow(); }
+  });
+
+  // ---------- composer ----------
+  composer.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendOrStop(); } });
+  composer.addEventListener('input', renderComposer);
+
+  // ---------- keyboard (KBD-01, TERM-05) ----------
+  let cmdTimer = null;
+  const clearCmd = () => { clearTimeout(cmdTimer); cmdTimer = null; win.classList.remove('cmd-held'); };
+  const typing = (e) => /^(INPUT|TEXTAREA)$/.test(e.target.tagName);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Meta' && !cmdTimer) cmdTimer = setTimeout(() => win.classList.add('cmd-held'), 400);
+    if ((e.metaKey && e.key.toLowerCase() === 'k') || (e.key === '/' && !typing(e))) { e.preventDefault(); search.focus(); search.select(); return; }
+    if (e.metaKey && e.key.toLowerCase() === 'j') {
+      e.preventDefault();
+      const w = selectedWs();
+      if (w && w.sessions.length) { state.panelCollapsed = !state.panelCollapsed; renderPanel(); }
+      return;
+    }
+    if (e.key === 'Escape') {
+      if (menuEl) { closeMenu(); return; }
+      if (document.activeElement === search) { search.value = ''; onSearch(); focusSelectedRow(); }
+      return;
+    }
+    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && sbList.contains(document.activeElement)) {
+      e.preventDefault();
+      const i = visibleOrder.indexOf(state.selected);
+      const next = visibleOrder[Math.max(0, Math.min(visibleOrder.length - 1, (i < 0 ? 0 : i) + (e.key === 'ArrowDown' ? 1 : -1)))];
+      if (next) { select(next); focusSelectedRow(); }
+      return;
+    }
+    if (e.metaKey && /^[1-9]$/.test(e.key)) { const id = visibleOrder[Number(e.key) - 1]; if (id) { e.preventDefault(); select(id); } }
+  });
+  document.addEventListener('keyup', (e) => { if (e.key === 'Meta') clearCmd(); });
+  window.addEventListener('blur', clearCmd);
+
+  // ---------- dividers (WIN-03, TERM-01) ----------
+  const divider = $('#divider');
+  divider.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    divider.setPointerCapture(e.pointerId);
+    const startX = e.clientX;
+    const startW = parseFloat(getComputedStyle(win).getPropertyValue('--sb-w'));
+    const move = (ev) => win.style.setProperty('--sb-w', `${Math.min(420, Math.max(200, startW + ev.clientX - startX))}px`);
+    const up = () => { divider.removeEventListener('pointermove', move); divider.removeEventListener('pointerup', up); };
+    divider.addEventListener('pointermove', move);
+    divider.addEventListener('pointerup', up);
+  });
+  const pdivider = $('#pdivider');
+  pdivider.addEventListener('pointerdown', (e) => {
+    if (win.classList.contains('panel-empty') || win.classList.contains('panel-folded')) return;
+    e.preventDefault();
+    pdivider.setPointerCapture(e.pointerId);
+    win.classList.add('dragging');
+    const startY = e.clientY;
+    const startH = parseFloat(getComputedStyle(win).getPropertyValue('--panel-h'));
+    const maxH = $('#content').clientHeight - 200 - 1;          // the chat keeps at least 200
+    const move = (ev) => win.style.setProperty('--panel-h', `${Math.min(maxH, Math.max(140, startH - (ev.clientY - startY)))}px`);
+    const up = () => { win.classList.remove('dragging'); pdivider.removeEventListener('pointermove', move); pdivider.removeEventListener('pointerup', up); };
+    pdivider.addEventListener('pointermove', move);
+    pdivider.addEventListener('pointerup', up);
+  });
+
+  // ---------- working elapsed ----------
+  setInterval(() => {
+    const el = $('#elapsed');
+    const w = selectedWs();
+    if (el && w && w.turn) el.textContent = elapsed(w.turn.startedAt);
+  }, 1000);
+
+  // ---------- demo controls ----------
+  const toggle = (button, on) => button.setAttribute('aria-pressed', String(on));
+  $('#demoSend').addEventListener('click', () => {
+    const w = selectedWs();
+    if (!w || w.turn || w.failure || w.selectedFile) { toast('Pick a conversation whose agent is idle first.'); return; }
+    if (!composer.value.trim()) composer.value = 'Run the schema test and tell me what fails.';
+    sendOrStop();
+  });
+  $('#demoBackground').addEventListener('click', async () => {
+    const w = workspaces.find((x) => x.id !== state.selected && !x.turn && status(x) === 'idle' && !repoOf(x.repo).folded && x.convs[0] && x.convs[0].title);
+    if (!w) { toast('Select another workspace first.'); return; }
+    const c = activeConv(w);
+    const turn = { convId: c.id, startedAt: Date.now() };
+    w.turn = turn;
+    renderSidebar(); renderTabs();
+    toast(`${titleOf(w).text}: the agent is working…`);
+    await wait(2600);
+    append(w, c, item('agent', 'Done. The change is in and its test passes.'));
+    finishTurn(w, c, turn, true);
+  });
+  $('#demoPermission').addEventListener('click', (e) => { const w = wsOf('w2'); w.needsYou = !w.needsYou; toggle(e.currentTarget, w.needsYou); renderSidebar(); });
+  $('#demoError').addEventListener('click', (e) => {
+    const w = wsOf('w6');
+    w.failure = w.failure ? null : 'Agent exited (1): claude-agent-acp ended unexpectedly.';
+    toggle(e.currentTarget, Boolean(w.failure));
+    renderSidebar();
+    if (state.selected === w.id) renderComposer();
+  });
+  $('#demoInactive').addEventListener('click', (e) => toggle(e.currentTarget, win.classList.toggle('inactive')));
+  $('#demoReduce').addEventListener('click', (e) => toggle(e.currentTarget, document.body.classList.toggle('reduce-motion')));
+  $('#demoPins').addEventListener('click', (e) => toggle(e.currentTarget, document.body.classList.toggle('spec-on')));
+  $('#demoDiff').addEventListener('click', (e) => { state.showDiff = !state.showDiff; toggle(e.currentTarget, state.showDiff); renderSidebar(); });
+  $('#demoWelcome').addEventListener('click', (e) => {
+    state.selected = state.selected ? null : 'w1';
+    toggle(e.currentTarget, !state.selected);
+    renderAll();
+  });
+  toggle($('#demoPermission'), true);
+  toggle($('#demoError'), true);
+
+  // Requirement pins: clicking a pinned element also scrolls its requirement into view.
+  document.addEventListener('click', (e) => {
+    if (!document.body.classList.contains('spec-on')) return;
+    const el = e.target.closest('[data-req]');
+    if (!el || !win.contains(el)) return;
+    const section = document.getElementById('REQ-' + el.dataset.req);
+    if (!section) return;
+    section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    section.classList.add('flash');
+    setTimeout(() => section.classList.remove('flash'), 1400);
+  }, true);
+
+  renderAll();
+})();
+</script>
+</body>
+</html>
