@@ -15,6 +15,8 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$bin_dir/Rocky" "$app/Contents/MacOS/Rocky"
 cp "$root/Resources/Info.plist" "$app/Contents/Info.plist"
+# The app icon (Info.plist CFBundleIconFile); regenerate it with scripts/make-icon.swift.
+cp "$root/Resources/Rocky.icns" "$app/Contents/Resources/Rocky.icns"
 # SwiftPM resource bundles (Textual's highlighter, SwiftTerm's shaders, Rocky's agent icons). Bundle.module looks
 # for them in Contents/Resources and stops the app when one is missing.
 for bundle in "$bin_dir"/*.bundle; do
