@@ -20,14 +20,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Stops every agent, terminal and script before quitting, so none keeps running (and using energy) after Rocky.
+    /// Asks about unsaved edits first (EDIT-02), then stops every agent, terminal and script before quitting, so none
+    /// keeps running (and using energy) after Rocky. Save All that cannot save a file (it changed on disk, or the write
+    /// failed) cancels the quit and shows that file's tab, with its banner.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model else { return .terminateNow }
+        let unsaved = model.unsavedEditors()
+        let answer: UnsavedEditsAnswer = unsaved.isEmpty ? .dontSave : Self.askAboutUnsavedEdits(unsaved)
+        if answer == .cancel { return .terminateCancel }
+        let saving = answer == .saveAll ? unsaved : []
         Task {
+            if !saving.isEmpty, let first = await model.saveEditors(saving).first {
+                model.showUnsavedEditor(first)
+                sender.reply(toApplicationShouldTerminate: false)
+                return
+            }
             await model.stopAllProcesses()
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
+    }
+
+    enum UnsavedEditsAnswer {
+        case saveAll, dontSave, cancel
+    }
+
+    /// The unsaved edits prompt, in the words of a tab's (`UnsavedChangesPrompt`): the files, then Save All, Cancel and
+    /// Don't Save. An app-modal alert, so it shows with or without a window (⌘W closes the window, not Rocky).
+    private static func askAboutUnsavedEdits(_ unsaved: [UnsavedEditor]) -> UnsavedEditsAnswer {
+        let alert = NSAlert()
+        alert.messageText = UnsavedChangesPrompt.title(for: unsaved, quitting: true)
+        alert.informativeText = UnsavedChangesPrompt.message(for: unsaved)
+        // AppKit's order: the first button is the default (Return), then Cancel (Esc), then Don't Save (⌘D).
+        alert.addButton(withTitle: UnsavedChangesPrompt.saveTitle(count: unsaved.count))
+        alert.addButton(withTitle: "Cancel").keyEquivalent = "\u{1b}"
+        let dontSave = alert.addButton(withTitle: "Don’t Save")
+        dontSave.keyEquivalent = "d"
+        dontSave.keyEquivalentModifierMask = .command
+        dontSave.hasDestructiveAction = true
+        NSApp.activate()
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: return .saveAll
+        case .alertThirdButtonReturn: return .dontSave
+        default: return .cancel
+        }
     }
 }
 
@@ -65,6 +101,16 @@ struct RockyApp: App {
             CommandGroup(replacing: .newItem) {
                 NewWorkspaceCommand(model: model)
             }
+            // After the group that holds Close (⌘W), which stays.
+            CommandGroup(after: .saveItem) {
+                SaveCommand(model: model)
+            }
+            // ⌘P is Go to File, like VS Code's Quick Open, in place of Page Setup and Print…, which Rocky has no use for
+            // (user decision, 2026-09-24); the editor's Go to Line sits under it (KBD-02).
+            CommandGroup(replacing: .printItem) {
+                GoToFileCommand(model: model)
+                GoToLineCommand()
+            }
             // The title bar's toolbar only sizes the title bar (WIN-01): nothing in it to show, hide or customize.
             CommandGroup(replacing: .toolbar) {}
             CommandGroup(after: .toolbar) {
@@ -75,6 +121,10 @@ struct RockyApp: App {
                 Section {
                     SidebarCommand()
                     PullRequestPanelCommand(model: model)
+                    ChangesTabCommand(model: model)
+                }
+                Section {
+                    ChangedFileCommands(model: model)
                 }
             }
             // Rocky ▸ Settings… (⌘,) opens the settings panel over the window, not a window of its own.
@@ -164,6 +214,57 @@ private struct NewWorkspaceCommand: View {
     }
 }
 
+/// File ▸ Save (⌘S, EDIT-02, KBD-02): the file on screen, while it has unsaved edits, as its header's Save. The one owner
+/// of ⌘S in the window: off while the settings or a repository's settings are open, whose own Save has it.
+private struct SaveCommand: View {
+    let model: AppModel
+
+    private var canSave: Bool {
+        guard let workspaceId = model.selectedWorkspaceId, !SettingsPresenter.isAnySettingsPanelOpen else { return false }
+        return model.canSaveVisibleEditor(workspaceId: workspaceId)
+    }
+
+    var body: some View {
+        Button("Save") {
+            guard let workspaceId = model.selectedWorkspaceId else { return }
+            Task { await model.saveVisibleEditor(workspaceId: workspaceId) }
+        }
+        .keyboardShortcut("s", modifiers: .command)
+        .disabled(!canSave)
+    }
+}
+
+/// File ▸ Go to File… (⌘P, FIL-04, KBD-02): the right panel on All files, whose filter takes the keyboard with its text
+/// selected. It opens the panel through the open state the panel toggle and ⌥⌘B share. A menu command, so it works
+/// from the message box and the terminal too; off without a selected workspace.
+private struct GoToFileCommand: View {
+    let model: AppModel
+    @AppStorage(RightPanelStorage.openKey) private var isOpen = true
+
+    var body: some View {
+        Button("Go to File…") {
+            guard let workspaceId = model.selectedWorkspaceId else { return }
+            model.goToFile(workspaceId: workspaceId)
+            isOpen = true
+        }
+        .keyboardShortcut("p", modifiers: .command)
+        .disabled(model.selectedWorkspace == nil)
+    }
+}
+
+/// File ▸ Go to Line… (⌘L, EDIT-01, KBD-02): the go-to-line field of the editor on screen, which publishes it
+/// (`EditorGoToLineAction`), so it works while the editor does not have the keyboard (a preview tab); off while no
+/// editor shows. With the keyboard, the editor's text view takes ⌘L before the menu, to the same effect.
+private struct GoToLineCommand: View {
+    @FocusedValue(\.editorGoToLine) private var goToLine
+
+    var body: some View {
+        Button("Go to Line…") { goToLine?.run() }
+            .keyboardShortcut("l", modifiers: .command)
+            .disabled(goToLine == nil)
+    }
+}
+
 /// View ▸ Search Workspaces (⌘K) and the workspaces the sidebar lists, ⌘1…⌘9 for the first nine (KBD-01). Menu
 /// commands, so they work wherever the focus is. ⌘J, ⌘U, ⇧Tab, ⌘, and the zoom keep their shortcuts.
 private struct WorkspaceCommands: View {
@@ -213,6 +314,58 @@ private struct PullRequestPanelCommand: View {
         Button(PanelToggleText.pullRequestPanelMenuTitle(isOpen: isOpen)) { isOpen.toggle() }
             .keyboardShortcut("b", modifiers: [.option, .command])
             .disabled(model.selectedWorkspace == nil)
+    }
+}
+
+/// View ▸ Show Changes / Hide Changes (⌘⇧C, CHG-01): the right panel on its Changes tab, or, pressed while that tab
+/// shows, the panel hidden. It writes the open state the panel toggle and ⌥⌘B share. A menu command, so it works from
+/// the message box and the terminal too; off without a selected workspace.
+private struct ChangesTabCommand: View {
+    let model: AppModel
+    @AppStorage(RightPanelStorage.openKey) private var isOpen = true
+
+    private var showsChanges: Bool {
+        guard let workspaceId = model.selectedWorkspaceId else { return false }
+        return isOpen && model.rightPanelTab(workspaceId: workspaceId) == .changes
+    }
+
+    var body: some View {
+        Button(showsChanges ? "Hide Changes" : "Show Changes") {
+            guard let workspaceId = model.selectedWorkspaceId else { return }
+            if showsChanges {
+                isOpen = false
+            } else {
+                model.rightPanelTabs[workspaceId] = .changes
+                isOpen = true
+            }
+        }
+        .keyboardShortcut("c", modifiers: [.command, .shift])
+        .disabled(model.selectedWorkspace == nil)
+    }
+}
+
+/// View ▸ Next Changed File / Previous Changed File (⌥⌘↓ / ⌥⌘↑, CHG-03): the file after or before the one on screen
+/// in the Changes tab's order. Off while the selected workspace has no changes read.
+private struct ChangedFileCommands: View {
+    let model: AppModel
+
+    private var hasChanges: Bool {
+        guard let workspaceId = model.selectedWorkspaceId else { return false }
+        return model.changes[workspaceId]?.files.isEmpty == false
+    }
+
+    var body: some View {
+        Button("Next Changed File") { step(1) }
+            .keyboardShortcut(.downArrow, modifiers: [.option, .command])
+            .disabled(!hasChanges)
+        Button("Previous Changed File") { step(-1) }
+            .keyboardShortcut(.upArrow, modifiers: [.option, .command])
+            .disabled(!hasChanges)
+    }
+
+    private func step(_ step: Int) {
+        guard let workspaceId = model.selectedWorkspaceId else { return }
+        model.showAdjacentChangedFile(workspaceId: workspaceId, step: step)
     }
 }
 

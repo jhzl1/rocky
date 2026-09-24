@@ -25,8 +25,9 @@ let package = Package(
                 .product(name: "Textual", package: "textual"),
             ],
             // Claude, OpenCode, GitHub and Vercel logos, from Simple Icons (simpleicons.org, CC0); the git glyphs
-            // (git-branch, git-pull-request, git-merge) are the design's own strokes.
-            resources: [.copy("Resources/Icons")]
+            // (git-branch, git-pull-request, git-merge) are the design's own strokes. Prism 1.30.0 (MIT), the syntax
+            // highlighter of the diff and the editor (DIFF-04; version and license in README.md).
+            resources: [.copy("Resources/Icons"), .copy("Resources/Prism")]
         ),
         .executableTarget(name: "Rocky", dependencies: ["RockyKit", "RockyUI"]),
         .testTarget(

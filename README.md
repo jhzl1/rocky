@@ -41,3 +41,9 @@ Without the certificate the script signs ad hoc, and macOS asks again for each s
 ## Energy
 
     scripts/energy-report.sh 30    # Rocky vs Conductor over the last 30 minutes, from the macOS power log
+
+## Third-party code
+
+- Prism 1.30.0 (https://prismjs.com, MIT License, Copyright (c) 2012 Lea Verou), vendored as
+  `Sources/RockyUI/Resources/Prism/prism-bundle.js`: its core and 17 language components, which highlight the diff and
+  the editor.

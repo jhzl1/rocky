@@ -253,6 +253,8 @@ struct SidebarView: View {
             isSelected: isSelected,
             hasKeyboardFocus: isSelected && listHasKeyboardFocus,
             shortcutHint: hint,
+            isCommandHeld: showsShortcutHints,
+            diffStat: model.diffStats[workspace.id],
             onSelect: {
                 keyboardNavigating = false
                 model.selectedWorkspaceId = workspace.id

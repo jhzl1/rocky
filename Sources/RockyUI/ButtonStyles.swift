@@ -119,6 +119,41 @@ struct RockyOutlineButtonStyle: ButtonStyle {
     }
 }
 
+/// A white filled button for a view's one primary action (M3's "white filled": a comment's Comment, CMT-02, and Send to
+/// agent, CMT-05): white with #111316 text, #DADDE1 on hover; 26 points high, padding 10, radius 6. 45 % when disabled.
+struct RockyPrimaryButtonStyle: ButtonStyle {
+    var height: CGFloat = 26
+
+    func makeBody(configuration: Configuration) -> some View {
+        RockyPrimaryButton(configuration: configuration, height: height)
+    }
+
+    private struct RockyPrimaryButton: View {
+        let configuration: Configuration
+        let height: CGFloat
+        @State private var hovering = false
+        @Environment(\.isEnabled) private var isEnabled
+
+        private static let text = Color(red: 0x11 / 255, green: 0x13 / 255, blue: 0x16 / 255)
+        private static let hoverFill = Color(red: 0xDA / 255, green: 0xDD / 255, blue: 0xE1 / 255)
+
+        var body: some View {
+            configuration.label
+                .foregroundStyle(Self.text)
+                .padding(.horizontal, 10)
+                .frame(height: Zoom.shared(height))
+                .background(
+                    (configuration.isPressed || (hovering && isEnabled)) ? Self.hoverFill : Color.white,
+                    in: RoundedRectangle(cornerRadius: 6)
+                )
+                .opacity(isEnabled ? 1 : 0.45)
+                .contentShape(Rectangle())
+                .onHover { inside in withAnimation(Theme.Motion.hover) { hovering = inside } }
+                .clickable()
+        }
+    }
+}
+
 /// A filled button (Restart, the empty-state button, the terminal bar's Run): `fillButton`, hover `fillButtonHover`,
 /// pressed white 16 %; 26 points high, padding 10, radius 6 (TB-04). The terminal bar's Run is 24 high, padding 8,
 /// radius 5 (LAY-01).

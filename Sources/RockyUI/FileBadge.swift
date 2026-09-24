@@ -16,22 +16,25 @@ enum FileKind {
     private static let textExtensions: Set = ["md", "markdown", "mdx", "txt", "rtf", "log"]
     private static let spreadsheetExtensions: Set = ["csv", "tsv", "xls", "xlsx", "numbers"]
 
+    /// A badge's path, which may be a folder: a name without an extension is looked up on disk. Views that know what
+    /// they draw (the All files tree, worktree tabs) use `init(path:isDirectory:)`, which touches no disk.
     init(path: String) {
-        let url = URL(fileURLWithPath: path)
-        let ext = url.pathExtension.lowercased()
+        var isDirectory: ObjCBool = false
+        let isFolder = (path as NSString).pathExtension.isEmpty
+            && FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
+        self.init(path: path, isDirectory: isFolder)
+    }
+
+    /// From the name alone (`FIL-02`): a folder, else the kind its extension says.
+    init(path: String, isDirectory: Bool) {
+        if isDirectory { self = .folder; return }
+        let ext = (path as NSString).pathExtension.lowercased()
         // By extension first: UTType maps some code extensions elsewhere (".ts" is an MPEG stream to it).
         if Self.codeExtensions.contains(ext) { self = .code; return }
         if Self.dataExtensions.contains(ext) { self = .data; return }
         if Self.textExtensions.contains(ext) { self = .text; return }
         if Self.spreadsheetExtensions.contains(ext) { self = .spreadsheet; return }
-        if ext.isEmpty {
-            var isDirectory: ObjCBool = false
-            if FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue {
-                self = .folder
-                return
-            }
-        }
-        guard let type = UTType(filenameExtension: ext) else { self = .other; return }
+        guard !ext.isEmpty, let type = UTType(filenameExtension: ext) else { self = .other; return }
         if type.conforms(to: .image) { self = .image }
         else if type.conforms(to: .pdf) { self = .pdf }
         else if type.conforms(to: .archive) { self = .archive }

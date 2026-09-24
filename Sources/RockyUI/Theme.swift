@@ -1,4 +1,5 @@
 import AppKit
+import RockyKit
 import SwiftUI
 
 /// Rocky's colors until the visual design milestone defines the palette. Rocky is dark-only for now: these
@@ -59,6 +60,55 @@ enum Theme {
     static let success = Color(red: 0x7C / 255, green: 0xC0 / 255, blue: 0x8A / 255)
     /// A merged pull request: the header's merged group, Archive and the merged dot (HDR-01, #B48CF2).
     static let merged = Color(red: 0xB4 / 255, green: 0x8C / 255, blue: 0xF2 / 255)
+    /// The "−D" of diff stats (GIT-03, CHG-03; #E48A8A), softer than `danger`. Their "+A" is `success`.
+    static let diffDeletions = Color(red: 0xE4 / 255, green: 0x8A / 255, blue: 0x8A / 255)
+
+    // M3 tokens (docs/superpowers/design/2026-09-23-m3-review-edit-pr.html, TOK-10).
+
+    /// Added diff rows (DIFF-02): `success` at 12 %, their number columns at 20 %.
+    static let diffAddLine = success.opacity(0.12)
+    static let diffAddGutter = success.opacity(0.20)
+    /// Removed diff rows: `danger` at 12 %, their number columns at 20 %.
+    static let diffDeleteLine = danger.opacity(0.12)
+    static let diffDeleteGutter = danger.opacity(0.20)
+    /// Hunk header rows: `accent` at 6 %.
+    static let diffHunk = accent.opacity(0.06)
+    /// Lines selected for a comment (CMT-01): `accent` at 14 %, with a 3-point `accent` bar at their left edge.
+    static let commentRange = accent.opacity(0.14)
+    /// The editor's caret line (EDIT-01): white at 3 %.
+    static let currentLine = Color.white.opacity(0.03)
+    /// The editor's selected text: `accent` at 30 %, the mock's `::selection`.
+    static let editorSelection = accent.opacity(0.30)
+    /// The mock's banners over a file tab's content (EDIT-02, EDIT-03): a warning (the file changed on disk) on
+    /// `attention` at 10 % with #F0C987 text, a note (unsaved edits, the agent working) on `accent` at 8 % with #B7D9F7.
+    static let bannerWarning = attention.opacity(0.10)
+    static let bannerWarningText = Color(red: 0xF0 / 255, green: 0xC9 / 255, blue: 0x87 / 255)
+    static let bannerInfo = accent.opacity(0.08)
+    static let bannerInfoText = Color(red: 0xB7 / 255, green: 0xD9 / 255, blue: 0xF7 / 255)
+
+    /// DIFF-04's token colors, one map for the diff and the editor.
+    enum Syntax {
+        static let keyword = Color(red: 0xC7 / 255, green: 0x92 / 255, blue: 0xEA / 255)
+        static let string = Color(red: 0xA5 / 255, green: 0xD6 / 255, blue: 0xA7 / 255)
+        static let number = Color(red: 0xF2 / 255, green: 0xA9 / 255, blue: 0x6B / 255)
+        static let comment = Color(red: 0x7F / 255, green: 0x84 / 255, blue: 0x8E / 255)
+        static let function = Color(red: 0x7C / 255, green: 0xB7 / 255, blue: 0xF2 / 255)
+        static let type = Color(red: 0xE6 / 255, green: 0xC0 / 255, blue: 0x7B / 255)
+    }
+
+    /// A token's color; nil for plain text, which keeps the text's own color.
+    static func syntax(_ kind: SyntaxKind) -> Color? {
+        switch kind {
+        case .plain: nil
+        case .keyword: Syntax.keyword
+        case .string: Syntax.string
+        case .number: Syntax.number
+        case .comment: Syntax.comment
+        case .function: Syntax.function
+        case .type: Syntax.type
+        }
+    }
+
     /// Repository monograms (SB-03): each repository's stored `colorIndex`. `RepoMonogram.paletteCount` is its size.
     static let repoPalette: [Color] = [
         Color(red: 0x4C / 255, green: 0x7B / 255, blue: 0xD9 / 255),

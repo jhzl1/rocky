@@ -3,14 +3,27 @@ import RockyKit
 import SwiftUI
 
 /// The Checks tab (PNL-03), in the design's order: the pull request's title and body (PRB-01), Git status (GST-01),
-/// Deployments (DEP-01), Checks (CHK-01) and Comments (REV-01). It shows nothing until the workspace's first refresh
-/// of the launch, while the header says "Loading PR info…".
+/// Deployments (DEP-01), Checks (CHK-01) and Comments (REV-01), in a scroll view of its own. Without GitHub access,
+/// the login note comes first (ERR-01); it is about this tab's content, so the Changes tab does not show it. It shows
+/// nothing else until the workspace's first refresh of the launch, while the header says "Loading PR info…".
 struct ChecksTab: View {
     let model: AppModel
     let workspace: Workspace
 
     var body: some View {
         let panel = model.pullRequests.panels[workspace.id] ?? PullRequestPanelState()
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                if panel.error == .accessRequired {
+                    GitHubLoginNote()
+                }
+                content(panel: panel)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func content(panel: PullRequestPanelState) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             if let snapshot = panel.snapshot {
                 if let pullRequest = snapshot.pullRequest {
@@ -36,6 +49,44 @@ struct ChecksTab: View {
         .padding(.top, 6)
         .padding(.bottom, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// ERR-01, ACC-01: without access, the tab says how to give Rocky an account, with the command to copy.
+private struct GitHubLoginNote: View {
+    @State private var copied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Rocky reads GitHub with gh's account for this repository. Log in from a terminal, then Retry:")
+                .font(.rocky(12.5))
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 6) {
+                Text(verbatim: GitHubAccountError.loginCommand)
+                    .font(.rocky(12, design: .monospaced))
+                    .foregroundStyle(Theme.textPrimary)
+                    .textSelection(.enabled)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Button(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(GitHubAccountError.loginCommand, forType: .string)
+                    copied = true
+                }
+                .font(.rocky(11))
+                .buttonStyle(RockyIconButtonStyle(size: 22))
+                .help("Copy the command")
+            }
+            .padding(.leading, 8)
+            .padding(.trailing, 2)
+            .padding(.vertical, 2)
+            .background(Theme.fillControl, in: RoundedRectangle(cornerRadius: 6))
+        }
+        .padding(.leading, 18)
+        .padding(.trailing, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 4)
     }
 }
 

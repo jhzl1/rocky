@@ -3,8 +3,8 @@ import RockyKit
 import SwiftUI
 
 /// A workspace in the sidebar (ROW-01): one 28-point line with the status glyph, the task title and a trailing slot
-/// that holds, in order of precedence, the hover actions (ROW-05) and the ⌘ hint (KBD-01). Diff stats will go there
-/// too (OUT-01, not built). The branch and the workspace name are in the tooltip; the branch also leads the top bar.
+/// that holds, in order of precedence, the hover actions (ROW-05), the ⌘ hint (KBD-01) and the diff stats (GIT-03).
+/// The branch and the workspace name are in the tooltip; the branch also leads the top bar.
 struct SidebarRow: View {
     let workspace: Workspace
     let title: String
@@ -17,6 +17,10 @@ struct SidebarRow: View {
     let hasKeyboardFocus: Bool
     /// "⌘1"…"⌘9" while ⌘ is held (KBD-01).
     let shortcutHint: String?
+    /// ⌘ is held: GIT-03's stats hide for every row, also the rows past the ninth, which have no hint.
+    let isCommandHeld: Bool
+    /// GIT-03's `+A −D` against the workspace's base; nil until git has read it, hidden while it is empty.
+    let diffStat: DiffStat?
     let onSelect: () -> Void
     let onRemove: () -> Void
 
@@ -49,6 +53,8 @@ struct SidebarRow: View {
                     Text(shortcutHint)
                         .font(.rocky(11))
                         .foregroundStyle(Theme.textTertiary)
+                } else if let diffStat, !diffStat.isEmpty, !showsActions, !isCommandHeld {
+                    DiffStatLabel(stat: diffStat)
                 }
             }
             .padding(.leading, 24)
@@ -59,7 +65,7 @@ struct SidebarRow: View {
         }
         .buttonStyle(SidebarRowButtonStyle())
         .clickable()
-        .accessibilityLabel("\(title), \(status.accessibilityName)")
+        .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityAction(named: "Remove Workspace…", onRemove)
         .accessibilityAction(named: "Open in Finder", openInFinder)
@@ -113,6 +119,15 @@ struct SidebarRow: View {
         MenuItem(title: "Copy Branch Name", icon: .symbol("doc.on.doc"), action: copyBranch)
         MenuDivider()
         MenuItem(title: "Remove Workspace…", icon: .symbol("archivebox"), isDestructive: true, action: onRemove)
+    }
+
+    /// The title and the state, then the stats when there are some (A11Y-01, GIT-03).
+    private var accessibilityLabel: String {
+        var label = "\(title), \(status.accessibilityName)"
+        if let diffStat, !diffStat.isEmpty {
+            label += ", \(diffStat.additions) lines added, \(diffStat.deletions) removed"
+        }
+        return label
     }
 
     /// Title; "branch · workspace name" (the name is otherwise only in the path); the failure in the error state

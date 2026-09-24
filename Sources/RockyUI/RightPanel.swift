@@ -12,10 +12,11 @@ public enum RightPanelStorage {
     static let widthRange: ClosedRange<Double> = 280...480
 }
 
-/// PNL-01: the workspace's pull request, in a full-height column at the window's right beside the conversation column
-/// (LAY-01), on the sidebar's color. From the top: the header in the title bar row (HDR-01), the tab row (PNL-03) in
-/// line with the conversation's, ERR-01's and PR-05's lines, the tab, which scrolls, and the footer (PR-07), in line
-/// with the terminal bar and the sidebar footer. One right panel only: M3's Changes becomes one of its tabs.
+/// PNL-01: the workspace's pull request and changes, in a full-height column at the window's right beside the
+/// conversation column (LAY-01), on the sidebar's color. From the top: the header in the title bar row (HDR-01), the
+/// tab row (PNL-03) in line with the conversation's, ERR-01's and PR-05's lines, the tab, and the footer (PR-07), in
+/// line with the terminal bar and the sidebar footer. Each tab scrolls on its own, so a tab's own rows above its list
+/// (CHG-02's) stay put.
 struct RightPanel: View {
     let model: AppModel
     let workspace: Workspace
@@ -25,14 +26,18 @@ struct RightPanel: View {
     }
 
     private var tab: RightPanelTab {
-        model.rightPanelTabs[workspace.id] ?? .checks
+        model.rightPanelTab(workspaceId: workspace.id)
     }
 
     var body: some View {
         let panel = self.panel
+        let tab = self.tab
         VStack(spacing: 0) {
             PullRequestHeaderBar(model: model, workspace: workspace)
-            RightPanelTabRow(selection: tab) { model.rightPanelTabs[workspace.id] = $0 }
+            RightPanelTabRow(
+                selection: tab,
+                counts: [.changes: model.diffStats[workspace.id]?.files ?? 0]
+            ) { model.rightPanelTabs[workspace.id] = $0 }
             // Under the tab row, not the header, so the tab row stays in line with the conversation's (LAY-01).
             if let error = panel.error {
                 PanelErrorLine(error: error, isLoading: panel.isLoading) {
@@ -42,28 +47,30 @@ struct RightPanel: View {
             if let failure = model.mergeErrors[workspace.id] {
                 MergeErrorLine(text: failure) { model.dismissMergeError(workspaceId: workspace.id) }
             }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    if panel.error == .accessRequired {
-                        GitHubLoginNote()
-                    }
-                    switch tab {
-                    case .checks:
-                        ChecksTab(model: model, workspace: workspace)
-                    }
+            Group {
+                switch tab {
+                case .files:
+                    FilesTab(model: model, workspace: workspace)
+                case .changes:
+                    ChangesTab(model: model, workspace: workspace)
+                case .checks:
+                    ChecksTab(model: model, workspace: workspace)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxHeight: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             RightPanelFooter(model: model, workspace: workspace)
         }
         // Only the panel's own bounds, which start at the window's top (LAY-01): a color background reaches into the
         // safe area by default, and in the first build it painted over the top bar's controls.
         .background(Color.rockySidebar, ignoresSafeAreaEdges: [])
-        // REV-01: comments are read with the pull request only while the panel shows them, and Checks, where they
-        // are, is its only tab. The panel of the workspace left behind goes away with it.
-        .onAppear { model.pullRequests.setCommentsVisible(true, workspaceId: workspace.id) }
-        .onDisappear { model.pullRequests.setCommentsVisible(false, workspaceId: workspace.id) }
+        // What the panel shows decides what runs (AppModel.visibleRightPanelTab): REV-01's comments while Checks
+        // shows, the full diff while Changes or All files does, the worktree's files while All files does (FIL-07).
+        .onChange(of: tab, initial: true) { _, shown in model.visibleRightPanelTab = shown }
+        // Closed, not replaced: when another workspace is selected, the model clears it itself, and this panel's
+        // disappearance can come after the next one appeared.
+        .onDisappear {
+            if model.selectedWorkspaceId == workspace.id { model.visibleRightPanelTab = nil }
+        }
     }
 }
 
@@ -132,66 +139,22 @@ private struct MergeErrorLine: View {
     }
 }
 
-/// ERR-01, ACC-01: without access, the tab says how to give Rocky an account, with the command to copy.
-private struct GitHubLoginNote: View {
-    @State private var copied = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Rocky reads GitHub with gh's account for this repository. Log in from a terminal, then Retry:")
-                .font(.rocky(12.5))
-                .foregroundStyle(Theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 6) {
-                Text(verbatim: GitHubAccountError.loginCommand)
-                    .font(.rocky(12, design: .monospaced))
-                    .foregroundStyle(Theme.textPrimary)
-                    .textSelection(.enabled)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-                Button(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(GitHubAccountError.loginCommand, forType: .string)
-                    copied = true
-                }
-                .font(.rocky(11))
-                .buttonStyle(RockyIconButtonStyle(size: 22))
-                .help("Copy the command")
-            }
-            .padding(.leading, 8)
-            .padding(.trailing, 2)
-            .padding(.vertical, 2)
-            .background(Theme.fillControl, in: RoundedRectangle(cornerRadius: 6))
-        }
-        .padding(.leading, 18)
-        .padding(.trailing, 12)
-        .padding(.top, 10)
-        .padding(.bottom, 4)
-    }
-}
-
-/// PNL-03: Conductor's pill tabs, 4 apart, drawn from `RightPanelTab.allCases` (Checks alone in M2.7), in a 34-point
-/// row with 8 points at its sides and the hairline at its bottom, like the conversation's tab row (`ConversationTabs`),
-/// so their lines are one line across the window (LAY-01).
+/// PNL-03: Conductor's pill tabs, 4 apart, drawn from `RightPanelTab.allCases` (CHG-01: All files · Changes N ·
+/// Checks), in a 34-point row with 8 points at its sides and the hairline at its bottom, like the conversation's tab
+/// row (`ConversationTabs`), so their lines are one line across the window (LAY-01).
 private struct RightPanelTabRow: View {
     let selection: RightPanelTab
+    /// A tab's number after its title (CHG-01's changed files); none, or 0, shows nothing.
+    let counts: [RightPanelTab: Int]
     let select: (RightPanelTab) -> Void
 
     var body: some View {
         let tabs = RightPanelTab.allCases
         HStack(spacing: 4) {
-            if tabs.count == 1, let only = tabs.first {
-                // One tab has nothing to switch to, and a lone pill read as a button that did nothing (user
-                // feedback, 2026-09-24): it is the section's title until M3 adds Changes. Aligned with the content.
-                Text(only.title)
-                    .font(.rocky(12.5, weight: .semibold))
-                    .foregroundStyle(Theme.textSecondary)
-                    .padding(.leading, 10)
-                    .accessibilityAddTraits(.isHeader)
-            } else {
-                ForEach(tabs, id: \.self) { tab in
-                    RightPanelTabButton(title: tab.title, isSelected: tab == selection) { select(tab) }
-                }
+            // M2.7 drew its lone Checks tab as a title (a single pill read as a button that did nothing); with
+            // Changes there is something to switch to, so every tab is a pill.
+            ForEach(tabs, id: \.self) { tab in
+                RightPanelTabButton(title: tab.title, count: counts[tab] ?? 0, isSelected: tab == selection) { select(tab) }
             }
             Spacer(minLength: 0)
         }
@@ -205,25 +168,33 @@ private struct RightPanelTabRow: View {
 }
 
 /// One pill of PNL-03: 26 points, radius 6, 12.5 `textSecondary`; `fillHover` on hover; `fillSelected` and
-/// `textPrimary` when selected.
+/// `textPrimary` when selected. CHG-01: a count after the title, 11 mono `textTertiary`, 5 apart, hidden at 0.
 private struct RightPanelTabButton: View {
     let title: String
+    var count = 0
     let isSelected: Bool
     let action: () -> Void
     @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
-            Text(title)
-                .font(.rocky(12.5))
-                .foregroundStyle(isSelected || hovering ? Theme.textPrimary : Theme.textSecondary)
-                .padding(.horizontal, 9)
-                .frame(height: Zoom.shared(26))
-                .background(
-                    isSelected ? Theme.fillSelected : hovering ? Theme.fillHover : Color.clear,
-                    in: RoundedRectangle(cornerRadius: 6)
-                )
-                .contentShape(Rectangle())
+            HStack(spacing: 5) {
+                Text(title)
+                    .font(.rocky(12.5))
+                    .foregroundStyle(isSelected || hovering ? Theme.textPrimary : Theme.textSecondary)
+                if count > 0 {
+                    Text(verbatim: "\(count)")
+                        .font(.rocky(11, design: .monospaced))
+                        .foregroundStyle(Theme.textTertiary)
+                }
+            }
+            .padding(.horizontal, 9)
+            .frame(height: Zoom.shared(26))
+            .background(
+                isSelected ? Theme.fillSelected : hovering ? Theme.fillHover : Color.clear,
+                in: RoundedRectangle(cornerRadius: 6)
+            )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .clickable()

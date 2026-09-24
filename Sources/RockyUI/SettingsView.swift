@@ -33,6 +33,12 @@ public final class SettingsPresenter {
         if let escMonitor { NSEvent.removeMonitor(escMonitor) }
         escMonitor = nil
     }
+
+    /// Whether the settings or a repository's settings are open over the window. A repository's settings have their
+    /// own Save on ⌘S, so File ▸ Save turns off while either shows (KBD-02).
+    public static var isAnySettingsPanelOpen: Bool {
+        shared.isPresented || RepoSettingsPresenter.shared.isPresented
+    }
 }
 
 /// What applies to the whole app, not to one repo: the zoom, the terminal panel, the login shell environment, the

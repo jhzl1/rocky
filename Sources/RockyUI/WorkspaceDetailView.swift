@@ -61,9 +61,10 @@ struct WorkspaceDetailView: View {
         .task {
             await model.showConversations(workspace: workspace)
         }
-        // A file badge anywhere in the workspace opens its file in a tab here.
+        // A file badge anywhere in the workspace opens its file in a tab here: its diff tab when it is a changed
+        // worktree file (DIFF-05), else a file tab.
         .environment(\.openFile, OpenFileAction { [model, workspace] path in
-            model.openFile(workspaceId: workspace.id, path: path)
+            model.openBadgeFile(workspaceId: workspace.id, path: path)
         })
     }
 
@@ -124,7 +125,7 @@ struct WorkspaceDetailView: View {
             // no group and no divider.
             ForEach(Array(editors.enumerated()), id: \.offset) { _, entry in
                 MenuItem(title: "Open in \(entry.editor.displayName)", icon: .image(NSWorkspace.shared.icon(forFile: entry.app.path))) {
-                    openWorktree(in: entry.editor, app: entry.app)
+                    ExternalEditorOpener.open(URL(fileURLWithPath: workspace.path, isDirectory: true), in: entry.editor, app: entry.app, toasts: toasts)
                 }
             }
             if !editors.isEmpty {
@@ -145,19 +146,6 @@ struct WorkspaceDetailView: View {
         }
         .fixedSize()
         .help("Open in Finder, an editor or Terminal")
-    }
-
-    /// OPN-01: the worktree folder in `editor`, opened by the app itself, so Rocky spawns nothing and no CLI needs to be
-    /// on the PATH. A failure shows in the toast.
-    private func openWorktree(in editor: ExternalEditor, app: URL) {
-        let toasts = self.toasts
-        let worktree = URL(fileURLWithPath: workspace.path, isDirectory: true)
-        let name = editor.displayName
-        NSWorkspace.shared.open([worktree], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration()) { @Sendable _, error in
-            guard let error else { return }
-            let message = "Couldn’t open in \(name): \(error.localizedDescription)"
-            Task { @MainActor in toasts?.show(message) }
-        }
     }
 
     /// Chat above, terminals and script output below (M2 layout decision), in one layout whatever the panel's state
@@ -205,28 +193,37 @@ struct WorkspaceDetailView: View {
         return Self.minPanelHeight...max(Self.minPanelHeight, upper)
     }
 
-    /// The selected conversation, or the file tab on top of it. The conversation stays underneath a file tab, so its
-    /// draft and scroll position are there when you come back.
+    /// The selected conversation, or the file or diff tab on top of it. The conversation stays underneath those tabs, so
+    /// its draft and scroll position are there when you come back.
     private var chatArea: some View {
         let file = model.selectedFiles[workspace.id]
+        let diff = model.selectedDiffTabs[workspace.id]
+        let showsChat = file == nil && diff == nil
         return ZStack {
             if let chat {
                 ChatView(
                     chat: chat,
-                    isActive: file == nil,
+                    isActive: showsChat,
                     commands: model.commands(for: chat),
                     terminal: EmbeddedTerminalHost(model: model, conversationId: model.selectedConversationIds[workspace.id])
                 )
                     // A new view per conversation, so switching tabs does not carry a draft or a scroll position over.
                     .id(ObjectIdentifier(chat))
-                    .opacity(file == nil ? 1 : 0)
-                    .allowsHitTesting(file == nil)
-            } else if file == nil {
+                    .opacity(showsChat ? 1 : 0)
+                    .allowsHitTesting(showsChat)
+            } else if showsChat {
                 ProgressLabel(text: "Opening the conversation…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            if let file {
-                FileTabView(path: file)
+            if let diff {
+                // A new view per file, so one tab's expanded runs and scroll position never carry over to another. A
+                // preview from the tree leaves the keyboard in the tree, so its arrows keep browsing (FIL-05).
+                DiffTabView(model: model, workspace: workspace, path: diff, takesFocus: model.previewTabs[workspace.id] != diff)
+                    .id(diff)
+                    .background(Color.rockyBackground)
+            } else if let file {
+                FileTabView(model: model, workspaceId: workspace.id, path: file)
+                    .id(file)
                     .background(Color.rockyBackground)
             }
         }
@@ -234,17 +231,75 @@ struct WorkspaceDetailView: View {
 }
 
 /// The workspace's tabs, like Conductor's (TAB-01): its conversations (agent logo and title), then the files opened
-/// from a badge (type icon and name); the selected one underlined, and a + for a new Claude Code or OpenCode
-/// conversation. A 34-point row with the hairline at its bottom, under the selected tab's underline.
+/// from a badge (type icon and name), then its diff tabs (DIFF-01: status letter and name); the selected one
+/// underlined, and a + for a new Claude Code or OpenCode conversation. A 34-point row with the hairline at its bottom,
+/// under the selected tab's underline. A file or diff tab whose editor has unsaved edits shows DIFF-01's dot and asks
+/// before it closes (EDIT-02), in the words Rocky uses when it quits with unsaved edits (`UnsavedChangesPrompt`).
 struct ConversationTabs: View {
     let model: AppModel
     let workspace: Workspace
+    /// The tab whose close asks "Save changes to …?".
+    @State private var closing: ClosingTab?
+
+    private struct ClosingTab: Equatable {
+        enum Kind {
+            case file, diff
+        }
+
+        let kind: Kind
+        /// The tab's own path: absolute for a file tab, worktree-relative for a diff tab.
+        let path: String
+        /// Its file, which `editor.path` keys in `AppModel.editors`.
+        let editor: UnsavedEditor
+
+        var editorPath: String { editor.path }
+    }
+
+    private func editorPath(ofDiff path: String) -> String {
+        AppModel.editorPath(worktree: workspace.path, relativePath: path)
+    }
+
+    /// EDIT-02's close: at once without unsaved edits, else after Save / Don't Save / Cancel.
+    private func close(_ kind: ClosingTab.Kind, path: String) {
+        let key = kind == .diff ? editorPath(ofDiff: path) : path
+        guard let editor = model.unsavedEditors(workspaceId: workspace.id).first(where: { $0.path == key }) else {
+            finishClosing(kind, path: path)
+            return
+        }
+        closing = ClosingTab(kind: kind, path: path, editor: editor)
+    }
+
+    private func finishClosing(_ kind: ClosingTab.Kind, path: String) {
+        switch kind {
+        case .file: model.closeFile(workspaceId: workspace.id, path: path)
+        case .diff: model.closeDiff(workspaceId: workspace.id, path: path)
+        }
+    }
+
+    /// Save, then close; a save the file's change on disk stopped shows the tab instead, with its conflict banner.
+    private func saveAndClose(_ tab: ClosingTab) {
+        let model = self.model
+        let workspaceId = workspace.id
+        Task {
+            if await model.saveEditor(workspaceId: workspaceId, path: tab.editorPath) {
+                finishClosing(tab.kind, path: tab.path)
+            } else if tab.kind == .diff {
+                model.showDiff(workspaceId: workspaceId, path: tab.path)
+            } else {
+                model.showFile(workspaceId: workspaceId, path: tab.path)
+            }
+        }
+    }
 
     var body: some View {
         let open = model.conversations[workspace.id] ?? []
         let selectedId = model.selectedConversationIds[workspace.id]
         let files = model.openFiles[workspace.id] ?? []
         let selectedFile = model.selectedFiles[workspace.id]
+        let diffs = model.diffTabs[workspace.id] ?? []
+        let selectedDiff = model.selectedDiffTabs[workspace.id]
+        let preview = model.previewTabs[workspace.id]
+        let changes = model.changes[workspace.id]
         TabStripLayout {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 2) {
@@ -252,7 +307,7 @@ struct ConversationTabs: View {
                         let agent = AgentKind(rawValue: record.agent) ?? .claude
                         WorkspaceTab(
                             title: record.title ?? "New conversation",
-                            isSelected: record.id == selectedId && selectedFile == nil,
+                            isSelected: record.id == selectedId && selectedFile == nil && selectedDiff == nil,
                             onSelect: { Task { await model.showConversation(workspace: workspace, conversationId: record.id) } },
                             onClose: { Task { await model.closeConversation(workspace: workspace, conversationId: record.id) } }
                         ) {
@@ -270,12 +325,29 @@ struct ConversationTabs: View {
                         WorkspaceTab(
                             title: URL(fileURLWithPath: path).lastPathComponent,
                             isSelected: path == selectedFile,
+                            isDirty: model.isEditorDirty(workspaceId: workspace.id, path: path),
                             onSelect: { model.showFile(workspaceId: workspace.id, path: path) },
-                            onClose: { model.closeFile(workspaceId: workspace.id, path: path) }
+                            onClose: { close(.file, path: path) }
                         ) {
                             Image(systemName: kind.symbol)
                                 .font(.rocky(11))
                                 .foregroundStyle(kind.color)
+                        }
+                        .help(path)
+                    }
+                    ForEach(diffs, id: \.self) { path in
+                        let isPreview = path == preview
+                        WorkspaceTab(
+                            title: (path as NSString).lastPathComponent,
+                            isSelected: path == selectedDiff,
+                            isDirty: model.isEditorDirty(workspaceId: workspace.id, path: editorPath(ofDiff: path)),
+                            isPreview: isPreview,
+                            onSelect: { model.showDiff(workspaceId: workspace.id, path: path) },
+                            // FIL-05: a double-click on the preview tab keeps it.
+                            onDoubleClick: isPreview ? { model.keepPreview(workspaceId: workspace.id) } : nil,
+                            onClose: { close(.diff, path: path) }
+                        ) {
+                            DiffTabIcon(status: changes?.file(at: path)?.status, path: path)
                         }
                         .help(path)
                     }
@@ -300,16 +372,35 @@ struct ConversationTabs: View {
         .background(alignment: .bottom) {
             Rectangle().fill(Theme.hairline).frame(height: 1)
         }
+        .confirmationDialog(
+            closing.map { UnsavedChangesPrompt.title(for: [$0.editor], quitting: false) } ?? "",
+            isPresented: Binding(get: { closing != nil }, set: { if !$0 { closing = nil } }),
+            titleVisibility: .visible,
+            presenting: closing
+        ) { tab in
+            Button(UnsavedChangesPrompt.saveTitle(count: 1)) { saveAndClose(tab) }
+            Button("Don’t Save", role: .destructive) { finishClosing(tab.kind, path: tab.path) }
+            Button("Cancel", role: .cancel) {}
+        } message: { tab in
+            Text(verbatim: UnsavedChangesPrompt.message(for: [tab.editor]))
+        }
     }
 }
 
 /// One tab of the workspace (TAB-01): an icon, the title (truncated past 240 points), and an × that always takes its
 /// space, so hovering never shifts the tabs. `textSecondary` at rest, `textPrimary` on hover and while selected; the
-/// selected tab has a 2-point underline on the row's hairline.
+/// selected tab has a 2-point underline on the row's hairline. A tab with unsaved edits shows a 7-point dot in the ×'s
+/// place until it is hovered (DIFF-01). A preview tab's title is in italics (FIL-05). One tap handler reads the click
+/// count (`NSEvent.clickCount`): a count-2 gesture beside it would hold every single click for the double-click
+/// interval.
 struct WorkspaceTab<Icon: View>: View {
     let title: String
     let isSelected: Bool
+    var isDirty = false
+    var isPreview = false
     let onSelect: () -> Void
+    /// The second click of a double-click, after `onSelect` ran for both.
+    var onDoubleClick: (() -> Void)?
     let onClose: () -> Void
     @ViewBuilder let icon: () -> Icon
     @State private var hovering = false
@@ -318,12 +409,18 @@ struct WorkspaceTab<Icon: View>: View {
         hovering || isSelected
     }
 
+    /// The × shows while the tab is lit, except that the dirty dot keeps its place until the pointer is on the tab.
+    private var showsClose: Bool {
+        isDirty ? hovering : isLit
+    }
+
     var body: some View {
         HStack(spacing: 4) {
             TabWidthCap(maxWidth: Zoom.shared(240)) {
                 HStack(spacing: 7) {
                     icon()
                     Text(title)
+                        .italic(isPreview)
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
@@ -332,9 +429,17 @@ struct WorkspaceTab<Icon: View>: View {
             Button("Close", systemImage: "xmark", action: onClose)
                 .font(.rocky(10))
                 .buttonStyle(RockyIconButtonStyle(size: 16))
-                .opacity(isLit ? 1 : 0)
-                .allowsHitTesting(isLit)
+                .opacity(showsClose ? 1 : 0)
+                .allowsHitTesting(showsClose)
                 .help("Close the tab")
+                .overlay {
+                    if isDirty && !hovering {
+                        Circle()
+                            .fill(Theme.textSecondary)
+                            .frame(width: Zoom.shared(7), height: Zoom.shared(7))
+                            .accessibilityLabel("Unsaved edits")
+                    }
+                }
         }
         .font(.rocky(12.5))
         .foregroundStyle(isLit ? Theme.textPrimary : Theme.textSecondary)
@@ -347,9 +452,26 @@ struct WorkspaceTab<Icon: View>: View {
                 .frame(height: 2)
         }
         .contentShape(Rectangle())
-        .onTapGesture(perform: onSelect)
+        .onTapGesture {
+            onSelect()
+            if let onDoubleClick, (NSApp.currentEvent?.clickCount ?? 1) >= 2 { onDoubleClick() }
+        }
         .onHover { inside in withAnimation(Theme.Motion.hover) { hovering = inside } }
         .clickable()
+    }
+}
+
+/// OPN-01's opener: the worktree folder from the Open menu, or one file (`FIL-06`'s file too large for Rocky), opened
+/// by the app itself, so Rocky spawns nothing and no CLI needs to be on the PATH. A failure shows in the toast.
+@MainActor
+enum ExternalEditorOpener {
+    static func open(_ url: URL, in editor: ExternalEditor, app: URL, toasts: ToastPresenter?) {
+        let name = editor.displayName
+        NSWorkspace.shared.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration()) { @Sendable _, error in
+            guard let error else { return }
+            let message = "Couldn’t open in \(name): \(error.localizedDescription)"
+            Task { @MainActor in toasts?.show(message) }
+        }
     }
 }
 

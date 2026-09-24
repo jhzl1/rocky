@@ -415,10 +415,23 @@ struct ChatView: View {
     private func handleKey(_ event: NSEvent) -> NSEvent? {
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         guard liveActive.value, let window = event.window, window.isKeyWindow else { return event }
+        // A sheet (a permission request, an alert, the commit sheet, GIT-04) types in a window of its own, whose parent
+        // is this one, and so does the app-modal alert of quitting with unsaved edits: their keys are their own, Esc
+        // included, which closes them (KBD-02), and ⌘U attaches nothing behind them.
+        if window.sheetParent != nil || NSApp.modalWindow != nil { return event }
         // A terminal with the keyboard gets every key, Esc included: the embedded terminal (CMD-08), whose Claude Code
         // screens use Esc to go back or quit, and the panel's terminals, where Esc belongs to the shell's programs.
         // Neither may stop the agent's turn.
         if window.firstResponder is TerminalView { return event }
+        // The code editor with the keyboard, its find bar included, gets its keys too: Esc closes the find bar there
+        // and never stops the agent's turn (EDIT-01).
+        if CodeEditor.hasKeyboard(in: window) { return event }
+        // The All files filter with the keyboard gets its keys too: its Esc clears the query, then leaves the field,
+        // and never stops the agent's turn (FIL-04). Its focus is read through a reference, at the key's time.
+        if FileFilterFocus.hasKeyboard(in: window) { return event }
+        // A diff comment's composer with the keyboard gets its keys too: its Esc closes it, or asks first with text
+        // (CMT-02). KBD-02's order for Esc: an open menu, the settings, a sheet, the composer, the filter, then the turn.
+        if CommentComposerFocus.hasKeyboard(in: window) { return event }
         // An open menu, the settings, a repository's settings, sheets (a permission request, an alert) and the slash
         // command popup keep Esc for closing themselves (CMD-03). The popup's state is read from the controller, a
         // reference, at the key's time.
