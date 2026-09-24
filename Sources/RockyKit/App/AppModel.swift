@@ -139,8 +139,24 @@ public final class AppModel {
     public private(set) var openFiles: [String: [String]] = [:]
     /// The file tab each workspace shows instead of its conversation; none shows the selected conversation.
     public private(set) var selectedFiles: [String: String] = [:]
+    /// The last command list each repository's agent announced (KIT-01), so a new conversation has one while its own
+    /// agent starts. In memory only: the agent sends it again after every start. Observed: the popup shows it.
+    private var lastCommands: [CommandListKey: [SlashCommand]] = [:]
+
+    private struct CommandListKey: Hashable {
+        let repoId: String
+        let agent: AgentKind
+    }
     /// Observed for the same reason as `chats`. Created only in actions, never while a view reads it.
     private var processes: [String: WorkspaceProcesses] = [:]
+    /// CMD-08: the terminal each conversation runs a Claude Code terminal command in, keyed by conversation. At most
+    /// one per conversation, kept only while Rocky runs. Observed: the conversation's view shows it.
+    private var embeddedTerminals: [String: EmbeddedTerminal] = [:]
+
+    private struct EmbeddedTerminal {
+        let workspaceId: String
+        let session: PTYSession
+    }
 
     public init(
         store: RockyStore,
@@ -189,6 +205,22 @@ public final class AppModel {
 
     public func chat(conversationId: String) -> ChatSessionModel? {
         chats[conversationId]
+    }
+
+    /// The slash commands `chat`'s message box offers (CMD-05): its own list once its agent has announced one
+    /// (`confirmed`), else the last list of its repository and agent, possibly empty, until its own arrives. A Claude
+    /// Code list has the terminal commands too (CMD-08, `TerminalOnlyCommand.offered`).
+    public func commands(for chat: ChatSessionModel) -> (commands: [SlashCommand], confirmed: Bool) {
+        let (commands, confirmed) = announcedCommands(for: chat)
+        return (TerminalOnlyCommand.offered(commands, agent: chat.agent, confirmed: confirmed), confirmed)
+    }
+
+    private func announcedCommands(for chat: ChatSessionModel) -> (commands: [SlashCommand], confirmed: Bool) {
+        if chat.commandsReceived { return (chat.commands, true) }
+        guard let conversationId = chats.first(where: { $0.value === chat })?.key,
+              let workspaceId = chatWorkspaceIds[conversationId],
+              let repoId = workspace(id: workspaceId)?.repoId else { return ([], false) }
+        return (lastCommands[CommandListKey(repoId: repoId, agent: chat.agent)] ?? [], false)
     }
 
     /// Whether an agent is working in any of the workspace's conversations (the sidebar's progress arc).
@@ -671,38 +703,69 @@ public final class AppModel {
             }
         )
         chat.onAttention = { [weak self] kind in self?.attention(kind, workspaceId: workspaceId) }
+        let commandKey = CommandListKey(repoId: current.repoId, agent: agent)
+        chat.onCommands = { [weak self] commands in self?.lastCommands[commandKey] = commands }
         chats[conversationId] = chat
         chatWorkspaceIds[conversationId] = workspaceId
         return chat
     }
 
+    /// The conversation's first message that is not a command names it (TITLE-01); a command leaves it untitled.
     private func titleIfNeeded(conversationId: String, workspaceId: String, from text: String) {
-        guard var record = try? store.session(id: conversationId), record.title == nil else { return }
-        record.title = ChatSessionRecord.title(from: text)
+        guard var record = try? store.session(id: conversationId), record.title == nil,
+              let title = Self.title(from: text, commands: knownCommands(for: record)) else { return }
+        record.title = title
         try? store.update(record)
         reloadConversations(workspaceId: workspaceId)
     }
 
     private func reloadConversations(workspaceId: String) {
         var open = (try? store.openConversations(workspaceId: workspaceId)) ?? []
-        // Conversations saved before titles existed get one from their first message.
+        // Conversations saved before titles existed get one from their first message that is not a command.
         for index in open.indices where open[index].title == nil {
-            guard let first = try? store.firstUserMessage(sessionId: open[index].id) else { continue }
-            open[index].title = ChatSessionRecord.title(from: first)
+            let commands = knownCommands(for: open[index])
+            let userMessages = ((try? store.messages(sessionId: open[index].id)) ?? []).lazy
+                .filter { $0.kind == ChatItem.Kind.user.rawValue }
+            guard let title = userMessages.compactMap({ Self.title(from: $0.text, commands: commands) }).first else { continue }
+            open[index].title = title
             try? store.update(open[index])
         }
         conversations[workspaceId] = open
         refreshWorkspaceTitles()
     }
 
+    /// The list the title rule checks for a conversation: its chat's own, else the last one of its repository and
+    /// agent; nil while neither has arrived.
+    private func knownCommands(for record: ChatSessionRecord) -> [SlashCommand]? {
+        if let chat = chats[record.id], chat.commandsReceived { return chat.commands }
+        guard let agent = AgentKind(rawValue: record.agent), let repoId = workspace(id: record.workspaceId)?.repoId else { return nil }
+        return lastCommands[CommandListKey(repoId: repoId, agent: agent)]
+    }
+
+    /// TITLE-01's rule. While the conversation's list is unknown (at launch, before any agent has started), a message
+    /// that starts with "/name" counts as a command: a wrong title stays for good, a missing one comes with the next
+    /// message.
+    nonisolated static func title(from message: String, commands: [SlashCommand]?) -> String? {
+        guard let commands else {
+            return SlashCommand.leadingName(in: message) == nil ? ChatSessionRecord.title(from: message) : nil
+        }
+        return ChatSessionRecord.title(from: message, commands: commands)
+    }
+
+    /// Stops the conversation's agent and its embedded terminal (closing the tab, changing the Claude instance).
     private func stopChat(conversationId: String) async {
         chatWorkspaceIds[conversationId] = nil
         await chats.removeValue(forKey: conversationId)?.stop()
+        await closeEmbeddedTerminal(conversationId: conversationId)
     }
 
+    /// The workspace's agents and embedded terminals (removing it or its repository).
     private func stopChats(workspaceId: String) async {
         for (conversationId, owner) in chatWorkspaceIds where owner == workspaceId {
             await stopChat(conversationId: conversationId)
+        }
+        for (conversationId, terminal) in embeddedTerminals where terminal.workspaceId == workspaceId {
+            await closeEmbeddedTerminal(conversationId: conversationId)
         }
     }
 
@@ -717,11 +780,67 @@ public final class AppModel {
     public func stopAllProcesses() async {
         await stopAllAgents()
         let all = Array(processes.values)
+        let embedded = embeddedTerminals.values.map(\.session)
+        embeddedTerminals.removeAll()
         await withTaskGroup(of: Void.self) { group in
             for workspaceProcesses in all {
                 group.addTask { await workspaceProcesses.stopAll() }
             }
+            for session in embedded {
+                group.addTask { await session.stop() }
+            }
         }
+    }
+
+    // MARK: Terminal commands
+
+    /// The conversation's embedded terminal (CMD-08), running or finished; nil when none is open.
+    public func embeddedTerminal(conversationId: String) -> PTYSession? {
+        embeddedTerminals[conversationId]?.session
+    }
+
+    /// Opens the conversation's embedded terminal on one of Claude Code's terminal commands (CMD-08), replacing the
+    /// one it had. It runs Rocky's own Claude Code directly, not through a shell, so its exit is the "finished"
+    /// signal (Conductor types the command into a shell instead): the command and its arguments are its one
+    /// argument, the worktree its folder, and the workspace environment its own, the repository's
+    /// `CLAUDE_CONFIG_DIR` included, so it reads the configuration of the conversation's Claude instance. It does
+    /// not resume the conversation's session. nil, with `errorMessage` set, when Claude Code is not installed.
+    @discardableResult
+    public func openEmbeddedTerminal(conversationId: String, command: TerminalOnlyCommand) async -> PTYSession? {
+        let workspaceId = chatWorkspaceIds[conversationId] ?? (try? store.session(id: conversationId))?.workspaceId
+        await launchEnvironment?.value
+        guard let workspaceId, let workspace = self.workspace(id: workspaceId) else { return nil }
+        guard let claude = AgentLauncher.installedClaudeCodeBinary(prefix: paths.adapterPrefix) else {
+            errorMessage = "Rocky's Claude Code is not installed yet. Start a Claude Code conversation, then run \(command.label) again."
+            return nil
+        }
+        var environment = self.environment(for: workspace)
+        // Rocky installs its agents at the versions it was tested with; this copy must not update itself.
+        environment["DISABLE_AUTOUPDATER"] = "1"
+        let session = PTYSession(
+            title: command.label,
+            command: PTYCommand(
+                executable: claude.path,
+                arguments: [command.prompt],
+                environment: environment,
+                cwd: URL(fileURLWithPath: workspace.path)
+            ),
+            // What closing a terminal window sends, as for the panel's terminals.
+            stopSignal: SIGHUP,
+            stopGracePeriod: processStopGracePeriod
+        )
+        let previous = embeddedTerminals.updateValue(EmbeddedTerminal(workspaceId: workspaceId, session: session), forKey: conversationId)
+        await previous?.session.stop()
+        // Closed while the previous one stopped: it never starts.
+        guard embeddedTerminals[conversationId]?.session === session else { return nil }
+        session.start()
+        return session
+    }
+
+    /// Stops the conversation's embedded terminal if it still runs, and closes it (CMD-08's Done and ×).
+    public func closeEmbeddedTerminal(conversationId: String) async {
+        guard let terminal = embeddedTerminals.removeValue(forKey: conversationId) else { return }
+        await terminal.session.stop()
     }
 
     // MARK: Scripts and terminals

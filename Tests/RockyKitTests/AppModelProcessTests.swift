@@ -188,4 +188,108 @@ struct AppModelProcessTests {
         }
         #expect(model.repoVars(repoId: repoId).isEmpty)
     }
+
+    // MARK: CMD-08's embedded terminal
+
+    /// Puts a fake Claude Code where Rocky's own is: it prints what it was started with, then waits for a line.
+    private func installFakeClaudeCode(_ model: AppModel) throws {
+        let binary = AgentLauncher.claudeCodeBinary(prefix: model.paths.adapterPrefix)
+        try FileManager.default.createDirectory(at: binary.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let script = """
+        #!/bin/bash
+        printf 'count=<%s> args=<%s> config=<%s> cwd=<%s> update=<%s>\\n' "$#" "$*" "$CLAUDE_CONFIG_DIR" "$(pwd -P)" "$DISABLE_AUTOUPDATER"
+        IFS= read -r line
+        printf 'finished\\n'
+        """
+        try Data(script.utf8).write(to: binary)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binary.path)
+    }
+
+    /// A workspace of a repository with its own Claude instance, and a Claude Code conversation in it.
+    private func claudeConversation(_ model: AppModel) async throws -> (workspace: Workspace, conversationId: String) {
+        let repoId = try await addRepo(model)
+        await model.setClaudeConfigDir(repoId: repoId, "/Users/me/.claude-celes")
+        await model.createWorkspace(repoId: repoId)
+        let workspace = try #require(model.workspaces[repoId]?.first)
+        try #require(await model.newConversation(workspace: workspace, agent: .claude) != nil)
+        return (workspace, try #require(model.selectedConversationIds[workspace.id]))
+    }
+
+    /// It runs Rocky's Claude Code directly, with the command as its one argument, in the worktree, with the
+    /// workspace environment (the repository's Claude instance); its exit is the "finished" signal, and it stays open
+    /// until Done or ×.
+    @Test func embeddedTerminalRunsRockysClaudeCodeInTheWorkspace() async throws {
+        let model = try makeModel()
+        let (workspace, conversationId) = try await claudeConversation(model)
+        try installFakeClaudeCode(model)
+        #expect(model.embeddedTerminal(conversationId: conversationId) == nil)
+
+        let session = try #require(await model.openEmbeddedTerminal(conversationId: conversationId, command: TerminalOnlyCommand(name: "mcp", arguments: "extra")))
+        #expect(model.embeddedTerminal(conversationId: conversationId) === session)
+        #expect(session.title == "/mcp")
+        #expect(session.command.executable == AgentLauncher.claudeCodeBinary(prefix: model.paths.adapterPrefix).path)
+        #expect(session.command.arguments == ["/mcp extra"])
+        try await waitUntil { session.outputText.contains("update=") }
+        #expect(session.hasOutput)
+        // `pwd -P` reports /private/var…, which `resolvingSymlinksInPath()` would turn back into /var….
+        let resolved = try #require(realpath(workspace.path, nil))
+        let worktree = String(cString: resolved)
+        free(resolved)
+        #expect(session.outputText.contains("count=<1> args=</mcp extra> config=</Users/me/.claude-celes> cwd=<\(worktree)> update=<1>"))
+        #expect(session.state.isRunning)
+
+        session.send("\n")
+        #expect(await session.waitForExit() == .exited(0))
+        try await waitUntil { session.outputText.contains("finished") }
+        #expect(model.embeddedTerminal(conversationId: conversationId) === session)
+
+        await model.closeEmbeddedTerminal(conversationId: conversationId)
+        #expect(model.embeddedTerminal(conversationId: conversationId) == nil)
+        await model.stopAllProcesses()
+    }
+
+    /// One per conversation; Done or × stops it, and so do closing the conversation, removing the workspace and
+    /// quitting. Nothing runs once it is closed.
+    @Test func embeddedTerminalsStopWithTheirConversationWorkspaceAndRocky() async throws {
+        let model = try makeModel()
+        let (workspace, conversationId) = try await claudeConversation(model)
+        try installFakeClaudeCode(model)
+        let mcp = TerminalOnlyCommand(name: "mcp")
+
+        let first = try #require(await model.openEmbeddedTerminal(conversationId: conversationId, command: mcp))
+        let second = try #require(await model.openEmbeddedTerminal(conversationId: conversationId, command: TerminalOnlyCommand(name: "hooks")))
+        #expect(!first.state.isRunning)
+        #expect(first.stopRequested)
+        #expect(second.state.isRunning)
+        #expect(model.embeddedTerminal(conversationId: conversationId) === second)
+        await model.closeEmbeddedTerminal(conversationId: conversationId)
+        #expect(!second.state.isRunning)
+        #expect(model.embeddedTerminal(conversationId: conversationId) == nil)
+
+        let beforeQuit = try #require(await model.openEmbeddedTerminal(conversationId: conversationId, command: mcp))
+        await model.stopAllProcesses()
+        #expect(!beforeQuit.state.isRunning)
+        #expect(model.embeddedTerminal(conversationId: conversationId) == nil)
+
+        let beforeClosing = try #require(await model.openEmbeddedTerminal(conversationId: conversationId, command: mcp))
+        await model.closeConversation(workspace: workspace, conversationId: conversationId)
+        #expect(!beforeClosing.state.isRunning)
+        #expect(model.embeddedTerminal(conversationId: conversationId) == nil)
+
+        let current = try #require(model.selectedConversationIds[workspace.id])
+        let beforeRemoving = try #require(await model.openEmbeddedTerminal(conversationId: current, command: mcp))
+        await model.removeWorkspace(id: workspace.id)
+        #expect(!beforeRemoving.state.isRunning)
+        #expect(model.embeddedTerminal(conversationId: current) == nil)
+        #expect(model.workspace(id: workspace.id) == nil)
+    }
+
+    @Test func embeddedTerminalWithoutClaudeCodeSaysSo() async throws {
+        let model = try makeModel()
+        let (_, conversationId) = try await claudeConversation(model)
+        #expect(await model.openEmbeddedTerminal(conversationId: conversationId, command: TerminalOnlyCommand(name: "mcp")) == nil)
+        #expect(model.errorMessage == "Rocky's Claude Code is not installed yet. Start a Claude Code conversation, then run /mcp again.")
+        #expect(model.embeddedTerminal(conversationId: conversationId) == nil)
+        await model.stopAllProcesses()
+    }
 }

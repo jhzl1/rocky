@@ -113,10 +113,70 @@ struct ACPProtocolTests {
     }
 
     @Test func ignoresUnknownKindsAndUpdatesWithoutStatus() {
-        #expect(ACPProtocol.event(fromUpdate: update(["sessionUpdate": "available_commands_update"]), sessionId: "s1")
-            == .ignored("available_commands_update"))
+        #expect(ACPProtocol.event(fromUpdate: update(["sessionUpdate": "user_message_chunk"]), sessionId: "s1")
+            == .ignored("user_message_chunk"))
         #expect(ACPProtocol.event(fromUpdate: update(["sessionUpdate": "tool_call_update", "toolCallId": "t1"]), sessionId: "s1")
             == .ignored("tool_call_update"))
+    }
+
+    /// KIT-01, in the shape claude-agent-acp 0.81.0 sends: a hint, a null input, an MCP prompt, `_meta`, and entries
+    /// the parser must drop or fill in.
+    @Test func parsesAvailableCommands() {
+        let commands = update([
+            "sessionUpdate": "available_commands_update",
+            "availableCommands": [
+                ["name": "compact", "description": "Clear conversation history but keep a summary in context", "input": ["hint": "<optional custom summarization instructions>"]],
+                ["name": "security-review", "description": "Review the pending changes", "input": .null],
+                ["name": "mcp:linear:triage", "description": "Triage an issue (MCP)", "input": ["hint": "<issue>"], "_meta": ["claudeCode": ["source": "mcp"]]],
+                ["description": "an entry without a name"],
+                ["name": 7, "description": "a name that is not a string"],
+                ["name": "no-description", "input": [:]],
+                ["name": "blank-hint", "description": "", "input": ["hint": " "]],
+                ["name": "compact", "description": "announced twice"],
+            ],
+        ])
+        #expect(ACPProtocol.event(fromUpdate: commands, sessionId: "s1") == .availableCommands([
+            SlashCommand(name: "compact", description: "Clear conversation history but keep a summary in context", inputHint: "<optional custom summarization instructions>"),
+            SlashCommand(name: "security-review", description: "Review the pending changes"),
+            SlashCommand(name: "mcp:linear:triage", description: "Triage an issue (MCP)", inputHint: "<issue>"),
+            SlashCommand(name: "no-description"),
+            SlashCommand(name: "blank-hint"),
+        ]))
+        #expect(SlashCommand(name: "mcp:linear:triage").isMCP)
+        #expect(!SlashCommand(name: "compact").isMCP)
+        // An update without a list is an empty list, which still replaces the previous one.
+        #expect(ACPProtocol.event(fromUpdate: update(["sessionUpdate": "available_commands_update"]), sessionId: "s1")
+            == .availableCommands([]))
+    }
+
+    /// OpenCode 1.18.32 sends a name and a description, never an input.
+    @Test func parsesOpenCodeCommandsWithoutInput() {
+        let commands = update([
+            "sessionUpdate": "available_commands_update",
+            "availableCommands": [["name": "init", "description": "create/update AGENTS.md"], ["name": "review", "description": "review changes"]],
+        ])
+        #expect(ACPProtocol.event(fromUpdate: commands, sessionId: "s1") == .availableCommands([
+            SlashCommand(name: "init", description: "create/update AGENTS.md"),
+            SlashCommand(name: "review", description: "review changes"),
+        ]))
+    }
+
+    /// ACP-03: a command is an ordinary prompt whose first block is the text exactly as typed, `mcp:` included, with
+    /// the files after it.
+    @Test func commandPromptIsTheTextAsTyped() {
+        let file = URL(fileURLWithPath: "/repo/issue.md")
+        let params = ACPProtocol.promptParams(
+            sessionId: "s1",
+            text: "/mcp:linear:triage web \(PromptAttachment.marker)",
+            attachments: [.file(file)]
+        )
+        #expect(params["prompt"] == [
+            ["type": "text", "text": "/mcp:linear:triage web "],
+            ["type": "resource_link", "uri": .string(file.absoluteString), "name": "issue.md"],
+        ])
+        let unmarked = ACPProtocol.promptParams(sessionId: "s1", text: "/mcp:linear:triage web", attachments: [.file(file)])
+        #expect(unmarked["prompt"]?.arrayValue?.first == ["type": "text", "text": "/mcp:linear:triage web"])
+        #expect(ACPProtocol.promptParams(sessionId: "s1", text: "/compact")["prompt"] == [["type": "text", "text": "/compact"]])
     }
 
     @Test func dropsUpdatesForAnotherSession() {

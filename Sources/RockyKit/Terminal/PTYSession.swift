@@ -62,6 +62,9 @@ public final class PTYSession: Identifiable {
     /// Rocky asked it to stop (Stop, closing the tab, removing the workspace): however it then ends, by the signal or
     /// with a code from a script that caught it, the panel says "stopped", not "failed" (TERM-03).
     public private(set) var stopRequested = false
+    /// The process has written something: CMD-08's embedded terminal says "Starting /mcp…" until then. Set once, so
+    /// streaming output does not redraw the views that read it.
+    public private(set) var hasOutput = false
 
     @ObservationIgnored public private(set) var output: [UInt8] = []
     @ObservationIgnored private let stopSignal: Int32
@@ -175,6 +178,7 @@ public final class PTYSession: Identifiable {
     }
 
     private func receive(_ bytes: ArraySlice<UInt8>) {
+        if !hasOutput, !bytes.isEmpty { hasOutput = true }
         output.append(contentsOf: bytes)
         if output.count > maxOutputBytes {
             output.removeFirst(output.count - maxOutputBytes)

@@ -142,6 +142,13 @@ public struct ChatSessionRecord: Codable, Sendable, Equatable, Identifiable, Fet
         let trimmed = firstLine.split(separator: " ", omittingEmptySubsequences: true).joined(separator: " ")
         return trimmed.count > 40 ? String(trimmed.prefix(40)) + "…" : trimmed
     }
+
+    /// A tab title from a message, or nil for a message that runs one of `commands` (TITLE-01): "/compact" or "/init"
+    /// must not name the conversation, so the caller keeps looking for the first message that is not a command. A
+    /// first token that names no command ("/notacommand hi") is an ordinary message and titles it.
+    public static func title(from message: String, commands: [SlashCommand]) -> String? {
+        SlashCommand.invoked(by: message, among: commands) == nil ? title(from: message) : nil
+    }
 }
 
 public struct ChatMessageRecord: Codable, Sendable, Equatable, Identifiable, FetchableRecord, PersistableRecord {

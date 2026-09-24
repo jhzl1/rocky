@@ -282,6 +282,94 @@ struct AppModelTests {
         await reopened.stopAllAgents()
     }
 
+    private func waitForCommands(_ chat: ChatSessionModel) async throws {
+        for _ in 0..<500 where !chat.commandsReceived {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(chat.commandsReceived)
+    }
+
+    /// A workspace with an empty repository, and the model it lives in.
+    private func emptyWorkspace(store: RockyStore) async throws -> (AppModel, Workspace) {
+        let model = try makeModel(store: store)
+        await model.bootstrap()
+        let repo = try GitFixture.localRepo(in: try Fixtures.temporaryDirectory("repos"))
+        await model.addRepo(at: repo)
+        let repoId = try #require(model.repos.first?.id)
+        await model.createWorkspace(repoId: repoId)
+        return (model, try #require(model.workspaces[repoId]?.first))
+    }
+
+    private static let announced = ["compact", "review", "mcp:linear:triage"]
+    /// What a Claude Code conversation's popup offers with the fake agent's list: CMD-08 adds the terminal commands.
+    private static let offered = announced + TerminalOnlyCommand.names
+
+    /// KIT-01, CMD-05: the last list of the repository and agent, not confirmed, then the conversation's own.
+    @Test func newConversationShowsTheLastListUntilItsOwnArrives() async throws {
+        let (model, workspace) = try await emptyWorkspace(store: try RockyStore.inMemory())
+        let first = try #require(await model.newConversation(workspace: workspace, agent: .claude))
+        #expect(model.commands(for: first).commands.isEmpty)
+        #expect(!model.commands(for: first).confirmed)
+        try await waitForCommands(first)
+        #expect(model.commands(for: first).commands.map(\.name) == Self.offered)
+        #expect(model.commands(for: first).confirmed)
+        // The first conversation's list changes, so the cache and the second conversation's own list differ.
+        await first.send("change commands")
+
+        let second = try #require(await model.newConversation(workspace: workspace, agent: .claude))
+        #expect(model.commands(for: second).commands.map(\.name) == ["init"] + TerminalOnlyCommand.names)
+        #expect(!model.commands(for: second).confirmed)
+        try await waitForCommands(second)
+        #expect(model.commands(for: second).commands.map(\.name) == Self.offered)
+        #expect(model.commands(for: second).confirmed)
+        await model.stopAllAgents()
+    }
+
+    @Test func listsAreKeptPerAgent() async throws {
+        let (model, workspace) = try await emptyWorkspace(store: try RockyStore.inMemory())
+        let claude = try #require(await model.newConversation(workspace: workspace, agent: .claude))
+        try await waitForCommands(claude)
+        await claude.send("change commands")
+
+        // Claude's list is not OpenCode's, which gets no terminal commands (CMD-08).
+        let opencode = try #require(await model.newConversation(workspace: workspace, agent: .opencode))
+        #expect(model.commands(for: opencode).commands.isEmpty)
+        try await waitForCommands(opencode)
+        #expect(model.commands(for: opencode).commands.map(\.name) == Self.announced)
+
+        let anotherClaude = try #require(await model.newConversation(workspace: workspace, agent: .claude))
+        #expect(model.commands(for: anotherClaude).commands.map(\.name) == ["init"] + TerminalOnlyCommand.names)
+        #expect(!model.commands(for: anotherClaude).confirmed)
+        await model.stopAllAgents()
+    }
+
+    /// Review Focus 5 (TITLE-01): "/compact" leaves the tab untitled, also when Rocky reopens the conversation before
+    /// its agent has said which commands it has; the first normal message names it.
+    @Test func firstNonCommandMessageNamesTheConversation() async throws {
+        let store = try RockyStore.inMemory()
+        let (model, workspace) = try await emptyWorkspace(store: store)
+        let chat = try #require(await model.openChat(workspace: workspace, agent: .claude))
+        try await waitForCommands(chat)
+        async let command: Void = chat.send("/compact")
+        try await answerNextPermission(chat)
+        await command
+        #expect(model.conversations[workspace.id]?.map(\.title) == [nil])
+        #expect(model.title(for: workspace) == (workspace.name, true))
+        await model.stopAllAgents()
+
+        let reopened = try makeModel(store: store)
+        await reopened.bootstrap()
+        await reopened.showConversations(workspace: workspace)
+        #expect(reopened.conversations[workspace.id]?.map(\.title) == [nil])
+        let resumed = try #require(reopened.existingChat(workspaceId: workspace.id))
+        async let normal: Void = resumed.send("Fix invoice rounding")
+        try await answerNextPermission(resumed)
+        await normal
+        #expect(reopened.conversations[workspace.id]?.map(\.title) == ["Fix invoice rounding"])
+        #expect(reopened.title(for: workspace) == ("Fix invoice rounding", false))
+        await reopened.stopAllAgents()
+    }
+
     @Test func aFileOpensInATabAndAConversationTabCoversItAgain() async throws {
         let store = try RockyStore.inMemory()
         let (model, workspace, chat) = try await workspaceWithAConversation(store: store)
