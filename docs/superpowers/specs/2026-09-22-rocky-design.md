@@ -42,7 +42,7 @@ One app process. Child processes only for: one ACP agent per active session, one
 | --- | --- |
 | repeated `zsh -l` | one `zsh -l -c env` at launch, cached, manual refresh |
 | polling `git status` / busy-check script | FSEvents on worktree (excluding `node_modules`, `.git/objects`), 500 ms debounce; busy-check via `FileManager` checks on `rebase-merge`, `rebase-apply`, `MERGE_HEAD`, etc. |
-| `gh api graphql` loop | GraphQL via `URLSession`, no `gh` spawn; only visible workspace; backoff 30 s → 5 min; paused when window not key |
+| `gh api graphql` loop | GraphQL via `URLSession`, no `gh` spawn; only the selected workspace, only while the window can be seen; every 30 s, 15 s while checks run (user decisions, 2026-09-24; it was a 30 s → 5 min backoff paused when the window was not key) |
 | renders all streaming | background sessions buffer events; render on open |
 
 Success criterion: at rest, fewer than 5 app-spawned processes per minute (excluding agent tool calls),
@@ -86,7 +86,7 @@ tab is shown, so its settings are ready without a click. Hidden tabs start nothi
   agent replaying recorded JSON-RPC; energy script reading `CurrentPowerlog.PLSQL` over 30 min.
 
 ## Milestones (each gets its own implementation plan)
-Status as of 2026-09-24 (after M2.7's merge). **Done** means merged into `development`; each plan's first lines say the same.
+Status as of 2026-09-24 (after M3's merge). **Done** means merged into `development`; each plan's first lines say the same.
 
 | # | What | Done when | Status |
 | --- | --- | --- | --- |
@@ -97,7 +97,7 @@ Status as of 2026-09-24 (after M2.7's merge). **Done** means merged into `develo
 | M2.6 | Slash commands | the agent's commands in the message box; terminal-only ones in an embedded terminal (added 2026-09-23) | **Done** 2026-09-23, pushed; Task 9 with real agents still open (`m2.6-verification.md`) |
 | M2.7 | GitHub pull request panel | Conductor's right panel, one GitHub account per repository, PR state, checks, merge and agent actions (added 2026-09-23) | **Done** 2026-09-24, pushed; manual checklist on a throwaway repository still open (`m2.7-verification.md`) |
 | M2.8 | Conversations and agents | "+" creates at once, the default agent, agents in the model menu (added 2026-09-23) | **Designed**: HTML ready, plan not written; starts after M3 (user decision, 2026-09-24) |
-| M3 | Diff, comments, editor, files | review, comment, edit and commit; the All files tab to browse and edit any file (added 2026-09-24); its PR part moved to M2.7 | **Planned, next**: HTML and plan ready, All files being designed; starts once M2.7 is merged |
+| M3 | Diff, comments, editor, files | review, comment, edit and commit; the All files tab to browse and edit any file (added 2026-09-24); its PR part moved to M2.7 | **Done** 2026-09-24; manual checklist still open (`m3-verification.md`) |
 | M4 | Multi-account + energy | per-repo account everywhere; energy measured vs Conductor | **Not planned**: M2.7 already gives each repository its account and `GH_TOKEN`; left: git identity and SSH key per account, and the energy measurement |
 
 ## M0 answers

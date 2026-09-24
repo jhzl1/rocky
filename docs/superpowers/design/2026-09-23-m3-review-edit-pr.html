@@ -387,7 +387,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
 
 <div class="stage">
   <h1 class="doc-title">Rocky · Review and edit (M3)</h1>
-  <p class="doc-sub">Interactive spec on top of M2.5's shell and M2.7's layout and right panel. Browse the worktree in <strong>All files</strong> (click opens a preview tab, double-click keeps it; ⌘⇧O filters). Open a file from the <strong>Changes</strong> tab, hover a line and click <strong>+</strong> (or drag across line numbers) to comment, <strong>Send to agent</strong>, switch to <strong>Edit</strong> and type (⌘S saves), <strong>Commit…</strong>. The panel's header and its Checks tab are M2.7's, drawn simplified; the pull request lives there.</p>
+  <p class="doc-sub">Interactive spec on top of M2.5's shell and M2.7's layout and right panel. Browse the worktree in <strong>All files</strong> (click opens a preview tab, double-click keeps it; ⌘P finds a file). Open a file from the <strong>Changes</strong> tab, hover a line and click <strong>+</strong> (or drag across line numbers) to comment, <strong>Send to agent</strong>, switch to <strong>Edit</strong> and type (⌘S saves), <strong>Commit…</strong>. The panel's header and its Checks tab are M2.7's, drawn simplified; the pull request lives there.</p>
   <div class="demo" aria-label="Demo controls">
     <span class="demo-label">Demo controls, not part of Rocky</span>
     <button type="button" id="demoAgentEdit">Agent edits openapi.ts on disk</button>
@@ -499,7 +499,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
     <header><code class="id">FIL-01</code><h3>The All files tab</h3><span class="scope in">In scope</span></header>
     <dl>
       <dt>Why</dt><dd>User, 2026-09-24: "falta el editor y visualizador de archivos". It is the worktree's file tree, first in the panel's tab row.</dd>
-      <dt>Layout</dt><dd>A 38 pt head: a filter field (26 pt, radius 6, <code>fillControl</code>, placeholder "Filter files", the hint "⌘⇧O" at its right end) and "⋯" (Show Ignored Files ✓, Collapse All Folders, Reveal Active File). Then the tree, which scrolls. No footer: the panel's footer (PR-07) stays under it.</dd>
+      <dt>Layout</dt><dd>A 38 pt head: a filter field (26 pt, radius 6, <code>fillControl</code>, placeholder "Filter files", the hint "⌘P" at its right end) and "⋯" (Show Ignored Files ✓, Collapse All Folders, Reveal Active File). Then the tree, which scrolls. No footer: the panel's footer (PR-07) stays under it.</dd>
       <dt>State</dt><dd>Expanded folders are remembered per workspace across relaunches (a set of relative paths, dropped with the workspace); the first time, only the top level shows. The selected tab (PNL-03) is remembered per workspace as today.</dd>
       <dt>SwiftUI</dt><dd>A new <code>FilesTab</code> view in <code>RightPanel</code>'s tab list as <code>RightPanelTab.files</code>, before <code>.changes</code>; the tree is a <code>LazyVStack</code> of fixed 26 pt rows (the diff's approach), so a folder with thousands of entries scrolls without laying them all out.</dd>
     </dl>
@@ -526,7 +526,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
     <dl>
       <dt>Filter</dt><dd>Typing replaces the tree with a flat list of matching files: icon, name, directory (11 <code>textTertiary</code>), status letter. Matching is case-insensitive over the relative path, ranked: the name starts with the query; the name contains it; the path contains it; the query's characters appear in order in the name ("srv" finds <code>server.ts</code>); then in order anywhere in the path. Ties in Finder's order. Matched characters are drawn in <code>accent</code>. Empty query: the tree comes back as it was.</dd>
       <dt>Keys</dt><dd>↓ / ↑ move through the results, Return opens (FIL-05), Esc clears the query and a second Esc leaves the field.</dd>
-      <dt>Go to File</dt><dd>⌘⇧O (Xcode's Open Quickly; no collision in Rocky) shows the panel on All files with the filter focused and its text selected. Also in the File menu.</dd>
+      <dt>Go to File</dt><dd><strong>⌘P</strong>, like VS Code's Quick Open (user decision, 2026-09-24; it was ⌘⇧O): File ▸ Go to File… shows the panel on All files with the filter focused and its text selected. It replaces macOS's File ▸ Print… (⌘P), which Rocky has no use for: <code>CommandGroup(replacing: .printItem)</code>.</dd>
       <dt>Source</dt><dd>The file list comes from <code>git ls-files --cached --others --exclude-standard -z</code> in the worktree (tracked and untracked, ignored ones left out), so the filter needs no directory walk.</dd>
     </dl>
   </section>
@@ -732,7 +732,7 @@ Address each comment and say what you changed for each number.</pre>
 
   <section class="req" id="REQ-KBD-02">
     <header><code class="id">KBD-02</code><h3>Keyboard</h3><span class="scope in">In scope</span></header>
-    <p>⌘⇧C right panel on its Changes tab (CHG-01) · ⌘⇧O Go to File: the All files filter (FIL-04) · in the tree ↑ / ↓ move, → expands, ← collapses or goes to the parent, Return opens (FIL-05) · ⌥⌘↓ / ⌥⌘↑ next / previous file · ⌘S save · ⌘F find · ⌘L go to line · ⌘Return comment, commit · Esc cancel the composer, close a sheet. None collides with M2, M2.5, M2.6 or M2.7 shortcuts (M2.7 has ⌥⌘B for the panel; ⌘⇧G was dropped because it is Edit ▸ Find ▸ Find Previous).</p>
+    <p>⌘⇧C right panel on its Changes tab (CHG-01) · ⌘P Go to File: the All files filter, in place of Print (FIL-04) · in the tree ↑ / ↓ move, → expands, ← collapses or goes to the parent, Return opens (FIL-05) · ⌥⌘↓ / ⌥⌘↑ next / previous file · ⌘S save · ⌘F find · ⌘L go to line · ⌘Return comment, commit · Esc cancel the composer, close a sheet. None collides with M2, M2.5, M2.6 or M2.7 shortcuts (M2.7 has ⌥⌘B for the panel; ⌘⇧G was dropped because it is Edit ▸ Find ▸ Find Previous).</p>
   </section>
 
   <h2>Out of scope</h2>
@@ -1492,7 +1492,7 @@ Use /v1/providers.xml for the list.
     const rows = q ? filterRows(w, q) : treeRows(w);
     state.rows[w.id] = rows;
     const list = rows.length ? rows.map((r) => r.html).join('') : `<div class="fil-empty">No file matches “${esc(q)}”</div>`;
-    return `<div class="fil-head" data-req="FIL-04"><label class="fil-search">${I.search}<input id="fileFilter" placeholder="Filter files" value="${esc(q)}" aria-label="Filter files" autocomplete="off"><span class="kbd">⌘⇧O</span></label><button class="icon-btn sm" data-action="files-menu" aria-label="More">${I.ellipsis}</button></div>` +
+    return `<div class="fil-head" data-req="FIL-04"><label class="fil-search">${I.search}<input id="fileFilter" placeholder="Filter files" value="${esc(q)}" aria-label="Filter files" autocomplete="off"><span class="kbd">⌘P</span></label><button class="icon-btn sm" data-action="files-menu" aria-label="More">${I.ellipsis}</button></div>` +
       `<div class="fil-list" id="filList" tabindex="0" role="tree" aria-label="All files" data-req="FIL-02">${list}</div>`;
   }
   function wireFilesTab(w) {
@@ -1704,7 +1704,7 @@ Use /v1/providers.xml for the list.
       renderTopbar(); renderPanel();
     }
     if (e.metaKey && e.altKey && e.code === 'KeyB') { e.preventDefault(); state.panelOpen = !state.panelOpen; renderTopbar(); renderPanel(); }   // M2.7 KBD-03
-    if (e.metaKey && e.shiftKey && e.code === 'KeyO') { e.preventDefault(); const w = W(); state.panelOpen = true; state.tab[w.id] = 'files'; renderTopbar(); renderPanel(); const n = $('#fileFilter'); n.focus(); n.select(); }   // FIL-04: Go to File
+    if (e.metaKey && !e.shiftKey && !e.altKey && e.code === 'KeyP') { e.preventDefault(); const w = W(); state.panelOpen = true; state.tab[w.id] = 'files'; renderTopbar(); renderPanel(); const n = $('#fileFilter'); n.focus(); n.select(); }   // FIL-04: Go to File
     if (e.metaKey && e.key === 'Enter' && state.sheet && state.sheet.kind === 'commit') { e.preventDefault(); doCommit(); }
     if (e.metaKey && e.altKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
       e.preventDefault();

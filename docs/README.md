@@ -6,12 +6,12 @@ Rocky es una app de macOS para trabajar con agentes de código (Claude Code y Op
 en su propio workspace, con su propia copia del repositorio, así que varios agentes pueden trabajar a la vez sin
 pisarse. La idea viene de Conductor.
 
-**Estado de esta guía.** Describe lo construido de M1 a M2.7:
+**Estado de esta guía.** Describe lo construido de M1 a M3:
 
-- M2.7 (el panel de GitHub) está construido y en verificación en la rama `feat/m2.7-github`.
-- M2.6 (los comandos con "/" y la tecla Esc dentro de un terminal) ya está en `development`. La rama de M2.7 lo
-  recibe cuando se una con `development`, un paso que su plan tiene pendiente. Si compilas `feat/m2.7-github`
-  antes de esa unión, esas dos cosas todavía no están.
+- M3 (revisar y editar: las pestañas All files y Changes, los diffs, los comentarios en líneas, el editor y los
+  commits desde Rocky) está en `development` desde el 2026-09-24.
+- M2.6 (los comandos con "/" y la tecla Esc dentro de un terminal) y M2.7 (el panel de GitHub) ya están en
+  `development`.
 
 ---
 
@@ -71,7 +71,7 @@ de cada compilación. Para usar otro certificado, define `ROCKY_SIGN_IDENTITY` c
 
 | Ruta | Qué contiene |
 | --- | --- |
-| `~/Library/Application Support/Rocky/rocky.sqlite` | La base de datos: repositorios, workspaces y conversaciones. |
+| `~/Library/Application Support/Rocky/rocky.sqlite` | La base de datos: repositorios, workspaces, conversaciones, comentarios en líneas y las carpetas abiertas de All files. |
 | `~/Library/Application Support/Rocky/agents` | Los agentes que instala Rocky: el adaptador de Claude y OpenCode. |
 | `~/Library/Application Support/Rocky/opencode-data` | Los datos propios del OpenCode de Rocky: sesiones y login. |
 | `~/Library/Application Support/Rocky/ci-logs` | Los logs de CI que "Fix errors" adjunta, una carpeta por workspace. |
@@ -167,7 +167,7 @@ se conserva**, así que no pierdes commits. Git se niega si hay cambios sin comm
 Si el script Archive falla, no se borra nada. Aparece "Archive script failed" con "Remove Anyway" (quita el
 workspace sin volver a correr el script) y "Cancel". La pestaña Archive muestra la salida del script.
 
-El panel de GitHub tiene otras dos formas de archivar después de un merge (sección 11).
+El panel derecho tiene otras dos formas de archivar después de un merge (sección 11).
 
 ### Quitar un repositorio
 
@@ -345,8 +345,9 @@ Si el agente está trabajando, Return no interrumpe: el mensaje entra en una col
 Pulsa Esc o el botón de detener (cuadrado). El turno termina con la marca "INTERRUPTED BY USER". También aparece
 después de "Send now", porque ese botón detiene el turno en curso.
 
-Esc va primero a lo que esté abierto encima: un menú, los ajustes o un diálogo. Solo cuando no hay nada abierto
-detiene el turno.
+Esc va primero a lo que esté abierto encima: un menú, los ajustes, un diálogo o una hoja (como la del commit). Tampoco
+detiene el turno mientras escribes en el editor o en su barra de búsqueda, en el filtro de All files o en un
+comentario: ahí Esc es de ese campo. Solo cuando no pasa nada de eso detiene el turno.
 
 ### Preguntas y permisos del agente
 
@@ -362,15 +363,21 @@ En ambos casos el workspace muestra el estado "Needs you" en la barra lateral.
 
 Rocky guarda cada conversación. Al abrirla después de relanzar, le pide al agente que retome su sesión anterior
 (`session/load`), así el agente recuerda lo hablado. Si el agente ya no tiene esa sesión, Rocky muestra "Could not
-resume the previous conversation (…); started a new one." (sección 15). Una conversación sin mensajes empieza una
+resume the previous conversation (…); started a new one." (sección 21). Una conversación sin mensajes empieza una
 sesión nueva sin error.
 
 Si el agente se detiene, el cuadro de mensaje muestra el motivo y un botón "Restart".
 
 ### Pestañas de archivos
 
-Un clic en la etiqueta de un archivo, en tus mensajes o en las acciones del agente, abre el archivo en una pestaña
-junto a las conversaciones: imágenes, Markdown renderizado, texto o vista rápida de macOS.
+Un clic en la etiqueta de un archivo, en tus mensajes o en las acciones del agente (Read, Edit…), abre el archivo en
+una pestaña junto a las conversaciones:
+
+- Un archivo del worktree que está en Changes abre su pestaña de diff, en su primer bloque de cambios (sección 14).
+  Así ves qué cambió el agente.
+- Otro archivo del worktree abre su pestaña en el editor, con la marca "Unchanged" (sección 16).
+- Un archivo fuera del worktree abre una pestaña de archivo: imágenes, código y texto en el editor, Markdown con
+  Preview | Edit, PDF en la vista rápida de macOS, y lo demás como "Binary file" (sección 17).
 
 ---
 
@@ -488,21 +495,39 @@ vuelve a abrir enseguida con la instancia nueva; las de otros workspaces, cuando
 
 ---
 
-## 11. Panel de GitHub (M2.7)
+## 11. El panel derecho y GitHub
 
-El panel derecho muestra el pull request (PR) de la rama del workspace y ofrece la siguiente acción.
+El panel derecho muestra el pull request (PR) de la rama del workspace y ofrece la siguiente acción (M2.7). Desde M3
+también tiene los archivos del worktree y lo que cambió.
+
+### Las pestañas del panel
+
+Debajo del encabezado hay tres pestañas en forma de pastilla: **All files · Changes N · Checks**.
+
+| Pestaña | Qué muestra |
+| --- | --- |
+| All files | El árbol de archivos del worktree, con un filtro (sección 17). |
+| Changes N | Los archivos que cambiaron frente a la base; N es cuántos, y no aparece cuando es 0 (sección 13). |
+| Checks | El PR: git status, despliegues, checks y comentarios (más abajo). |
+
+- Cada workspace recuerda su pestaña mientras Rocky está abierto. Un workspace que todavía no eligió ninguna muestra
+  Changes.
+- ⌘⇧C (View ▸ Show Changes) abre el panel en Changes. Pulsado mientras Changes se ve, oculta el panel (View ▸ Hide
+  Changes).
+- ⌘P (File ▸ Go to File…) abre el panel en All files, con el filtro listo para escribir.
 
 ### Diseño de la ventana
 
 - El panel ocupa todo el alto de la ventana, a la derecha. Su encabezado está en la misma fila que la barra
   superior.
-- Se muestra u oculta con el ícono de la esquina superior derecha o con ⌥⌘B (View ▸ Show/Hide Pull Request Panel).
+- Se muestra u oculta con el ícono de la esquina superior derecha o con ⌥⌘B (View ▸ Show/Hide Pull Request Panel). El
+  menú conserva ese nombre, aunque el panel ahora tenga también archivos y cambios.
 - Su ancho se ajusta arrastrando la línea de la izquierda (de 280 a 480 puntos).
 - La barra lateral izquierda se muestra u oculta con ⌃⌘S.
 
 ### El encabezado: estado y acción
 
-El encabezado muestra el número del PR (un clic muestra la sección Checks; ⌘-clic o la flecha ↗ abren el PR en
+El encabezado muestra el número del PR (un clic muestra la pestaña Checks; ⌘-clic o la flecha ↗ abren el PR en
 GitHub), el estado y **una sola acción**. Rocky toma el primer estado de esta tabla que aplica:
 
 | Estado (texto en pantalla) | Acción | Quién la hace |
@@ -555,9 +580,9 @@ Después del merge, "Archive" corre el script Archive y quita el worktree; la ra
 - Con "Archive a workspace when its pull request merges" encendido (Settings → GitHub), Rocky archiva solo cuando ve
   el merge. Si hay cambios sin commit, no archiva y avisa: "lima merged but has uncommitted changes; not archived".
 
-### La sección Checks
+### La pestaña Checks
 
-Debajo del encabezado está la sección "Checks", en este orden:
+La pestaña "Checks" muestra, en este orden:
 
 1. **Título y descripción del PR.** Son **de solo lectura**: no se editan en Rocky. Puedes seleccionarlos para
    copiarlos. Si los cambias en GitHub, aparecen en el siguiente refresco. Sin PR, una nota explica que "Create PR"
@@ -572,7 +597,7 @@ Debajo del encabezado está la sección "Checks", en este orden:
 5. **Comments.** Los comentarios pendientes: hilos de revisión sin resolver, comentarios de la conversación y
    revisiones que piden cambios. Al pasar el mouse sobre uno: "Hide" (lo oculta para ese PR, también tras relanzar)
    y "Add to chat" (se lo envía al agente). "Add all to chat" los envía todos, numerados. Un comentario enviado queda
-   marcado con un check.
+   marcado con un check. Rocky solo lee estos comentarios mientras la pestaña Checks se ve.
 
 Al pie del panel ves la cuenta y la hora del último refresco, por ejemplo "jhzl1 · Updated 12s ago".
 
@@ -742,18 +767,440 @@ use the new account."
 
 ---
 
-## 13. Atajos de teclado
+## 13. Changes: lo que cambió en el workspace
+
+La pestaña Changes del panel derecho lista cada archivo que cambió frente a la **base** del workspace: el commit donde
+su rama se separa de la rama base (`git merge-base <rama base> HEAD`). Los commits nuevos de la rama base no aparecen
+como cambios.
+
+Entra todo lo que cambió en el workspace:
+
+- los commits de su rama;
+- los cambios en el índice (staged) y los que todavía no agregaste;
+- los archivos nuevos que git aún no sigue (untracked), que aparecen como agregados.
+
+Un workspace sin rama base guardada (los creados en M1) usa la rama de `origin/HEAD` o, sin `origin`, la rama actual
+del clon principal.
+
+### Los números en la barra lateral y en la pestaña
+
+- Cada fila de la barra lateral muestra `+A −D`: líneas agregadas (verde) y borradas (rojo), con los miles como
+  "2.3k". Cuentan también las líneas de los archivos nuevos. Se ocultan al pasar el mouse y mientras mantienes ⌘.
+- La pestaña dice "Changes N", con N archivos cambiados. Con 0 dice solo "Changes".
+- Los dos se actualizan solos cuando algo cambia en el worktree: el agente, un terminal o git. Rocky se entera por
+  FSEvents, sin revisar el disco con temporizadores (sección 20).
+- Mientras hay un rebase o un merge a medias, o git tiene el índice bloqueado (`index.lock`), Rocky no lee los cambios.
+  Lo intenta de nuevo con el siguiente cambio en el disco.
+
+### La lista
+
+Arriba hay una fila con la cantidad de archivos ("5 files"), el total `+A −D` y "⋯" (Refresh, Discard All Uncommitted
+Changes…). Debajo, dos grupos:
+
+| Grupo | Qué tiene |
+| --- | --- |
+| UNCOMMITTED · N | Archivos con cambios sin commit, y el botón "Commit…" (sección 18). Un archivo con cambios con commit y sin commit va aquí. |
+| COMMITTED · N | Archivos que cambiaron en commits de esta rama y no tienen nada pendiente. |
+
+Cada fila muestra:
+
+- la letra de estado: A (agregado, verde), M (modificado, ámbar), D (borrado, rojo) o R (renombrado, gris);
+- el nombre y su carpeta;
+- cuántos comentarios tiene el archivo (un globo y el número), si tiene alguno (sección 15);
+- `+a −d`.
+
+Al pasar el mouse, las cifras se cambian por Edit (lápiz) y, en archivos sin commit, Discard (flecha hacia atrás). El
+tooltip muestra la ruta, o "ruta/vieja → ruta/nueva" en un renombre.
+
+- **Un clic** abre la pestaña de diff del archivo (sección 14), o la selecciona tal como la dejaste. **Edit** la abre
+  en modo Edit (sección 16).
+- La fila del archivo que tienes en pantalla se ve seleccionada.
+- **⌥⌘↓ / ⌥⌘↑** (View ▸ Next Changed File / Previous Changed File) abren el archivo siguiente o el anterior de la
+  lista. Están apagados mientras Rocky no tiene los cambios leídos: con el panel en Checks o cerrado, y sin una
+  pestaña de diff en pantalla.
+- Sin cambios, la pestaña dice "No changes yet" y "Changes the agent makes in this workspace show up here."
+- Si git falla, su error aparece en rojo debajo de la primera fila, con × para cerrarlo.
+
+### Descartar cambios
+
+Solo se pueden descartar cambios sin commit. Rocky nunca descarta un commit.
+
+1. Pulsa Discard en la fila, o "Discard Changes…" en el menú "⋯" de la pestaña de diff. Para todos los archivos a la
+   vez: "⋯" ▸ Discard All Uncommitted Changes….
+2. Confirma. Para un archivo: "Discard changes to openapi.ts?", "This cannot be undone." y "Discard Changes". Para
+   varios: "Discard the uncommitted changes of 3 files?" y "Discard All".
+
+Qué hace Rocky con cada archivo:
+
+| Archivo | Qué pasa |
+| --- | --- |
+| Seguido por git | Vuelve a como está en el último commit (`git restore --staged --worktree`). |
+| Nuevo, sin agregar a git (untracked) | Va a la Papelera. No se borra. |
+| Nuevo, solo agregado al índice (staged) | Sale del índice y va a la Papelera. |
+| Renombrado en el índice | El nombre nuevo va a la Papelera y el original vuelve. |
+
+La pestaña de diff del archivo se cierra. Rocky no descarta un archivo que cambió de estado desde que leyó la lista,
+por ejemplo uno nuevo que el agente acaba de agregar a git.
+
+---
+
+## 14. Pestañas de diff
+
+Cada archivo cambiado se abre en su propia pestaña, en la fila de las conversaciones, después de ellas y de las
+pestañas de archivos. Hay una sola pestaña por archivo.
+
+- La pestaña muestra la letra de estado en lugar del ícono. El tooltip es la ruta.
+- Con cambios sin guardar, un punto ocupa el lugar de la × hasta que pasas el mouse (sección 16).
+
+### El encabezado
+
+De izquierda a derecha:
+
+1. La carpeta y el nombre. En un renombre, "ruta/vieja → ruta/nueva".
+2. `+a −d`, y "New file" si el archivo es nuevo.
+3. "Edited" y Save mientras hay cambios sin guardar, o "Reloaded" (sección 16).
+4. El selector **Diff | Edit** (sección 16).
+5. "⋯": Reveal in All Files, Open in Finder, Copy Path y, en archivos sin commit, Discard Changes….
+
+### El diff unificado
+
+- Es de solo lectura. Para escribir, cambia a Edit.
+- Tiene dos columnas de números (la línea vieja y la nueva), la marca `+` o `−` y el código con colores de sintaxis.
+- Las líneas agregadas tienen fondo verde; las borradas, fondo rojo.
+- Cada bloque de cambios (hunk) empieza con su encabezado de git, por ejemplo `@@ -40,7 +40,12 @@`, y trae tres
+  líneas sin cambios alrededor.
+- Las líneas sin cambios entre bloques se pliegan en una fila como "⋯ 18 unchanged lines". Un clic la despliega.
+
+Las líneas largas no se cortan: el diff se desplaza hacia los lados y las columnas de números se quedan fijas. El
+texto de cada línea se puede seleccionar para copiarlo.
+
+### Colores de sintaxis
+
+Rocky colorea el código con Prism 1.30.0, que viene dentro de la app, tanto en el diff como en el editor. Elige el
+lenguaje por la extensión del archivo: TypeScript, JavaScript, TSX, JSX, JSON, Swift, Python, Go, Rust, CSS, HTML y
+XML, YAML, TOML, shell (`.sh`, `.zsh`, `.zshrc`…), Markdown y SQL. Cualquier otro archivo se ve como texto sin colores.
+
+- El texto aparece sin colores un momento, hasta que Prism termina.
+- Quedan sin colores los archivos de solo lectura por su tamaño (sección 17) y los textos de más de un millón de
+  caracteres.
+
+### Casos especiales
+
+| Archivo | La pestaña muestra |
+| --- | --- |
+| Nuevo | Todas sus líneas como agregadas, y "New file" en el encabezado. Si está vacío, "Empty file". |
+| Borrado | Todas sus líneas como borradas. Edit está apagado. |
+| Renombrado | "ruta/vieja → ruta/nueva" y solo las líneas que cambiaron. Sin cambios de contenido: "Renamed without changes". |
+| Binario | "Binary file · 24 KB → 31 KB", sin líneas. Edit está apagado. |
+| Grande: más de 1500 líneas cambiadas o de 1 MB | "Large diff · N lines" y el botón Show, que muestra el diff. |
+| Nuevo, sin agregar a git, de más de 20 MB | "This file is too large to show in Rocky." |
+| Solo cambió el modo | "File mode changed 644 → 755". |
+
+---
+
+## 15. Comentarios en líneas
+
+En el modo Diff de una pestaña puedes comentar líneas y después enviarle todos los comentarios al agente en un solo
+mensaje.
+
+### Agregar un comentario
+
+1. Pasa el mouse sobre una línea: aparece un "+" sobre su número.
+2. Elige las líneas:
+   - un clic en el "+" o en el número comenta esa línea;
+   - arrastrar desde el "+" o desde un número elige un rango;
+   - ⇧-clic en otro número elige un rango desde la línea que marcaste antes.
+3. Se abre un cuadro debajo de las líneas, con "Comment on line 14" o "Comment on lines 14–22". Escribe el comentario.
+4. Pulsa Comment o ⌘Return.
+
+- Un rango queda de un solo lado: líneas nuevas (agregadas y sin cambios) o líneas borradas. En líneas borradas, el
+  cuadro agrega "(removed)".
+- Cancel cierra el cuadro. Esc también, pero si el cuadro tiene texto pregunta antes "Discard this comment?" (Discard o
+  Keep Editing).
+- Mientras escribes un comentario, Esc no detiene el turno del agente.
+
+### Las tarjetas
+
+Cada comentario queda como una tarjeta debajo de su última línea: "You", cuándo lo escribiste ("just now", "5m ago"),
+su estado y el texto. Al pasar el mouse aparecen Edit (lápiz) y Delete (papelera).
+
+- Edit abre el cuadro con el texto. Solo cambia el texto: el estado se queda como estaba.
+- Delete borra el comentario sin preguntar.
+
+| Estado | Qué quiere decir |
+| --- | --- |
+| Pending | Todavía no se envió al agente. Borde ámbar. |
+| Sent | Ya se envió. Lleva un check. |
+| Outdated | Las líneas comentadas cambiaron. El tooltip dice "The commented lines changed". |
+
+### Cómo siguen al código
+
+Cada vez que Rocky vuelve a leer los cambios, revisa los comentarios sobre líneas nuevas que están en Pending o Sent:
+
+1. Si las líneas comentadas siguen en su lugar, el comentario se queda ahí.
+2. Si esas mismas líneas aparecen en otro lugar (por ejemplo, el agente agregó líneas arriba), el comentario se mueve
+   a la coincidencia más cercana.
+3. Si ya no están (alguien las editó, o el archivo ya no existe), el comentario pasa a **Outdated** y guarda su texto.
+
+- Los comentarios Outdated se agrupan arriba del diff del archivo, plegados en "2 outdated comments". Solo se pueden
+  borrar.
+- Los comentarios sobre líneas borradas nunca se mueven ni pasan a Outdated, porque la base no cambia.
+- Rocky lee los cambios mientras el workspace muestra Changes, All files o una pestaña de diff. Si no muestra ninguno,
+  los comentarios se mueven la próxima vez que los lea.
+- Los comentarios quedan guardados: siguen ahí al relanzar Rocky. Quitar el workspace los borra.
+
+### Enviarlos al agente
+
+Mientras hay comentarios en Pending, la pestaña Changes muestra abajo una barra con "2 comments ready" y "Send to
+agent".
+
+1. Pulsa "Send to agent".
+2. Rocky junta todos los comentarios Pending, del más antiguo al más nuevo, en un solo mensaje para la conversación
+   seleccionada del workspace. Si su agente no está corriendo, primero lo arranca.
+3. El workspace muestra esa conversación, y los comentarios pasan a Sent.
+
+El mensaje tiene esta forma, con la rama que está activa en el worktree:
+
+````
+Review comments on rocky/lima:
+
+1. src/openapi.ts, lines 18–25
+```ts
+function operation(route: Route) {
+  …
+```
+Use the route's name as operationId only when it is unique.
+
+Address each comment and say what you changed for each number.
+````
+
+- Mientras el agente está en un turno, el botón está apagado y su tooltip dice "The agent is working". Los
+  comentarios no entran en la cola de mensajes.
+- Si el agente está detenido, el tooltip dice "Restart the agent first".
+- Si el mensaje no llega a salir (por ejemplo, el agente no arranca), los comentarios siguen en Pending.
+
+---
+
+## 16. El editor
+
+Rocky trae su propio editor de código. Aparece en:
+
+- el modo Edit de una pestaña de diff;
+- la pestaña de un archivo del worktree sin cambios (sección 17);
+- las pestañas de código, datos y texto de archivos fuera del worktree, que abres desde el chat. Ahí un Markdown tiene
+  Preview | Edit.
+
+### Diff | Edit y "Unchanged"
+
+- La pestaña de un archivo que está en Changes tiene **Diff | Edit** en el encabezado. Edit está apagado en un archivo
+  borrado o binario.
+- Un archivo sin cambios frente a la base abre solo en Edit, y el encabezado dice "Unchanged" en lugar de Diff | Edit.
+  Su pestaña muestra el ícono del tipo de archivo.
+- Si ese archivo cambia (lo guardas tú, o lo cambia el agente), entra en Changes: la pestaña gana la letra de estado y
+  Diff | Edit, y sigue en Edit.
+
+### Qué muestra
+
+- Los números de línea, y la línea del cursor resaltada.
+- Los colores de sintaxis (sección 14).
+- Barras de cambio a la izquierda de los números, frente a la base: verde en líneas agregadas, ámbar en las
+  modificadas y un triángulo rojo donde se borraron líneas. Siguen lo que escribes. Solo aparecen en archivos del
+  worktree.
+- Las líneas largas no se cortan. No hay autocorrección, comillas tipográficas ni corrector ortográfico.
+
+### Teclas
+
+- **⌘F** abre la barra de búsqueda de macOS. Esc la cierra, sin detener el turno del agente.
+- **⌘L** (File ▸ Go to Line…) abre el campo "Go to line" encima del editor: escribe el número y pulsa Return. Esc
+  vuelve al editor. Funciona también en una pestaña de vista previa (sección 17).
+- Tab inserta la sangría que usa el archivo (espacios o tabuladores). Return mantiene la sangría de la línea.
+- Deshacer y rehacer funcionan dentro de cada pestaña. El historial empieza de cero cada vez que la pestaña vuelve a
+  mostrarse; el texto se queda.
+
+### Guardar
+
+- **⌘S** (File ▸ Save) o el botón Save guardan el archivo que tienes en pantalla.
+- Con cambios sin guardar, el encabezado dice "Edited" junto a Save, y la pestaña muestra un punto en lugar de la ×.
+- Si vuelves a Diff con cambios sin guardar, el diff muestra la versión guardada y el aviso "Unsaved edits · Save to
+  see them here." con Save.
+- Después de guardar, el diff y las barras de cambio se actualizan.
+- ⌘S está apagado mientras Settings o los ajustes de un repositorio están abiertos, porque su Save usa ⌘S.
+
+Rocky guarda el archivo sin cambiar su formato:
+
+- Mantiene los finales de línea: un archivo con CRLF se guarda con CRLF, y uno mixto conserva cada línea como estaba.
+- Nunca agrega ni quita el salto de línea del final. Conserva la marca de orden de bytes (BOM) de UTF-8.
+- Mantiene los permisos (un script sigue siendo ejecutable) y los atributos extendidos.
+- En un enlace simbólico, como los `.env` enlazados de la sección 4, escribe en el archivo destino: el enlace sigue
+  siendo un enlace.
+
+### Cuando el archivo cambia en el disco
+
+Rocky vigila los archivos abiertos del worktree. Cuando el agente, un terminal o git cambian uno:
+
+| Tu pestaña | Qué pasa |
+| --- | --- |
+| Sin cambios sin guardar | Rocky carga la versión nueva, y el encabezado dice "Reloaded" durante 2 segundos. |
+| Con cambios sin guardar | Aparece el aviso "This file changed on disk." con Reload (descarta tus cambios y carga el archivo del disco) y Keep Mine (tu próximo guardado reemplaza el archivo del disco). |
+
+**Rocky nunca reemplaza en silencio la versión del agente.** Antes de escribir, compara la fecha de modificación y el
+contenido del archivo con los que leyó. Si cambiaron y no elegiste Keep Mine, no escribe nada y muestra el aviso.
+
+- Keep Mine vale solo para la versión que viste. Si el archivo vuelve a cambiar, el aviso vuelve.
+- Si el archivo se borra y no tienes cambios sin guardar, la pestaña dice "File not found". Con cambios sin guardar
+  aparece el aviso, y Keep Mine seguido de Save lo vuelve a crear.
+- Mientras el agente está en un turno, el editor muestra, con el nombre del agente, "Claude Code is working in this
+  workspace and may change this file." La × lo cierra en esa pestaña.
+- Queda un caso muy raro: si el agente escribe justo entre esa comparación y la escritura, tu versión queda encima de
+  la suya.
+
+### Cerrar una pestaña o salir con cambios sin guardar
+
+- Al cerrar una pestaña con cambios sin guardar, Rocky pregunta "Save changes to openapi.ts?", con Save, Don’t Save y
+  Cancel.
+- Al salir de Rocky con cambios sin guardar, pregunta antes, aunque la ventana esté cerrada: "Save changes to 3 files
+  before quitting?". Lista los archivos (hasta ocho, y cuenta el resto), con su workspace si son de varios. Los botones
+  son Save All (Return), Cancel (Esc) y Don’t Save (⌘D). Con un solo archivo, el botón dice Save.
+- Save All guarda cada archivo como lo haría ⌘S. Si alguno no se puede guardar (cambió en el disco, o falló la
+  escritura), Rocky no sale y te muestra esa pestaña con su aviso.
+- Rocky no guarda solo. Cerrar la ventana (⌘W) no cierra Rocky ni pierde tus cambios: siguen en sus pestañas.
+
+---
+
+## 17. All files: los archivos del worktree
+
+La pestaña All files muestra el árbol de archivos del worktree. Cualquier archivo se abre desde ahí, con el mismo
+visor y el mismo editor de las pestañas de diff.
+
+### El árbol
+
+- Primero las carpetas y luego los archivos, en el orden de Finder ("file2" antes que "file10").
+- Un archivo que está en Changes lleva su letra (A, M o R). Una carpeta con archivos cambiados lleva un punto. Los
+  archivos borrados no están en el árbol, porque ya no existen en el disco; Changes sí los lista.
+- La fila del archivo que tienes en pantalla se ve seleccionada.
+- Un clic en una carpeta la abre o la cierra. La primera vez solo se ve el primer nivel. Rocky recuerda las carpetas
+  abiertas de cada workspace, también al relanzar. "⋯" ▸ Collapse All Folders las cierra todas.
+- El árbol se actualiza solo cuando algo cambia en el disco. Un archivo nuevo puede tardar cerca de un segundo en
+  aparecer.
+
+Mientras lee, el árbol dice "Reading the files…". Si git falla, su error aparece en lugar del árbol.
+
+Con el teclado, después de un clic en una fila:
+
+| Tecla | Qué hace |
+| --- | --- |
+| ↑ / ↓ | Mueven la selección. |
+| → | Abre la carpeta. Si ya está abierta, baja a su primer elemento. |
+| ← | Cierra la carpeta, o sube a la carpeta que la contiene. |
+| Return | Abre el archivo, como un clic. En una carpeta, la abre o la cierra. |
+
+### Archivos ignorados
+
+- Rocky oculta lo que git ignora: `node_modules`, `dist`, `.env`, `.DS_Store`… Los archivos que empiezan con punto y
+  que git sigue (`.github`, `.gitignore`) se ven como cualquier otro. `.git` nunca aparece.
+- "⋯" ▸ Show Ignored Files muestra los ignorados, atenuados. Rocky recuerda esa opción para cada repositorio.
+- El filtro nunca busca entre los archivos ignorados.
+
+### Filtrar y Go to File (⌘P)
+
+1. Escribe en el campo "Filter files", arriba del árbol. También puedes pulsar ⌘P (File ▸ Go to File…) desde cualquier
+   parte, incluso desde el cuadro de mensaje o un terminal: abre el panel en All files, con el campo listo y su texto
+   seleccionado. ⌘P ocupa el lugar de File ▸ Print, que Rocky no usa.
+2. El árbol se cambia por una lista de los archivos que coinciden: ícono, nombre, carpeta y letra de estado. Las
+   letras que coinciden se ven resaltadas.
+3. ↓ / ↑ recorren los resultados, y Return abre el elegido. Con el campo vacío, ↓ pasa al árbol.
+4. Esc borra el texto, y el árbol vuelve como estaba. Un segundo Esc sale del campo.
+
+Los resultados van en este orden, sin distinguir mayúsculas:
+
+1. El nombre empieza con lo que escribiste.
+2. El nombre lo contiene.
+3. La ruta lo contiene.
+4. Las letras aparecen en orden en el nombre: "srv" encuentra `server.ts`.
+5. Las letras aparecen en orden en la ruta.
+
+Si dos empatan, van en el orden de Finder. Sin resultados, la lista dice "No file matches “srv”". Mientras escribes en
+el filtro, Esc no detiene el turno del agente.
+
+### Pestañas de vista previa
+
+1. Un clic en un archivo (o Return) lo abre en una **pestaña de vista previa**, con el título en cursiva.
+2. El siguiente clic en otro archivo la reemplaza. Así, recorrer el árbol no llena la fila de pestañas.
+3. Para quedarte con ella: doble clic en el archivo, doble clic en la pestaña, o tu primer cambio en el texto.
+
+- La vista previa no toma el teclado, así que las flechas siguen moviéndose por el árbol.
+- Un archivo en Changes abre su pestaña de diff en modo Diff. Cualquier otro abre en Edit, con "Unchanged"
+  (sección 16).
+- La pestaña Changes y las etiquetas del chat abren pestañas normales, nunca de vista previa.
+
+### Reveal in All Files
+
+El menú "⋯" de la pestaña de un archivo del worktree tiene "Reveal in All Files" (salvo si el archivo está borrado).
+Abre el panel en All files, borra el filtro, abre las carpetas del archivo y lo muestra en el árbol. En el árbol,
+"⋯" ▸ Reveal Active File hace lo mismo con la pestaña que tienes en pantalla. Sin una, está apagado: "No worktree file
+is showing".
+
+### Archivos grandes y binarios
+
+Rocky mira el tamaño del archivo antes de leerlo:
+
+| Archivo | La pestaña muestra |
+| --- | --- |
+| Texto de hasta 2 MB | El editor. |
+| Texto de 2 a 20 MB | El editor en solo lectura y sin colores, con el aviso "Large file · 3.4 MB · read-only in Rocky". |
+| Más de 20 MB | No lo carga: "Too large to open in Rocky · 48 MB", con Open in Finder y un botón "Open in …" por cada editor instalado (Antigravity, Cursor, VS Code o Zed), que abre ese archivo. |
+| Imagen o PDF | La imagen, o el PDF en la vista rápida de macOS. |
+| Otro binario | "Binary file · 112 KB" y Open in Finder. |
+
+Binario quiere decir que tiene un byte NUL en sus primeros 8 KB. Un archivo de más de 20 MB es "Too large", sea texto
+o no. Las pestañas que abres desde el chat siguen las mismas reglas.
+
+---
+
+## 18. Hacer commit desde Rocky
+
+Rocky puede hacer el commit él mismo, sin el agente. Sirve, por ejemplo, para tus propios cambios hechos en el editor.
+El "Commit and push" del panel (sección 11), en cambio, se lo pide al agente.
+
+1. En la pestaña Changes, pulsa "Commit…" en el grupo UNCOMMITTED.
+2. Se abre la hoja "Commit changes", con los archivos sin commit (solo para leer).
+3. Escribe el asunto en "Subject". Viene con el título del workspace, si ya tiene uno. Un contador cuenta hasta 72
+   caracteres y se pone ámbar si te pasas; el commit se hace igual.
+4. Si quieres, escribe una descripción en "Description (optional)".
+5. Pulsa Commit o ⌘Return. Commit está apagado mientras el asunto está vacío. Cancel o Esc cierran la hoja.
+
+Rocky corre `git add -A` y después `git commit`, en el worktree y con las variables del workspace:
+
+- `git add -A` toma todo, también un archivo que el agente agregue mientras la hoja está abierta.
+- **Los hooks de git siempre corren**: Rocky nunca usa `--no-verify`. Lo que escriben aparece en la hoja mientras
+  corren, bajo "Running git commit…". Mientras git corre, la hoja no se puede cerrar.
+- Si el commit sale bien, la hoja se cierra, aparece el aviso "Committed" y Changes se actualiza.
+- Si falla, la hoja queda abierta con el error (por ejemplo "git commit exited 1") y lo que escribieron git y los
+  hooks. Tu mensaje se queda: corrige el problema y pulsa Commit otra vez.
+- Con un rebase o un merge a medias en el worktree, Rocky no hace el commit ni agrega nada: "A rebase or a merge is in
+  progress in this worktree. Finish it first."
+
+El commit usa la identidad de git que tengas configurada. M4 traerá una identidad por cuenta.
+
+---
+
+## 19. Atajos de teclado
 
 | Atajo | Qué hace | Dónde |
 | --- | --- | --- |
 | ⌘, | Abre Settings | Menú Rocky |
 | ⌘N | Nuevo workspace | Menú File |
+| ⌘S | Guarda el archivo en pantalla (Save) | Menú File |
+| ⌘P | Go to File: abre el filtro de All files | Menú File |
+| ⌘L | Go to Line: va a una línea del editor | Menú File |
 | ⌘K | Busca workspaces | Menú View |
 | ⌘1 … ⌘9 | Selecciona el workspace visible número N | Menú View |
 | Mantener ⌘ | Muestra el atajo de cada fila | Barra lateral |
 | ↑ / ↓ | Mueven la selección | Barra lateral, con la lista enfocada |
 | ⌃⌘S | Muestra u oculta la barra lateral | Menú View |
-| ⌥⌘B | Muestra u oculta el panel de GitHub | Menú View |
+| ⌥⌘B | Muestra u oculta el panel derecho | Menú View |
+| ⌘⇧C | Muestra el panel derecho en Changes, o lo oculta si Changes ya se ve | Menú View |
+| ⌥⌘↓ / ⌥⌘↑ | Archivo cambiado siguiente / anterior | Menú View |
 | ⌘+ (o ⌘=) | Acerca (zoom) | Menú View |
 | ⌘- | Aleja | Menú View |
 | ⌘0 | Tamaño real (100 %) | Menú View |
@@ -769,22 +1216,35 @@ use the new account."
 | ⌘S | Guarda | Ajustes del repositorio |
 | Return | Añade la ruta escrita | Ajustes del repositorio, "Path or glob" |
 | Esc | Cierra sin guardar | Settings y ajustes del repositorio |
-| ⌘-clic en el número del PR | Abre el PR en GitHub | Panel de GitHub |
+| ⌘-clic en el número del PR | Abre el PR en GitHub | Panel derecho |
+| ↑ / ↓, →, ←, Return | Mover, abrir carpeta, cerrarla o subir, abrir archivo | Árbol de All files |
+| ↑ / ↓, Return, Esc | Recorrer resultados, abrir, borrar el texto (un segundo Esc sale) | Filtro de All files |
+| ⌘F | Busca en el archivo | Editor |
+| Tab | Inserta la sangría del archivo | Editor |
+| ⌘Return | Guarda el comentario | Cuadro de comentario |
+| Esc | Cierra el cuadro (pregunta antes si tiene texto) | Cuadro de comentario |
+| ⌘Return | Hace el commit | Hoja de commit |
+| Esc | Cancela | Hoja de commit |
+| Return, Esc, ⌘D | Save All, Cancel, Don’t Save | Aviso de cambios sin guardar al salir |
 
 ---
 
-## 14. Energía
+## 20. Energía
 
 Rocky está hecho para gastar poca batería, incluso con muchos workspaces abiertos.
 
-- **Nada consulta nada en reposo.** Rocky no revisa el disco con temporizadores. Git corre solo después de un evento
-  (seleccionar un workspace, volver a la ventana, una acción tuya, el fin de un turno). La vigilancia de archivos
-  con FSEvents llega con M3.
+- **Nada consulta nada en reposo.** Rocky no revisa el disco con temporizadores. Cada workspace tiene un flujo de
+  FSEvents sobre su worktree y su carpeta de git (sin `node_modules` ni `.git/objects`), que no lanza procesos. Git
+  corre solo después de un evento: un cambio en el disco (Rocky los agrupa cada medio segundo), seleccionar un
+  workspace, volver a la ventana, una acción tuya o el fin de un turno.
+- **Git calcula solo lo que se ve.** Tras un cambio, Rocky cuenta las líneas del workspace para la barra lateral.
+  El diff completo es solo para el workspace seleccionado, mientras muestra Changes, All files o una pestaña de diff.
+  `git ls-files` corre solo mientras se ve All files, y el árbol lee solo las carpetas abiertas.
 - **Las animaciones se pausan solo cuando la ventana no se ve** (minimizada, oculta, tapada o en otro Space). Con
   Rocky visible detrás de otra app siguen, para que un agente que trabaja no parezca congelado. El círculo de carga
   usa Core Animation; el texto brillante de "Working" es el único costo visible (hasta 30 cuadros por segundo).
-- **GitHub no lanza procesos.** Cada refresco es una petición `URLSession` a GitHub, y dos cuando el panel muestra
-  los comentarios de un PR abierto. `gh` solo corre para leer las cuentas y los tokens, una vez por sesión.
+- **GitHub no lanza procesos.** Cada refresco es una petición `URLSession` a GitHub, y dos mientras la pestaña Checks
+  muestra los comentarios de un PR abierto. `gh` solo corre para leer las cuentas y los tokens, una vez por sesión.
 - **Los agentes arrancan cuando hacen falta:** el de la conversación en pantalla, y los demás al abrirlos.
 - **Las actualizaciones de agentes** se consultan una vez al día, con una petición HTTPS a npm.
 
@@ -800,7 +1260,7 @@ pueden faltar. El objetivo en reposo es menos de 5 procesos por minuto.
 
 ---
 
-## 15. Problemas comunes y qué hacer
+## 21. Problemas comunes y qué hacer
 
 ### "PR info unavailable"
 
@@ -859,6 +1319,63 @@ sin volver a correr el script.
 
 Falta el certificado "Rocky Local" (sección 2).
 
+### "This file changed on disk."
+
+El archivo cambió en el disco (el agente, un terminal o git) mientras tenías cambios sin guardar. Rocky no escribió
+nada.
+
+1. Si quieres la versión del disco, pulsa Reload. Tus cambios se descartan.
+2. Si quieres la tuya, pulsa Keep Mine y guarda con ⌘S. Tu versión reemplaza la del disco.
+
+Si el agente sigue trabajando en ese archivo, espera a que termine el turno antes de guardar.
+
+### "Large file · … · read-only in Rocky" o "Too large to open in Rocky"
+
+El archivo pasa de 2 MB (Rocky lo muestra sin dejarte editarlo) o de 20 MB (Rocky no lo carga). Para editarlo, usa
+otro editor: en una pestaña del worktree, "⋯" ▸ Open in Finder; pasados los 20 MB, también los botones "Open in …" de
+la pestaña.
+
+### Un archivo de texto aparece como "Binary file"
+
+Rocky solo lee texto en UTF-8. Un archivo en otra codificación (por ejemplo, Latin 1) aparece como "Binary file", con
+Open in Finder. Ábrelo en otro editor.
+
+### El commit falla por un hook
+
+La hoja de commit sigue abierta con el error, por ejemplo "git commit exited 1", y lo que escribió el hook. Tu mensaje
+se conserva.
+
+1. Lee la salida del hook en la hoja.
+2. Corrige lo que pide, en el editor o en un terminal.
+3. Pulsa Commit otra vez. Rocky nunca salta los hooks.
+
+### "A rebase or a merge is in progress in this worktree. Finish it first."
+
+Hay un rebase o un merge a medias en el worktree, y Rocky no hace commits ahí. Mientras dure, Changes tampoco se
+actualiza.
+
+1. Termínalo o cancélalo en un terminal (`git rebase --continue` o `git rebase --abort`; `git merge --continue` o
+   `git merge --abort`), o pídeselo al agente.
+2. Vuelve a abrir la hoja de commit.
+
+### Un error de git en la pestaña Changes
+
+Git falló al leer los cambios o al descartar un archivo; por ejemplo, un descarte mientras otro `git` tenía el índice
+bloqueado. Sus últimas líneas aparecen en rojo en la pestaña Changes.
+
+1. Espera a que termine el otro proceso (un `git` del agente o de un terminal).
+2. Cierra el error con × y prueba otra vez, o usa "⋯" ▸ Refresh.
+
+### Un `.env` enlazado no se recarga en el editor
+
+Rocky vigila el worktree, no el clon principal. Si cambias un `.env` enlazado desde el clon principal, su pestaña no se
+entera. Cierra la pestaña y ábrela otra vez.
+
+### Una carpeta ignorada abierta no se actualiza
+
+Con Show Ignored Files, Rocky no recibe avisos de cambios dentro de `node_modules`. Ciérrala y ábrela: Rocky la vuelve a
+leer cada vez que la abres.
+
 ### Dónde están los logs
 
 - `~/Library/Logs/Rocky`: lo que cada agente escribe en stderr. Settings → Data → Logs lo abre en Finder.
@@ -867,12 +1384,12 @@ Falta el certificado "Rocky Local" (sección 2).
 
 ---
 
-## 16. Próximamente
+## 22. Próximamente
 
 - **M2.8, conversaciones:** "+" abre una conversación enseguida con el último agente usado en el repositorio, y el
   agente se elige desde el menú de modelos.
-- **M3, revisar y editar:** una pestaña Changes en el panel derecho, el diff de cada archivo, comentarios en líneas
-  para enviar al agente, un editor dentro de Rocky y commits desde Rocky.
+- **M4, cuentas y energía:** la identidad de git y la llave SSH de cada cuenta, y la medición de energía de Rocky
+  frente a Conductor.
 
 ---
 
