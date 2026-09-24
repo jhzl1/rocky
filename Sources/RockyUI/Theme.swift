@@ -57,7 +57,9 @@ enum Theme {
     static let danger = Color(red: 0xF0 / 255, green: 0x87 / 255, blue: 0x6A / 255)
     /// A running process's dot.
     static let success = Color(red: 0x7C / 255, green: 0xC0 / 255, blue: 0x8A / 255)
-    /// Repository monograms (SB-03), picked by `RepoMonogram.paletteIndex`.
+    /// A merged pull request: the header's merged group, Archive and the merged dot (HDR-01, #B48CF2).
+    static let merged = Color(red: 0xB4 / 255, green: 0x8C / 255, blue: 0xF2 / 255)
+    /// Repository monograms (SB-03): each repository's stored `colorIndex`. `RepoMonogram.paletteCount` is its size.
     static let repoPalette: [Color] = [
         Color(red: 0x4C / 255, green: 0x7B / 255, blue: 0xD9 / 255),
         Color(red: 0x8E / 255, green: 0x6B / 255, blue: 0xE0 / 255),

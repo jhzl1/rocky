@@ -14,6 +14,8 @@ struct ChatView: View {
     @State private var keyMonitor: Any?
     /// `isActive` for the key monitor: its closure keeps the view as it was when it appeared.
     @State private var liveActive = LiveFlag()
+    /// Bumped once after the conversation is laid out (`selectionRefresh`).
+    @State private var selectionRefresh = 0
     @Environment(\.openFile) private var openFile
     @Environment(MenuPresenter.self) private var menus: MenuPresenter?
     /// The sidebar list has the keyboard: a workspace chosen with ↑/↓ must not take it into its message box, or the
@@ -82,6 +84,11 @@ struct ChatView: View {
                         Color.clear.frame(height: 1).id(Self.bottomId)
                     }
                     .font(.rocky(14))
+                    // Textual's selection overlays take their hit areas when SwiftUI updates them. A conversation
+                    // opened while the window was already key kept stale ones: nothing could be selected until the
+                    // window lost and regained focus, which updates every view (user report, 2026-09-24). One
+                    // environment change once the rows are laid out does the same.
+                    .environment(\.selectionRefresh, selectionRefresh)
                     .padding(.horizontal, Self.columnPadding)
                     .padding(.vertical, 20)
                     .frame(maxWidth: Zoom.shared(Self.readingWidth))
@@ -101,6 +108,10 @@ struct ChatView: View {
         }
         .onAppear {
             chat.isVisible = true
+            Task {
+                try? await Task.sleep(for: .milliseconds(150))
+                selectionRefresh += 1
+            }
             liveActive.value = isActive
             keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { handleKey($0) }
             if !sidebarHasKeyboardFocus { DispatchQueue.main.async { composerText.focus() } }
@@ -275,9 +286,10 @@ struct ChatView: View {
     private func handleKey(_ event: NSEvent) -> NSEvent? {
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         guard liveActive.value, let window = event.window, window.isKeyWindow else { return event }
-        // An open menu, the settings and sheets (a permission request, an alert) keep Esc for closing themselves.
+        // An open menu, the settings, a repository's settings and sheets (a permission request, an alert) keep Esc
+        // for closing themselves.
         if event.keyCode == 53, modifiers.isEmpty, chat.state == .running, menus?.open == nil,
-           !SettingsPresenter.shared.isPresented, window.attachedSheet == nil {
+           !SettingsPresenter.shared.isPresented, !RepoSettingsPresenter.shared.isPresented, window.attachedSheet == nil {
             Task { await chat.cancel() }
             return nil
         }
@@ -393,6 +405,8 @@ struct ChatItemRow: View, Equatable {
             ThoughtRow(item: item)
         case .tool:
             ToolCallRow(item: item, isLive: isLive)
+        case .interrupted:
+            InterruptedRow(text: item.text)
         case .error:
             Label(item.text, systemImage: "exclamationmark.triangle")
                 .foregroundStyle(.red)
@@ -455,4 +469,9 @@ struct PermissionSheet: View {
         .padding(20)
         .frame(minWidth: 420)
     }
+}
+
+extension EnvironmentValues {
+    /// Changes once after a conversation appears, so Textual's selection overlays update (`ChatView`).
+    @Entry var selectionRefresh = 0
 }

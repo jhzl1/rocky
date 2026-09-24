@@ -10,7 +10,8 @@ import SwiftUI
 public final class Zoom {
     public static let shared = Zoom()
 
-    public static let steps: [Double] = [0.8, 0.9, 1, 1.1, 1.25, 1.4, 1.6, 1.8]
+    /// 80 % to 180 % in steps of 5 (user request, 2026-09-24; it was 80, 90, 100, 110, 125, 140, 160, 180).
+    public static let steps: [Double] = stride(from: 80, through: 180, by: 5).map { Double($0) / 100 }
     private static let key = "zoom"
 
     public private(set) var scale: Double {

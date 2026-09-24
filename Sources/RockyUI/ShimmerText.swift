@@ -3,12 +3,12 @@ import SwiftUI
 /// Live activity's label (MOT-03): the text in `textSecondary` with a light band, peaking at `textPrimary`, that
 /// sweeps left to right in 1.6 s and rests 0.5 s, instead of a spinner. When it stops being live it settles to
 /// `settledColor` in 150 ms, with the same text and font, so nothing moves. At most 30 frames a second, paused while
-/// the window is not active, static `textSecondary` with Reduce Motion.
+/// the window cannot be seen (`windowIsVisible`), static `textSecondary` with Reduce Motion.
 struct ShimmerText: View {
     let text: String
     var isLive = true
     var settledColor: Color = Theme.textPrimary
-    @Environment(\.appearsActive) private var appearsActive
+    @Environment(\.windowIsVisible) private var windowIsVisible
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private static let sweep = 1.6
@@ -27,7 +27,7 @@ struct ShimmerText: View {
             .foregroundStyle(isLive ? Theme.textSecondary : settledColor)
             .overlay {
                 if isLive, !reduceMotion {
-                    TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !appearsActive)) { context in
+                    TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !windowIsVisible)) { context in
                         Text(text)
                             .foregroundStyle(Theme.textPrimary)
                             .mask(Self.mask(at: context.date))

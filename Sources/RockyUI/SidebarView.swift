@@ -19,7 +19,6 @@ struct SidebarView: View {
     /// Today's folder picker (`RootView.addRepository()`).
     let onAddRepository: () -> Void
 
-    @State private var settingsRepo: Repo?
     @State private var workspaceToRemove: Workspace?
     @State private var query = ""
     @FocusState private var focus: Focus?
@@ -90,9 +89,6 @@ struct SidebarView: View {
             hasKeyboardFocus = false
             // The search goes away with the sidebar, so ⌘1…⌘9 keep the order without it.
             publish(Self.order(of: repoSections(matching: "")))
-        }
-        .sheet(item: $settingsRepo) { repo in
-            RepoSettingsView(model: model, repo: repo)
         }
         .confirmationDialog(
             "Remove \(workspaceToRemove?.name ?? "")?",
@@ -240,7 +236,8 @@ struct SidebarView: View {
                 withAnimation(Theme.Motion.state) { setFolded(repo.id, !foldedRepoIds.contains(repo.id)) }
             },
             onNewWorkspace: { Task { await model.createWorkspace(repoId: repo.id) } },
-            onSettings: { settingsRepo = repo },
+            // A panel over the window, like Settings (`RepoSettingsModal` in `RootView`).
+            onSettings: { RepoSettingsPresenter.shared.show(repoId: repo.id) },
             onRemove: { Task { await model.removeRepo(id: repo.id) } }
         )
     }

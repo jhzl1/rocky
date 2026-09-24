@@ -4,15 +4,15 @@ import SwiftUI
 /// Rocky's spinner (MOT-01): a faint full ring with a quarter arc that turns once every 0.9 s, smoothly and without
 /// end. Core Animation turns it in the render server, so Rocky does no work per frame (spec Section 1, energy): the
 /// Material-style arc it replaced ran a `TimelineView(.animation)` body every display frame, once per spinner.
-/// Frozen at its angle while the window is not active, static with Reduce Motion.
+/// Frozen at its angle while the window cannot be seen (`windowIsVisible`), static with Reduce Motion.
 struct CircularProgress: View {
     var size: CGFloat = 14
     var tint: Color = Theme.progressTint
-    @Environment(\.appearsActive) private var appearsActive
+    @Environment(\.windowIsVisible) private var windowIsVisible
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        SpinnerRepresentable(color: NSColor(tint), turns: !reduceMotion, paused: !appearsActive)
+        SpinnerRepresentable(color: NSColor(tint), turns: !reduceMotion, paused: !windowIsVisible)
             .frame(width: Zoom.shared(size), height: Zoom.shared(size))
             .accessibilityElement()
             .accessibilityLabel("Loading")

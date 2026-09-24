@@ -10,21 +10,23 @@ struct WorkspaceDetailView: View {
     @AppStorage("terminalPanelCollapsed") private var panelCollapsed = false
     /// The terminal panel's height while open, bar included (TERM-01), the same for every workspace.
     @AppStorage("terminalPanelHeight") private var panelHeight = 220.0
+    /// PNL-01: the right panel, open by default, and its width; both global and kept across launches.
+    @AppStorage(RightPanelStorage.openKey) private var rightPanelOpen = true
+    @AppStorage(RightPanelStorage.widthKey) private var rightPanelWidth = RightPanelStorage.defaultWidth
     @Environment(\.titleBarLeadingInset) private var titleBarLeadingInset
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(ToastPresenter.self) private var toasts: ToastPresenter?
 
     /// TERM-01: the open panel is never shorter than this, bar included.
     private static let minPanelHeight = 140.0
     /// TERM-01: what the chat keeps however tall the panel is dragged.
     private static let minChatHeight = 200.0
+    /// What the conversation keeps however wide the right panel is dragged, until the panel is at its 280.
+    private static let minConversationWidth = 360.0
 
     /// Read from the model, not kept here: a chat the model stops (for example after a settings change) must go away.
     private var chat: ChatSessionModel? {
         model.existingChat(workspaceId: workspace.id)
-    }
-
-    private var run: PTYSession? {
-        model.existingProcesses(for: workspace.id)?.run
     }
 
     /// Open: something ran in the panel and it is not folded. Otherwise the panel is only its bar (TERM-04, TERM-05).
@@ -34,10 +36,27 @@ struct WorkspaceDetailView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            topBar
-            ConversationTabs(model: model, workspace: workspace)
-            split
+        // LAY-01: the conversation column (top bar, tabs, conversation, terminal panel), then the right panel at full
+        // height, whose header shares the title bar row with the top bar (PNL-01). The divider and the panel come and
+        // go together (PNL-02, ⌥⌘B), and the conversation takes the width.
+        GeometryReader { proxy in
+            let range = rightPanelRange(available: proxy.size.width)
+            HStack(spacing: 0) {
+                VStack(spacing: 0) {
+                    topBar
+                    ConversationTabs(model: model, workspace: workspace)
+                    split
+                }
+                if rightPanelOpen {
+                    ColumnDivider(width: $rightPanelWidth, range: range)
+                        // Its handle reaches 4 points into the panel, which would otherwise be drawn over it.
+                        .zIndex(1)
+                    RightPanel(model: model, workspace: workspace)
+                        .frame(width: CGFloat(min(max(rightPanelWidth, range.lowerBound), range.upperBound)))
+                }
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+            .animation(reduceMotion ? nil : Theme.Motion.state, value: rightPanelOpen)
         }
         .task {
             await model.showConversations(workspace: workspace)
@@ -48,9 +67,11 @@ struct WorkspaceDetailView: View {
         })
     }
 
-    /// One row as tall as the title bar (TB-01): repository / branch, then Open and Run. It replaces the two-line
-    /// header: the path moved into the Open menu, the workspace name into the sidebar row's tooltip. The ports are
-    /// not shown anywhere (user decision, 2026-09-23: they read as noise); scripts and terminals still get $PORT.
+    /// One row as tall as the title bar (TB-01), over the conversation column only (LAY-01): repository / branch, then
+    /// Open, then the panel toggle (PNL-02) once the right panel is closed; while it is open, the toggle is the panel
+    /// header's, at the same spot. Run moved to the terminal panel's bar (LAY-01). It replaces the two-line header: the
+    /// path moved into the Open menu, the workspace name into the sidebar row's tooltip. The ports are not shown
+    /// anywhere (user decision, 2026-09-23: they read as noise); scripts and terminals still get $PORT.
     private var topBar: some View {
         HStack(spacing: 10) {
             if let repo = model.repo(id: workspace.repoId) {
@@ -72,34 +93,50 @@ struct WorkspaceDetailView: View {
             }
             Spacer(minLength: 0)
             openMenu
-            runButton
+            if !rightPanelOpen {
+                RightPanelToggle()
+            }
         }
         // With the sidebar hidden, the inset already holds the 16-point margin before the window buttons (WIN-02).
         .padding(.leading, titleBarLeadingInset > 0 ? titleBarLeadingInset : 16)
         .padding(.trailing, 12)
         .frame(maxWidth: .infinity)
-        // H is AppKit's and does not follow the zoom; at the largest zooms Run outgrows it, and the row grows with it
-        // rather than clip it.
-        .frame(minHeight: WindowMetrics.titleBarHeight)
+        // The panel header's height too, so the two tab rows under them line up at every zoom.
+        .frame(height: WindowMetrics.titleRowHeight)
         // The row is where the title bar was: drag the window from its empty space.
         .windowDragBackground()
     }
 
-    /// TB-03: the worktree path as the header, then Open in Finder, New Terminal and Copy Path.
+    /// TB-03: the worktree path as the header, then Open in Finder, the installed editors (OPN-01), New Terminal and
+    /// Copy Path. The menu's content is built each time it opens, so the editors are looked up then, never at rest.
     private var openMenu: some View {
         MenuButton(id: "open-\(workspace.id)", placement: .belowTrailing, width: 280) { isOpen in
             MenuIconButtonLabel(title: "Open", systemImage: "arrow.up.forward.square", isOpen: isOpen)
                 .font(.rocky(14))
         } content: {
+            let editors = ExternalEditor.installed { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }
             OpenMenuPathHeader(path: workspace.path)
             MenuDivider()
             MenuItem(title: "Open in Finder", icon: .symbol("folder")) {
                 _ = NSWorkspace.shared.open(URL(fileURLWithPath: workspace.path, isDirectory: true))
             }
+            // OPN-01: one item per installed editor, in alphabetical order, with the app's own icon; none installed,
+            // no group and no divider.
+            ForEach(Array(editors.enumerated()), id: \.offset) { _, entry in
+                MenuItem(title: "Open in \(entry.editor.displayName)", icon: .image(NSWorkspace.shared.icon(forFile: entry.app.path))) {
+                    openWorktree(in: entry.editor, app: entry.app)
+                }
+            }
+            if !editors.isEmpty {
+                MenuDivider()
+            }
             MenuItem(title: "New Terminal", icon: .symbol("terminal")) {
-                // TERM-07: a new "Terminal N", selected, with the panel unfolded.
-                panelSelection = model.openTerminal(workspaceId: workspace.id)?.id
-                panelCollapsed = false
+                // TERM-07: a new "Terminal N", selected, with the panel unfolded. The first one may wait for the
+                // repository account's token (ENV-01).
+                Task {
+                    panelSelection = await model.openTerminal(workspaceId: workspace.id)?.id
+                    panelCollapsed = false
+                }
             }
             MenuItem(title: "Copy Path", icon: .symbol("doc.on.doc")) {
                 NSPasteboard.general.clearContents()
@@ -107,43 +144,19 @@ struct WorkspaceDetailView: View {
             }
         }
         .fixedSize()
-        .help("Open in Finder or Terminal")
+        .help("Open in Finder, an editor or Terminal")
     }
 
-    /// TB-04: Run starts the run script, selects its tab and unfolds the panel (TERM-07); Stop stops it.
-    @ViewBuilder
-    private var runButton: some View {
-        if let run, run.state.isRunning {
-            Button {
-                Task { await model.stopRun(workspaceId: workspace.id) }
-            } label: {
-                runLabel("Stop", systemImage: "stop.fill")
-            }
-            .buttonStyle(RockyFilledButtonStyle())
-            .help("Stop the run script")
-        } else {
-            Button {
-                Task {
-                    await model.startRun(workspaceId: workspace.id)
-                    // Nothing started (no run script: the model shows why), so there is nothing to show.
-                    guard let started = run else { return }
-                    panelSelection = started.id
-                    panelCollapsed = false
-                }
-            } label: {
-                runLabel("Run", systemImage: "play.fill")
-            }
-            .buttonStyle(RockyFilledButtonStyle())
-            .help("Run the workspace's run script")
-        }
-    }
-
-    private func runLabel(_ title: String, systemImage: String) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: systemImage)
-                .font(.rocky(11))
-            Text(title)
-                .font(.rocky(12.5, weight: .medium))
+    /// OPN-01: the worktree folder in `editor`, opened by the app itself, so Rocky spawns nothing and no CLI needs to be
+    /// on the PATH. A failure shows in the toast.
+    private func openWorktree(in editor: ExternalEditor, app: URL) {
+        let toasts = self.toasts
+        let worktree = URL(fileURLWithPath: workspace.path, isDirectory: true)
+        let name = editor.displayName
+        NSWorkspace.shared.open([worktree], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration()) { @Sendable _, error in
+            guard let error else { return }
+            let message = "Couldn’t open in \(name): \(error.localizedDescription)"
+            Task { @MainActor in toasts?.show(message) }
         }
     }
 
@@ -175,6 +188,14 @@ struct WorkspaceDetailView: View {
             // the height without changing this value.
             .animation(reduceMotion ? nil : Theme.Motion.state, value: isPanelOpen)
         }
+    }
+
+    /// PNL-01's widths for the right panel in a row `available` points wide: 280 to 480, less when the conversation
+    /// would get under `minConversationWidth`, never under 280. Like the terminal panel's heights, they do not zoom.
+    private func rightPanelRange(available: CGFloat) -> ClosedRange<Double> {
+        let widths = RightPanelStorage.widthRange
+        let upper = min(widths.upperBound, Double(available) - 1 - Self.minConversationWidth)
+        return widths.lowerBound...max(widths.lowerBound, upper)
     }
 
     /// The open panel's heights in a split `available` points tall: at least `minPanelHeight`, and at most what

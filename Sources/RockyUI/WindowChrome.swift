@@ -1,3 +1,5 @@
+import AppKit
+import RockyKit
 import SwiftUI
 
 // The window's title bar is transparent and as tall as `WindowMetrics.titleBarHeight` (an empty compact toolbar,
@@ -18,15 +20,69 @@ enum WindowMetrics {
     /// The sidebar's footer (SB-06) and the terminal panel's bar (TERM-02), at 100 % zoom: one height, so their top
     /// lines meet across the window (user feedback, 2026-09-23; the spec had 44 and 32).
     static let bottomBarHeight: CGFloat = 36
+
+    /// The title bar row at the current zoom: H, or a 28-point icon button's height once the zoom makes that taller
+    /// (from 140 %), so the row grows with its buttons instead of clipping them (TOK-02). The sidebar's top row, the
+    /// workspace's top bar and the right panel's header share it, so the tab rows under the last two line up (LAY-01).
+    @MainActor static var titleRowHeight: CGFloat {
+        max(titleBarHeight, Zoom.shared(28))
+    }
+}
+
+/// Where the sidebar's shown state is kept: `RootView`'s buttons and View ▸ Show Sidebar (⌃⌘S) share it.
+public enum SidebarStorage {
+    public static let visibleKey = "sidebarVisible"
 }
 
 extension View {
-    /// Lets the user drag the window from this view's empty background, as they would from a title bar.
+    /// Lets the user drag the window from this view's empty background, as they would from a title bar, and
+    /// double-click it as a title bar (the user's "Double-click a window's title bar to" setting).
     func windowDragBackground() -> some View {
-        background {
-            Color.clear
-                .contentShape(Rectangle())
-                .gesture(WindowDragGesture())
+        background { WindowDragArea() }
+    }
+}
+
+/// `windowDragBackground`'s view. SwiftUI's `WindowDragGesture` zoomed the window on any second click: a click on a
+/// panel toggle folds its panel, the toggle moves away, and the second click of a double-click landed here (user
+/// report, 2026-09-23). This view counts a double-click only when it also got the first click
+/// (`TitleBarDoubleClick.isDoubleClick`); any other click drags the window.
+private struct WindowDragArea: NSViewRepresentable {
+    func makeNSView(context: Context) -> DragView {
+        DragView()
+    }
+
+    func updateNSView(_ view: DragView, context: Context) {}
+
+    final class DragView: NSView {
+        /// When this view last got a mouse-down, in `NSEvent.timestamp`'s clock; nil after a double-click, so a third
+        /// click starts over.
+        private var lastMouseDown: TimeInterval?
+
+        /// The view moves the window itself (`performDrag`), so AppKit must not.
+        override var mouseDownCanMoveWindow: Bool { false }
+
+        /// A title bar drags even while the window is in the background.
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+        override func mouseDown(with event: NSEvent) {
+            let isDoubleClick = TitleBarDoubleClick.isDoubleClick(
+                clickCount: event.clickCount,
+                timestamp: event.timestamp,
+                previousMouseDown: lastMouseDown,
+                interval: NSEvent.doubleClickInterval
+            )
+            guard isDoubleClick else {
+                lastMouseDown = event.timestamp
+                window?.performDrag(with: event)
+                return
+            }
+            lastMouseDown = nil
+            let setting = UserDefaults.standard.string(forKey: TitleBarDoubleClick.settingKey)
+            switch TitleBarDoubleClick.action(setting: setting) {
+            case .zoom: window?.performZoom(nil)
+            case .minimize: window?.performMiniaturize(nil)
+            case .none: break
+            }
         }
     }
 }
@@ -43,7 +99,7 @@ struct SidebarTopBar: View {
     /// H, the title bar's height, which does not follow the zoom (WIN-01). From 140 % zoom a 28-point icon button
     /// outgrows it, and the row grows with the button instead of letting it spill into the search field (TOK-02).
     static var height: CGFloat {
-        max(WindowMetrics.titleBarHeight, Zoom.shared(28))
+        WindowMetrics.titleRowHeight
     }
 
     var body: some View {
@@ -51,7 +107,7 @@ struct SidebarTopBar: View {
             Button("Hide sidebar", systemImage: "sidebar.left", action: onToggleSidebar)
                 .buttonStyle(RockyIconButtonStyle())
                 .font(.rocky(14))
-                .help("Hide sidebar")
+                .help(PanelToggleText.sidebarTooltip(isVisible: true))
             Spacer(minLength: 0)
         }
         // SB-01: 6 points between the window buttons and Hide sidebar.

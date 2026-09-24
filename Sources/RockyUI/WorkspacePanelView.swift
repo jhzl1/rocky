@@ -1,9 +1,9 @@
 import RockyKit
 import SwiftUI
 
-/// The bottom panel of a workspace: one tab per script that ran (Setup, Run, Archive) and per terminal. It folds to
-/// its bar (⌘J) without stopping anything; choosing a tab or opening a terminal unfolds it. `WorkspaceDetailView`
-/// sets its height and draws the line above it (`PanelDivider`).
+/// The bottom panel of a workspace: Run, then one tab per script that ran (Setup, Run, Archive) and per terminal. It
+/// folds to its bar (⌘J) without stopping anything; choosing a tab, opening a terminal or Run unfolds it.
+/// `WorkspaceDetailView` sets its height and draws the line above it (`PanelDivider`).
 struct WorkspacePanelView: View {
     let model: AppModel
     let workspace: Workspace
@@ -42,10 +42,17 @@ struct WorkspacePanelView: View {
         }
     }
 
-    /// TERM-02: the tabs, "+", and at the right only the fold chevron. No state text: it sat far from the tab it
-    /// described and read as the whole panel's state (user feedback, 2026-09-23); the dots and tooltips carry it.
+    /// TERM-02: Run (LAY-01), the tabs, "+", and at the right only the fold chevron. No state text: it sat far from the
+    /// tab it described and read as the whole panel's state (user feedback, 2026-09-23); the dots and tooltips carry it.
     private var bar: some View {
         HStack(spacing: 4) {
+            runButton
+            // The mock's 1 × 14 hairline, 4 points more on each side than the row's gap.
+            Rectangle()
+                .fill(Theme.hairline)
+                .frame(width: 1, height: Zoom.shared(14))
+                .padding(.horizontal, 4)
+                .accessibilityHidden(true)
             if sessions.isEmpty {
                 // TERM-04: one control instead of a "Terminal" label that did nothing next to a "+".
                 Button(action: openTerminal) {
@@ -80,6 +87,47 @@ struct WorkspacePanelView: View {
         .background(Theme.panelBar)
     }
 
+    /// LAY-01: Run moved here from the top bar (TB-04), before the tabs, where its output shows: "▶ Run" 24 points in
+    /// Rocky's filled style starts the run script, selects its tab and unfolds the panel (TERM-07); "■ Stop" stops it.
+    @ViewBuilder
+    private var runButton: some View {
+        if let run = processes?.run, run.state.isRunning {
+            Button {
+                Task { await model.stopRun(workspaceId: workspace.id) }
+            } label: {
+                runLabel("Stop", systemImage: "stop.fill")
+            }
+            .buttonStyle(Self.runStyle)
+            .help("Stop the run script")
+        } else {
+            Button {
+                Task {
+                    await model.startRun(workspaceId: workspace.id)
+                    // Nothing started (no run script: the model shows why), so there is nothing to show.
+                    guard let started = model.existingProcesses(for: workspace.id)?.run else { return }
+                    selection = started.id
+                    isCollapsed = false
+                }
+            } label: {
+                runLabel("Run", systemImage: "play.fill")
+            }
+            .buttonStyle(Self.runStyle)
+            .help("Run the workspace's run script")
+        }
+    }
+
+    /// The mock's `.run-mini`: 24 high, padding 8, radius 5.
+    private static let runStyle = RockyFilledButtonStyle(height: 24, horizontalPadding: 8, cornerRadius: 5)
+
+    private func runLabel(_ title: String, systemImage: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: systemImage)
+                .font(.rocky(10))
+            Text(title)
+                .font(.rocky(12, weight: .medium))
+        }
+    }
+
     /// TERM-06: the terminal on `background`, 12 points from the sides, 6 above and 8 below. Once its process has
     /// ended, the end line sits under the output (TERM-03), drawn here instead of written into the PTY.
     private func terminal(for session: PTYSession) -> some View {
@@ -103,8 +151,10 @@ struct WorkspacePanelView: View {
 
     /// A new "Terminal N", selected, with the panel unfolded (TERM-07).
     private func openTerminal() {
-        selection = model.openTerminal(workspaceId: workspace.id)?.id
-        isCollapsed = false
+        Task {
+            selection = await model.openTerminal(workspaceId: workspace.id)?.id
+            isCollapsed = false
+        }
     }
 
     /// "Terminal 1", "Terminal 2"… by position, so the numbers always run from 1 to the number of terminals.

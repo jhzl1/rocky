@@ -52,6 +52,9 @@ struct RockyApp: App {
                     await model.bootstrap()
                 }
         }
+        // The first launch, or no saved frame: a roomy window (the screen clamps it). 900 × 560 stays the minimum,
+        // what the sidebar, a readable conversation and the right panel need side by side.
+        .defaultSize(width: 1440, height: 900)
         // No title bar: the sidebar's top row holds the window buttons and the workspace header sits at the top,
         // like Conductor. "Rocky" stays the window's name in the Window menu. The empty compact toolbar
         // (`CompactTitleBar`) makes the transparent title bar H tall, with the window buttons centered in it (WIN-01).
@@ -69,6 +72,10 @@ struct RockyApp: App {
             }
             CommandGroup(after: .sidebar) {
                 WorkspaceCommands(model: model)
+                Section {
+                    SidebarCommand()
+                    PullRequestPanelCommand(model: model)
+                }
             }
             // Rocky ▸ Settings… (⌘,) opens the settings panel over the window, not a window of its own.
             CommandGroup(replacing: .appSettings) {
@@ -109,6 +116,10 @@ private struct CompactTitleBar: NSViewRepresentable {
 
     final class WindowHook: NSView {
         private static let toolbarIdentifier = "RockyTitleBar"
+        /// The window's frame is saved under this fixed name. SwiftUI's own name spells the content's type, which holds
+        /// `(unknown context at $address)` for this private view, an address that changes with every build: no build
+        /// found the last one's frame, so Rocky always opened at its minimum size (user report, 2026-09-24).
+        private static let frameAutosaveName = "RockyMainWindow"
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -121,6 +132,11 @@ private struct CompactTitleBar: NSViewRepresentable {
         /// Idempotent: runs again on every SwiftUI update and changes only what differs.
         func configureWindow() {
             guard let window else { return }
+            if window.frameAutosaveName != Self.frameAutosaveName {
+                // Back to the size and place the user left it at, when there is one; else `defaultSize` stands.
+                window.setFrameUsingName(Self.frameAutosaveName)
+                window.setFrameAutosaveName(Self.frameAutosaveName)
+            }
             if window.toolbar == nil {
                 let toolbar = NSToolbar(identifier: Self.toolbarIdentifier)
                 toolbar.allowsUserCustomization = false
@@ -169,6 +185,34 @@ private struct WorkspaceCommands: View {
     private func title(of workspaceId: String) -> String {
         guard let workspace = model.workspace(id: workspaceId) else { return "Workspace" }
         return model.title(for: workspace).text
+    }
+}
+
+/// View ▸ Show Sidebar / Hide Sidebar (⌃⌘S, macOS's standard shortcut): Rocky's sidebar is its own view, not a
+/// `NavigationSplitView`, so SwiftUI adds no such command (user report, 2026-09-23). It writes the state the sidebar's
+/// buttons toggle, and `RootView` animates the change. A menu command, so it works from the message box and the
+/// terminal too.
+private struct SidebarCommand: View {
+    @AppStorage(SidebarStorage.visibleKey) private var isVisible = true
+
+    var body: some View {
+        Button(PanelToggleText.sidebarMenuTitle(isVisible: isVisible)) { isVisible.toggle() }
+            .keyboardShortcut("s", modifiers: [.control, .command])
+    }
+}
+
+/// View ▸ Show / Hide Pull Request Panel (⌥⌘B, KBD-03): the right panel's open state, which the panel toggle shares
+/// (PNL-02). ⌘⇧G was Edit ▸ Find ▸ Find Previous, which won (user report, 2026-09-23). A menu command, so it works from
+/// the message box too; it has no Esc of its own, so the conversation's Esc still stops the agent. Off without a
+/// selected workspace, where there is no panel.
+private struct PullRequestPanelCommand: View {
+    let model: AppModel
+    @AppStorage(RightPanelStorage.openKey) private var isOpen = true
+
+    var body: some View {
+        Button(PanelToggleText.pullRequestPanelMenuTitle(isOpen: isOpen)) { isOpen.toggle() }
+            .keyboardShortcut("b", modifiers: [.option, .command])
+            .disabled(model.selectedWorkspace == nil)
     }
 }
 

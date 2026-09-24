@@ -40,7 +40,8 @@ struct SidebarRow: View {
                     .frame(width: Zoom.shared(16), height: Zoom.shared(16))
                 Text(title)
                     .font(.rocky(13))
-                    .foregroundStyle(titleIsFallback ? Theme.textSecondary : Theme.textPrimary)
+                    // ROW-07: a merged workspace's title steps back.
+                    .foregroundStyle(status == .merged ? Theme.textTertiary : titleIsFallback ? Theme.textSecondary : Theme.textPrimary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -139,8 +140,9 @@ private struct SidebarRowButtonStyle: ButtonStyle {
     }
 }
 
-/// A workspace's state as one glyph (ROW-03): 14 points in a row, 12 in a folded repository's header (SB-04). The
-/// state is carried by the shape as well as the color: dot with a halo, triangle, spinner, dot, branch (A11Y-01).
+/// A workspace's state as one glyph (ROW-03, ROW-07): 14 points in a row, 12 in a folded repository's header (SB-04).
+/// The state is carried by the shape as well as the color: dot with a halo, triangle, spinner, dot, pull request,
+/// merge, branch (A11Y-01). The pull request glyphs are the SF Symbols the top bar's toggle (PNL-02) uses.
 struct WorkspaceStatusGlyph: View {
     let status: WorkspaceStatus
     var size: CGFloat = 14
@@ -163,8 +165,12 @@ struct WorkspaceStatusGlyph: View {
             Circle()
                 .fill(Theme.accent)
                 .frame(width: Zoom.shared(7), height: Zoom.shared(7))
+        case .pullRequest(let tone):
+            GitGlyph(kind: .pullRequest, size: size, color: tone.color)
+        case .merged:
+            GitGlyph(kind: .merge, size: size, color: Theme.merged)
         case .idle:
-            symbol("arrow.triangle.branch", color: Theme.textTertiary)
+            GitGlyph(kind: .branch, size: size, color: Theme.textTertiary)
         }
     }
 
@@ -208,7 +214,60 @@ extension WorkspaceStatus {
         case .failed: "Error"
         case .working: "Working"
         case .unread: "Unread reply"
+        case .pullRequest: "Pull request"
+        case .merged: "Merged"
         case .idle: "Idle"
         }
+    }
+}
+
+extension PullRequestTone {
+    /// ROW-07: the glyph's color by the checks.
+    var color: Color {
+        switch self {
+        case .passed: Theme.success
+        case .running: Theme.attention
+        case .failed: Theme.danger
+        case .draft: Theme.textSecondary
+        }
+    }
+}
+
+/// The design's own git glyphs (ROW-03, ROW-07), drawn as template images so they take the state's color: a branch
+/// (two commits and a fork), a pull request (two commits and a line coming back) and a merge (three joined commits).
+/// SF Symbols' `arrow.triangle.branch`, `.pull` and `.merge` read alike at 14 points, so the rows differed only in
+/// color (user report, 2026-09-24).
+struct GitGlyph: View {
+    enum Kind: String {
+        case branch = "git-branch"
+        case pullRequest = "git-pull-request"
+        case merge = "git-merge"
+    }
+
+    let kind: Kind
+    var size: CGFloat = 14
+    var color: Color = Theme.textTertiary
+
+    var body: some View {
+        Image(nsImage: Self.image(for: kind))
+            .renderingMode(.template)
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .foregroundStyle(color)
+            .frame(width: Zoom.shared(size), height: Zoom.shared(size))
+            .accessibilityHidden(true)
+    }
+
+    private static var images: [Kind: NSImage] = [:]
+
+    private static func image(for kind: Kind) -> NSImage {
+        if let image = images[kind] { return image }
+        let url = Bundle.module.url(forResource: kind.rawValue, withExtension: "svg", subdirectory: "Icons")
+        let image = url.flatMap(NSImage.init(contentsOf:))
+            ?? NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: nil)
+            ?? NSImage()
+        image.isTemplate = true
+        images[kind] = image
+        return image
     }
 }

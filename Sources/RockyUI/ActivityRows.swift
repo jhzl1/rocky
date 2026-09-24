@@ -261,24 +261,52 @@ struct UserMessageRow: View {
     }
 }
 
+/// The end of a turn the user stopped (Esc, Stop or Send Now), like Conductor's "INTERRUPTED BY USER": a bordered
+/// label in the code font. The turn's footer follows it.
+struct InterruptedRow: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.rocky(11, design: .monospaced))
+            .tracking(0.6)
+            .textCase(.uppercase)
+            .foregroundStyle(Theme.textSecondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.hairline))
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 /// At the end of the conversation while the agent works (MOT-03): "Working", shimmering, and how long the turn has
 /// run. Not "Thinking", which is the label of the agent's thoughts (`ThoughtRow`).
 struct WorkingRow: View {
     let startedAt: Date?
+    @Environment(\.windowIsVisible) private var windowIsVisible
 
     var body: some View {
         HStack(spacing: 8) {
             ShimmerText("Working")
             if let startedAt {
-                TimelineView(.periodic(from: startedAt, by: 1)) { context in
-                    // In the code font, so the time reads apart from the label (user decision, 2026-09-23).
-                    Text(verbatim: Self.elapsed(from: startedAt, to: context.date))
-                        .font(.rocky(12, design: .monospaced))
-                        .foregroundStyle(Theme.textTertiary)
+                // A periodic timeline cannot pause: out of view, a still label replaces it, so nothing ticks.
+                if windowIsVisible {
+                    TimelineView(.periodic(from: startedAt, by: 1)) { context in
+                        elapsedLabel(from: startedAt, to: context.date)
+                    }
+                } else {
+                    elapsedLabel(from: startedAt, to: .now)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// In the code font, so the time reads apart from the label (user decision, 2026-09-23).
+    private func elapsedLabel(from start: Date, to now: Date) -> some View {
+        Text(verbatim: Self.elapsed(from: start, to: now))
+            .font(.rocky(12, design: .monospaced))
+            .foregroundStyle(Theme.textTertiary)
     }
 
     /// "8s", then "1m 5s".

@@ -24,7 +24,8 @@ let package = Package(
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
                 .product(name: "Textual", package: "textual"),
             ],
-            // Claude and OpenCode logos, from Simple Icons (simpleicons.org, CC0).
+            // Claude, OpenCode, GitHub and Vercel logos, from Simple Icons (simpleicons.org, CC0); the git glyphs
+            // (git-branch, git-pull-request, git-merge) are the design's own strokes.
             resources: [.copy("Resources/Icons")]
         ),
         .executableTarget(name: "Rocky", dependencies: ["RockyKit", "RockyUI"]),

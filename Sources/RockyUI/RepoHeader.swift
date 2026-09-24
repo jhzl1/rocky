@@ -70,7 +70,8 @@ struct RepoHeader: View {
 
     private var monogram: some View {
         let palette = Theme.repoPalette
-        let color = palette[RepoMonogram.paletteIndex(repoId: repo.id, paletteCount: palette.count)]
+        let index = repo.colorIndex ?? RepoMonogram.paletteIndex(repoId: repo.id, paletteCount: palette.count)
+        let color = palette[index % palette.count]
         return Text(RepoMonogram.letter(repoName: repo.name))
             .font(.rocky(10, weight: .bold))
             .foregroundStyle(Color.white)

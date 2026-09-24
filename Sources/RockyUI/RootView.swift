@@ -8,13 +8,19 @@ import SwiftUI
 /// bar sits at the very top.
 public struct RootView: View {
     @Bindable var model: AppModel
-    @AppStorage("sidebarVisible") private var sidebarVisible = true
+    @AppStorage(SidebarStorage.visibleKey) private var sidebarVisible = true
     @AppStorage("sidebarWidth") private var sidebarWidth = 260.0
     /// Rocky's own menus, drawn over the whole window (`MenuHost`).
     @State private var menus = MenuPresenter()
+    /// The window's toast (`ToastHost`), fed by the model's `onToast` and by views.
+    @State private var toasts = ToastPresenter()
     /// The sidebar list has keyboard focus; the workspace reads it as `sidebarHasKeyboardFocus` (KBD-01).
     @State private var sidebarHasKeyboardFocus = false
+    /// Whether any of the window can be seen (`WindowVisibilityReader`): the views' animations and timers and PR-07's
+    /// polling run while it can. `appearsActive` says whether the user is looking at Rocky.
+    @State private var windowIsVisible = true
     @Environment(\.appearsActive) private var appearsActive
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// WIN-02: 16 margin, 52 window buttons, 8 gap, 28 Show sidebar, 12 gap.
     private static let hiddenSidebarInset: CGFloat = 116
@@ -57,13 +63,17 @@ public struct RootView: View {
                 Button("Show sidebar", systemImage: "sidebar.left", action: toggleSidebar)
                     .buttonStyle(RockyIconButtonStyle())
                     .font(.rocky(14))
-                    .help("Show sidebar")
+                    .help(PanelToggleText.sidebarTooltip(isVisible: false))
                     // WIN-02: 8 points after the window buttons, centered on the title bar's height.
                     .padding(.leading, SidebarTopBar.windowButtonsEnd + 8)
                     .frame(height: SidebarTopBar.height)
                     .ignoresSafeArea(.container, edges: .top)
             }
         }
+        // Showing and hiding the sidebar animate like the right panel (user decision, 2026-09-23), whichever way it
+        // is toggled: its buttons, ⌘K, or View ▸ Show Sidebar, which writes the stored value from outside this view,
+        // where a `withAnimation` around the toggle did not animate at all. Instant with Reduce Motion.
+        .animation(reduceMotion ? nil : Theme.Motion.state, value: sidebarVisible)
         // ⌘K with the sidebar hidden shows it; the sidebar then focuses its search field (KBD-01).
         .onChange(of: model.isSearchFocusRequested) { _, requested in
             if requested, !sidebarVisible { toggleSidebar() }
@@ -71,15 +81,25 @@ public struct RootView: View {
         .preferredColorScheme(.dark)
         // The default font of every view that sets none (sidebar rows, buttons, fields), at Rocky's zoom.
         .font(.rocky(13))
-        // Menus over the settings modal too: its sound picker is one.
+        .background { WindowVisibilityReader { windowIsVisible = $0 } }
+        // Menus over the settings modals too: the sound, run mode, Claude instance and GitHub account pickers are
+        // menus.
         .overlay { SettingsModal(model: model) }
+        .overlay { RepoSettingsModal(model: model) }
         .overlay { MenuHost(presenter: menus) }
+        .overlay { ToastHost(presenter: toasts) }
         .onChange(of: appearsActive, initial: true) { _, active in model.isWindowActive = active }
+        .onChange(of: windowIsVisible, initial: true) { _, visible in model.isWindowVisible = visible }
         .onChange(of: model.attentionCount, initial: true) { _, count in
             NSApp.dockTile.badgeLabel = count > 0 ? "\(count)" : nil
         }
-        .onAppear { model.onAlert = { _ in AlertSound.play() } }
+        .onAppear {
+            model.onAlert = { _ in AlertSound.play() }
+            model.onToast = { [toasts = toasts] text in toasts.show(text) }
+        }
         .environment(menus)
+        .environment(toasts)
+        .environment(\.windowIsVisible, windowIsVisible)
         .alert(
             "Rocky",
             isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })
@@ -101,7 +121,7 @@ public struct RootView: View {
     }
 
     private func toggleSidebar() {
-        withAnimation(Theme.Motion.state) { sidebarVisible.toggle() }
+        sidebarVisible.toggle()
     }
 
     private func addRepository() {
