@@ -129,6 +129,37 @@ public final class RockyStore: Sendable {
                 t.add(column: "colorIndex", .integer)
             }
         }
+        // M3: review comments on diff lines (CMT-03), which go with their workspace. The snippet and its context are
+        // JSON arrays of lines.
+        migrator.registerMigration("v9") { db in
+            try db.create(table: "diffComment") { t in
+                t.primaryKey("id", .text)
+                t.column("workspaceId", .text).notNull().indexed().references("workspace", onDelete: .cascade)
+                t.column("path", .text).notNull()
+                t.column("side", .text).notNull()
+                t.column("startLine", .integer).notNull()
+                t.column("endLine", .integer).notNull()
+                t.column("snippet", .text).notNull()
+                t.column("contextBefore", .text).notNull()
+                t.column("contextAfter", .text).notNull()
+                t.column("body", .text).notNull()
+                t.column("state", .text).notNull()
+                t.column("createdAt", .datetime).notNull()
+                t.column("sentAt", .datetime)
+            }
+        }
+        // M3: the All files tab's state (FIL-01, FIL-03). Each workspace's expanded folders, worktree-relative, go with
+        // it; each repository remembers Show Ignored Files, off by default.
+        migrator.registerMigration("v10") { db in
+            try db.create(table: "expandedFolder") { t in
+                t.column("workspaceId", .text).notNull().references("workspace", onDelete: .cascade)
+                t.column("path", .text).notNull()
+                t.primaryKey(["workspaceId", "path"])
+            }
+            try db.alter(table: "repo") { t in
+                t.add(column: "showsIgnoredFiles", .boolean).notNull().defaults(to: false)
+            }
+        }
         return migrator
     }
 
@@ -148,6 +179,13 @@ public final class RockyStore: Sendable {
 
     public func repos() throws -> [Repo] {
         try db.read { try Repo.order(Column("createdAt"), Column("name")).fetchAll($0) }
+    }
+
+    /// `FIL-03`'s Show Ignored Files: this column only, so the repository's other settings are left as they are.
+    public func setShowsIgnoredFiles(_ shows: Bool, repoId: String) throws {
+        try db.write { db in
+            try db.execute(sql: "UPDATE repo SET showsIgnoredFiles = ? WHERE id = ?", arguments: [shows, repoId])
+        }
     }
 
     /// Deletes the repo and, by cascade, its workspaces and transcripts. Files on disk are untouched.
@@ -201,6 +239,25 @@ public final class RockyStore: Sendable {
         }
     }
 
+    // MARK: The All files tab (FIL-01)
+
+    /// The workspace's expanded folders, worktree-relative. Removing the workspace deletes them (cascade).
+    public func expandedFolders(workspaceId: String) throws -> Set<String> {
+        try db.read { db in
+            Set(try String.fetchAll(db, sql: "SELECT path FROM expandedFolder WHERE workspaceId = ?", arguments: [workspaceId]))
+        }
+    }
+
+    /// Replaces the workspace's expanded folders with `paths`, in one transaction.
+    public func setExpandedFolders(_ paths: Set<String>, workspaceId: String) throws {
+        try db.write { db in
+            try db.execute(sql: "DELETE FROM expandedFolder WHERE workspaceId = ?", arguments: [workspaceId])
+            for path in paths.sorted() {
+                try db.execute(sql: "INSERT INTO expandedFolder (workspaceId, path) VALUES (?, ?)", arguments: [workspaceId, path])
+            }
+        }
+    }
+
     // MARK: Repo variables
 
     public func repoVars(repoId: String) throws -> [RepoVar] {
@@ -224,6 +281,27 @@ public final class RockyStore: Sendable {
 
     public func deleteRepoVar(repoId: String, name: String) throws {
         _ = try db.write { try RepoVar.filter(Column("repoId") == repoId && Column("name") == name).deleteAll($0) }
+    }
+
+    // MARK: Review comments (CMT-03)
+
+    /// The workspace's comments on its diffs, oldest first. Removing the workspace deletes them (cascade).
+    public func comments(workspaceId: String) throws -> [DiffCommentRecord] {
+        try db.read {
+            try DiffCommentRecord
+                .filter(Column("workspaceId") == workspaceId)
+                .order(Column("createdAt"), Column.rowID)
+                .fetchAll($0)
+        }
+    }
+
+    /// Inserts the comment, or replaces the one with its id.
+    public func saveComment(_ comment: DiffCommentRecord) throws {
+        try db.write { try comment.save($0) }
+    }
+
+    public func deleteComment(id: String) throws {
+        _ = try db.write { try DiffCommentRecord.deleteOne($0, key: id) }
     }
 
     // MARK: Chat

@@ -49,6 +49,99 @@ final class SharedFlag: @unchecked Sendable {
     }
 }
 
+/// Stands in for FSEvents in `AppModel` tests (GIT-01): keeps each workspace's stream, so a test fires its events and
+/// sees it stop.
+final class FakeWatchers: @unchecked Sendable {
+    final class Watch: WorkspaceWatch, @unchecked Sendable {
+        let worktree: URL
+        let onChange: @Sendable (FolderEvents) -> Void
+        private let lock = NSLock()
+        private var stopped = false
+
+        init(worktree: URL, onChange: @escaping @Sendable (FolderEvents) -> Void) {
+            self.worktree = worktree
+            self.onChange = onChange
+        }
+
+        func stop() {
+            lock.withLock { stopped = true }
+        }
+
+        var isStopped: Bool {
+            lock.withLock { stopped }
+        }
+    }
+
+    private let lock = NSLock()
+    private var watches: [Watch] = []
+
+    func watch(_ worktree: URL, _ onChange: @escaping @Sendable (FolderEvents) -> Void) -> any WorkspaceWatch {
+        let watch = Watch(worktree: worktree, onChange: onChange)
+        lock.withLock { watches.append(watch) }
+        return watch
+    }
+
+    /// The last stream started for the worktree at `path`.
+    func watch(of path: String) -> Watch? {
+        lock.withLock { watches.last { $0.worktree.path == path } }
+    }
+
+    /// One batch of events, as FSEvents would send it after its debounce.
+    func fire(_ path: String, folders: Set<String> = []) {
+        watch(of: path)?.onChange(FolderEvents(folders: folders.isEmpty ? [path] : folders))
+    }
+}
+
+/// The All files tab's reads (FIL-07) through the real `WorktreeFiles`, counted: each `ls-files` run and each folder
+/// listed, in order.
+final class FakeWorktreeFiles: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lists = 0
+    private var folders: [String] = []
+
+    var listCount: Int {
+        lock.withLock { lists }
+    }
+
+    var listedFolders: [String] {
+        lock.withLock { folders }
+    }
+
+    func reset() {
+        lock.withLock {
+            lists = 0
+            folders = []
+        }
+    }
+
+    func reader(_ environment: [String: String]) -> any WorktreeFileReading {
+        Reader(owner: self, files: WorktreeFiles(environment: environment))
+    }
+
+    private func recordList() {
+        lock.withLock { lists += 1 }
+    }
+
+    private func recordListing(_ folder: String) {
+        lock.withLock { folders.append(folder) }
+    }
+
+    private struct Reader: WorktreeFileReading {
+        let owner: FakeWorktreeFiles
+        let files: WorktreeFiles
+
+        func list(worktree: URL, reusing previous: FileList?) throws -> FileList {
+            owner.recordList()
+            return try files.list(worktree: worktree, reusing: previous)
+        }
+
+        func listing(worktree: URL, folder: String) throws -> [FileEntry] {
+            owner.recordListing(folder)
+            return try files.listing(worktree: worktree, folder: folder)
+        }
+    }
+}
+
 /// A GitHub stub that suites running in parallel can share, unlike `StubURLProtocol`'s one global handler: each test
 /// registers a route under a fresh token (a `FakeGH` login's), and a request goes to the route of the token in its
 /// Authorization header, which every request Rocky sends to api.github.com carries. A request without a known token
@@ -172,7 +265,9 @@ struct AppModelTests {
         defaults: UserDefaults? = nil,
         gh: FakeGH = FakeGH(status: #"{"hosts":{}}"#),
         remotes: FakeRemotes = FakeRemotes(),
-        githubSession: URLSession = OfflineURLProtocol.session()
+        githubSession: URLSession = OfflineURLProtocol.session(),
+        watchers: FakeWatchers = FakeWatchers(),
+        worktreeFiles: FakeWorktreeFiles = FakeWorktreeFiles()
     ) throws -> AppModel {
         let root = try Fixtures.temporaryDirectory("app")
         let paths = RockyPaths(database: root.appendingPathComponent("rocky.sqlite"), adapterPrefix: root.appendingPathComponent("agents"), logs: root)
@@ -190,7 +285,9 @@ struct AppModelTests {
             defaults: defaults ?? UserDefaults(suiteName: "rocky-tests-\(UUID().uuidString)")!,
             runGH: { arguments, environment in try gh.run(arguments, environment: environment) },
             lookUpGitHubRepository: { clone, environment in remotes.lookUp(clone, environment) },
-            githubSession: githubSession
+            githubSession: githubSession,
+            watchWorkspace: { worktree, onChange in watchers.watch(worktree, onChange) },
+            worktreeFiles: { worktreeFiles.reader($0) }
         )
     }
 
@@ -1239,6 +1336,937 @@ struct AppModelTests {
         await relaunched.bootstrap()
         #expect(relaunched.status(workspaceId: workspaces[0].id) == .merged)
         #expect(relaunched.status(workspaceId: workspaces[1].id) == .pullRequest(tone: .failed))
+    }
+
+    // MARK: Changes (GIT-01, GIT-03, CHG-01)
+
+    /// A workspace of an empty repository whose stream is one of `watchers`, once its first stats are read.
+    private func watchedWorkspace(watchers: FakeWatchers, files: FakeWorktreeFiles = FakeWorktreeFiles()) async throws -> (AppModel, Workspace) {
+        let model = try makeModel(watchers: watchers, worktreeFiles: files)
+        await model.bootstrap()
+        await model.addRepo(at: try await GitFixture.localRepoOffMain(in: try Fixtures.temporaryDirectory("repos")))
+        let repoId = try #require(model.repos.first?.id)
+        await model.createWorkspace(repoId: repoId)
+        let workspace = try #require(model.workspaces[repoId]?.first)
+        try await waitUntil { watchers.watch(of: workspace.path) != nil && model.diffStats[workspace.id] != nil }
+        return (model, workspace)
+    }
+
+    private func write(_ text: String, to path: String, in workspace: Workspace) async throws {
+        let file = URL(fileURLWithPath: workspace.path).appendingPathComponent(path)
+        try await Task.blocking { try Data(text.utf8).write(to: file) }.value
+    }
+
+    /// GIT-03: every workspace has a stream from the start; a change on disk refreshes its stats, and removing the
+    /// workspace stops the stream and drops them.
+    @Test func fileChangeRefreshesTheSidebarStats() async throws {
+        let watchers = FakeWatchers()
+        let (model, workspace) = try await watchedWorkspace(watchers: watchers)
+        #expect(model.diffStats[workspace.id] == DiffStat())
+
+        try await write("one\ntwo\n", to: "notes.md", in: workspace)
+        watchers.fire(workspace.path)
+        try await waitUntil { model.diffStats[workspace.id] == DiffStat(additions: 2, deletions: 0, files: 1) }
+
+        let watch = try #require(watchers.watch(of: workspace.path))
+        #expect(!watch.isStopped)
+        await model.removeWorkspace(id: workspace.id, stashingChanges: true)
+        #expect(model.workspace(id: workspace.id) == nil)
+        #expect(watch.isStopped)
+        #expect(model.diffStats[workspace.id] == nil)
+    }
+
+    /// GIT-01: with the Changes tab hidden, a change reads the stats only. Showing the tab reads the full diff, each
+    /// change after that reads it again, and selecting another workspace drops it.
+    @Test func hiddenChangesTabDoesNotComputeTheFullDiff() async throws {
+        let watchers = FakeWatchers()
+        let (model, workspace) = try await watchedWorkspace(watchers: watchers)
+        model.visibleRightPanelTab = .checks
+        try await write("one\n", to: "a.md", in: workspace)
+        watchers.fire(workspace.path)
+        try await waitUntil { model.diffStats[workspace.id]?.files == 1 }
+        #expect(model.changes[workspace.id] == nil)
+
+        model.visibleRightPanelTab = .changes
+        try await waitUntil { model.changes[workspace.id]?.files.map(\.path) == ["a.md"] }
+
+        try await write("two\n", to: "b.md", in: workspace)
+        watchers.fire(workspace.path)
+        try await waitUntil { model.changes[workspace.id]?.files.map(\.path) == ["a.md", "b.md"] }
+        #expect(model.diffStats[workspace.id] == DiffStat(additions: 2, deletions: 0, files: 2))
+
+        model.selectedWorkspaceId = nil
+        #expect(model.changes[workspace.id] == nil)
+        #expect(model.visibleRightPanelTab == nil)
+    }
+
+    /// CHG-01: a workspace that never picked a tab shows Changes, and the pull request pill still picks Checks.
+    @Test func aWorkspaceThatNeverPickedATabShowsChanges() async throws {
+        let (model, workspace) = try await watchedWorkspace(watchers: FakeWatchers())
+        #expect(model.rightPanelTab(workspaceId: workspace.id) == .changes)
+        model.rightPanelTabs[workspace.id] = .checks
+        #expect(model.rightPanelTab(workspaceId: workspace.id) == .checks)
+    }
+
+    /// REV-01: the pull request's comments are read while the Checks tab shows, not whenever the panel does.
+    @Test func commentsAreReadOnlyWhileTheChecksTabShows() async throws {
+        let (model, workspace, route) = try await githubWorkspace(Self.answeringComments())
+        let commentReads = { route.requests.filter { $0.graphQL?.query.contains("reviewThreads") == true }.count }
+
+        model.visibleRightPanelTab = .changes
+        await model.pullRequests.refresh(workspaceId: workspace.id, reason: .button)
+        #expect(commentReads() == 0)
+        #expect(model.pullRequests.panels[workspace.id]?.comments.isEmpty == true)
+
+        model.visibleRightPanelTab = .checks
+        try await waitUntil { model.pullRequests.panels[workspace.id]?.comments.count == 4 }
+
+        // The panel closed: the next refresh reads no comments.
+        model.visibleRightPanelTab = nil
+        let reads = commentReads()
+        await model.pullRequests.refresh(workspaceId: workspace.id, reason: .button)
+        #expect(commentReads() == reads)
+    }
+
+    /// GIT-05 through the model: the file's changes go, its diff tab closes, and the Changes tab reads the worktree
+    /// again.
+    @Test func discardClosesTheFilesTabAndRefreshesTheChanges() async throws {
+        let (model, workspace) = try await watchedWorkspace(watchers: FakeWatchers())
+        try await write("changed\n", to: "README.md", in: workspace)
+        model.visibleRightPanelTab = .changes
+        try await waitUntil { model.changes[workspace.id]?.files.map(\.path) == ["README.md"] }
+        model.openDiff(workspaceId: workspace.id, path: "README.md")
+        #expect(model.selectedChangedFile(workspaceId: workspace.id) == "README.md")
+
+        await model.discardChanges(workspaceId: workspace.id, paths: ["README.md"])
+
+        #expect(model.changes[workspace.id]?.files.isEmpty == true)
+        #expect(model.selectedChangedFile(workspaceId: workspace.id) == nil)
+        #expect(model.diffTabs[workspace.id]?.isEmpty == true)
+        #expect(model.changesFailures[workspace.id] == nil)
+        let readme = URL(fileURLWithPath: workspace.path).appendingPathComponent("README.md")
+        #expect(try await Task.blocking { try String(contentsOf: readme, encoding: .utf8) }.value == "hello\n")
+    }
+
+    // MARK: Diff tabs (DIFF-01, DIFF-05)
+
+    /// DIFF-01: one tab per file, after the file tabs, and at most one of a file tab and a diff tab on screen. A tab
+    /// keeps the mode it was left in unless one is asked for; closing it brings the conversation back. The tabs go
+    /// with the workspace.
+    @Test func aDiffTabIsOnePerFileAndKeepsItsMode() async throws {
+        let (model, workspace) = try await watchedWorkspace(watchers: FakeWatchers())
+        model.openFile(workspaceId: workspace.id, path: "/elsewhere/a.png")
+        model.openDiff(workspaceId: workspace.id, path: "README.md", mode: .edit)
+        model.openDiff(workspaceId: workspace.id, path: "src/b.ts")
+        model.openDiff(workspaceId: workspace.id, path: "README.md")
+        #expect(model.diffTabs[workspace.id] == ["README.md", "src/b.ts"])
+        #expect(model.selectedDiffTabs[workspace.id] == "README.md")
+        #expect(model.selectedFiles[workspace.id] == nil)
+        #expect(model.diffMode(workspaceId: workspace.id, path: "README.md") == .edit)
+        #expect(model.diffMode(workspaceId: workspace.id, path: "src/b.ts") == .diff)
+
+        model.showFile(workspaceId: workspace.id, path: "/elsewhere/a.png")
+        #expect(model.selectedDiffTabs[workspace.id] == nil)
+        model.showDiff(workspaceId: workspace.id, path: "src/b.ts")
+        #expect(model.selectedFiles[workspace.id] == nil)
+        #expect(model.selectedChangedFile(workspaceId: workspace.id) == "src/b.ts")
+
+        model.openDiff(workspaceId: workspace.id, path: "README.md", mode: .diff)
+        #expect(model.diffMode(workspaceId: workspace.id, path: "README.md") == .diff)
+        model.closeDiff(workspaceId: workspace.id, path: "README.md")
+        #expect(model.diffTabs[workspace.id] == ["src/b.ts"])
+        #expect(model.selectedDiffTabs[workspace.id] == nil)
+        #expect(model.selectedFiles[workspace.id] == nil)
+
+        await model.removeWorkspace(id: workspace.id)
+        #expect(model.workspace(id: workspace.id) == nil)
+        #expect(model.diffTabs[workspace.id] == nil)
+    }
+
+    /// GIT-01 with DIFF-01: a diff tab on screen keeps the full diff computed with the panel on Checks, so it follows
+    /// the agent; once it closes, a change reads the stats only again.
+    @Test func aDiffTabOnScreenKeepsTheFullDiffComputed() async throws {
+        let watchers = FakeWatchers()
+        let (model, workspace) = try await watchedWorkspace(watchers: watchers)
+        model.visibleRightPanelTab = .checks
+        try await write("one\n", to: "a.md", in: workspace)
+        watchers.fire(workspace.path)
+        try await waitUntil { model.diffStats[workspace.id]?.files == 1 }
+        #expect(model.changes[workspace.id] == nil)
+
+        model.openDiff(workspaceId: workspace.id, path: "a.md")
+        try await waitUntil { model.changes[workspace.id]?.files.map(\.path) == ["a.md"] }
+
+        try await write("two\n", to: "b.md", in: workspace)
+        watchers.fire(workspace.path)
+        try await waitUntil { model.changes[workspace.id]?.files.map(\.path) == ["a.md", "b.md"] }
+
+        model.closeDiff(workspaceId: workspace.id, path: "a.md")
+        try await write("three\n", to: "c.md", in: workspace)
+        watchers.fire(workspace.path)
+        try await waitUntil { model.diffStats[workspace.id]?.files == 3 }
+        #expect(model.changes[workspace.id]?.files.count == 2)
+    }
+
+    /// CHG-03's ⌥⌘↓ / ⌥⌘↑ walk the Changes tab's list from the diff tab on screen, opening each file's diff tab.
+    @Test func adjacentChangedFilesOpenInDiffTabs() async throws {
+        let (model, workspace) = try await watchedWorkspace(watchers: FakeWatchers())
+        try await write("one\n", to: "a.md", in: workspace)
+        try await write("two\n", to: "b.md", in: workspace)
+        model.visibleRightPanelTab = .changes
+        try await waitUntil { model.changes[workspace.id]?.files.map(\.path) == ["a.md", "b.md"] }
+
+        model.showAdjacentChangedFile(workspaceId: workspace.id, step: 1)
+        #expect(model.selectedChangedFile(workspaceId: workspace.id) == "a.md")
+        model.showAdjacentChangedFile(workspaceId: workspace.id, step: 1)
+        #expect(model.selectedChangedFile(workspaceId: workspace.id) == "b.md")
+        model.showAdjacentChangedFile(workspaceId: workspace.id, step: 1)
+        #expect(model.selectedChangedFile(workspaceId: workspace.id) == "b.md")
+        model.showAdjacentChangedFile(workspaceId: workspace.id, step: -1)
+        #expect(model.selectedChangedFile(workspaceId: workspace.id) == "a.md")
+        #expect(model.diffTabs[workspace.id] == ["a.md", "b.md"])
+    }
+
+    /// DIFF-05: a badge of a changed worktree file opens its diff tab on the diff and asks for its first hunk, each
+    /// click again. While the changes are not read, a worktree file opens there too; once they are, an unchanged one
+    /// opens its worktree tab in Edit (FIL-05), and a file outside the worktree a file tab.
+    @Test func aBadgeOfAChangedFileOpensItsDiffTab() async throws {
+        let (model, workspace) = try await watchedWorkspace(watchers: FakeWatchers())
+        let readme = URL(fileURLWithPath: workspace.path).appendingPathComponent("README.md").path
+        #expect(model.changes[workspace.id] == nil)
+        model.openBadgeFile(workspaceId: workspace.id, path: readme)
+        #expect(model.selectedDiffTabs[workspace.id] == "README.md")
+        // The tab on screen reads the changes, which do not have the file: it stays, showing the file unchanged.
+        try await waitUntil { model.changes[workspace.id] != nil }
+        model.closeDiff(workspaceId: workspace.id, path: "README.md")
+
+        try await write("draft\n", to: "notes.md", in: workspace)
+        model.visibleRightPanelTab = .changes
+        await model.refreshChanges(workspaceId: workspace.id)
+        #expect(model.changes[workspace.id]?.files.map(\.path) == ["notes.md"])
+
+        let notes = URL(fileURLWithPath: workspace.path).appendingPathComponent("notes.md").path
+        model.openDiff(workspaceId: workspace.id, path: "notes.md", mode: .edit)
+        let serial = model.diffScrollRequests[workspace.id]?.serial ?? 0
+        model.openBadgeFile(workspaceId: workspace.id, path: notes)
+        #expect(model.selectedDiffTabs[workspace.id] == "notes.md")
+        #expect(model.diffMode(workspaceId: workspace.id, path: "notes.md") == .diff)
+        #expect(model.diffScrollRequests[workspace.id] == DiffScrollRequest(path: "notes.md", serial: serial + 1))
+        model.openBadgeFile(workspaceId: workspace.id, path: notes)
+        #expect(model.diffScrollRequests[workspace.id] == DiffScrollRequest(path: "notes.md", serial: serial + 2))
+
+        model.openBadgeFile(workspaceId: workspace.id, path: readme)
+        #expect(model.selectedDiffTabs[workspace.id] == "README.md")
+        #expect(model.diffMode(workspaceId: workspace.id, path: "README.md") == .edit)
+        #expect((model.openFiles[workspace.id] ?? []).isEmpty)
+        model.openBadgeFile(workspaceId: workspace.id, path: "/elsewhere/notes.md")
+        #expect(model.selectedFiles[workspace.id] == "/elsewhere/notes.md")
+        #expect(model.diffTabs[workspace.id] == ["notes.md", "README.md"])
+    }
+
+    // MARK: Review comments (CMT-03…CMT-05)
+
+    /// CMT-05 (Review Focus 4): Send to agent sends the pending comments, oldest first, as one prompt in CMT-05's exact
+    /// format to the selected conversation, which the workspace shows instead of the diff tab, and they turn Sent in
+    /// the store too. With nothing pending, a second Send sends nothing.
+    @Test func sendReviewMarksCommentsSent() async throws {
+        let store = try RockyStore.inMemory()
+        let (model, workspace, chat) = try await workspaceWithAConversation(store: store)
+        // The worktree has the commented line, so the diff tab's refresh keeps the comment where it is (CMT-04).
+        try await write("hello world\n", to: "README.md", in: workspace)
+        model.addDiffComment(
+            workspaceId: workspace.id, path: "README.md", side: .new, lines: 1...1,
+            capture: CommentAnchor.Capture(snippet: ["hello world"]), body: "Say hello to the world."
+        )
+        model.addDiffComment(
+            workspaceId: workspace.id, path: "README.md", side: .old, lines: 1...1,
+            capture: CommentAnchor.Capture(snippet: ["hello"]), body: "  Why drop this?\n"
+        )
+        model.openDiff(workspaceId: workspace.id, path: "README.md")
+        #expect(model.readyComments(workspaceId: workspace.id).map(\.body) == ["Say hello to the world.", "Why drop this?"])
+
+        async let sending: Void = model.sendReview(workspaceId: workspace.id)
+        try await answerNextPermission(chat)
+        await sending
+
+        #expect(chat.items.last(where: { $0.kind == .user })?.text == """
+            Review comments on \(workspace.branch):
+
+            1. README.md, line 1
+            ```md
+            hello world
+            ```
+            Say hello to the world.
+
+            2. README.md, line 1 (removed)
+            ```md
+            hello
+            ```
+            Why drop this?
+
+            Address each comment and say what you changed for each number.
+            """)
+        #expect(model.selectedDiffTabs[workspace.id] == nil)
+        #expect(model.existingChat(workspaceId: workspace.id) === chat)
+        #expect(model.readyComments(workspaceId: workspace.id).isEmpty)
+        let stored = try store.comments(workspaceId: workspace.id)
+        #expect(stored.map(\.state) == [.sent, .sent])
+        #expect(stored.allSatisfy { $0.sentAt != nil })
+
+        let prompts = chat.items.filter { $0.kind == .user }.count
+        await model.sendReview(workspaceId: workspace.id)
+        #expect(chat.items.filter { $0.kind == .user }.count == prompts)
+        await model.stopAllAgents()
+    }
+
+    /// CMT-05 with AGT-00: while the selected conversation's turn runs, Send to agent sends nothing, not even to the
+    /// queue, and the comments stay pending.
+    @Test func sendReviewWaitsForTheTurn() async throws {
+        let store = try RockyStore.inMemory()
+        let (model, workspace, chat) = try await workspaceWithAConversation(store: store)
+        model.addDiffComment(
+            workspaceId: workspace.id, path: "README.md", side: .old, lines: 1...1,
+            capture: CommentAnchor.Capture(snippet: ["hello"]), body: "Keep the greeting."
+        )
+        async let turn: Void = chat.send("a long task")
+        try await waitUntil { chat.pendingPermission != nil }
+
+        await model.sendReview(workspaceId: workspace.id)
+        #expect(!chat.items.contains { $0.text.hasPrefix("Review comments on") })
+        #expect(chat.queue.isEmpty)
+        #expect(model.readyComments(workspaceId: workspace.id).count == 1)
+
+        chat.answerPermission(optionId: "allow")
+        await turn
+        await model.stopAllAgents()
+    }
+
+    /// CMT-04 through the model: each refresh of the full diff moves a comment whose lines moved and outdates one whose
+    /// lines changed, and the store keeps both; a removed-side comment stays where it is.
+    @Test func aRefreshKeepsCommentsOnTheirLinesAndStoresThem() async throws {
+        let (model, workspace) = try await watchedWorkspace(watchers: FakeWatchers())
+        try await write("one\ntwo\nthree\n", to: "notes.md", in: workspace)
+        model.visibleRightPanelTab = .changes
+        try await waitUntil { model.changes[workspace.id]?.files.map(\.path) == ["notes.md"] }
+        model.addDiffComment(
+            workspaceId: workspace.id, path: "notes.md", side: .new, lines: 2...2,
+            capture: CommentAnchor.Capture(snippet: ["two"]), body: "Rename this."
+        )
+        model.addDiffComment(
+            workspaceId: workspace.id, path: "README.md", side: .old, lines: 1...1,
+            capture: CommentAnchor.Capture(snippet: ["hello"]), body: "Keep the greeting."
+        )
+
+        try await write("zero\none\ntwo\nthree\n", to: "notes.md", in: workspace)
+        await model.refreshChanges(workspaceId: workspace.id)
+        let moved = try #require(model.comments(onFile: "notes.md", workspaceId: workspace.id).first)
+        #expect(moved.startLine == 3)
+        #expect(moved.endLine == 3)
+        #expect(moved.state == .pending)
+        let storedMove = try #require(try model.store.comments(workspaceId: workspace.id).first { $0.path == "notes.md" })
+        #expect(storedMove.startLine == 3)
+
+        try await write("zero\none\nTWO\nthree\n", to: "notes.md", in: workspace)
+        await model.refreshChanges(workspaceId: workspace.id)
+        let outdated = try #require(model.comments(onFile: "notes.md", workspaceId: workspace.id).first)
+        #expect(outdated.state == .outdated)
+        #expect(outdated.startLine == 3)
+        #expect(model.readyComments(workspaceId: workspace.id).map(\.path) == ["README.md"])
+        #expect(try model.store.comments(workspaceId: workspace.id).map(\.state) == [.outdated, .pending])
+        let removedSide = try #require(model.comments(onFile: "README.md", workspaceId: workspace.id).first)
+        #expect(removedSide.startLine == 1)
+    }
+
+    /// CMT-03: comments come back with their workspace after a relaunch and go when it is removed.
+    @Test func commentsSurviveARelaunchAndGoWithTheirWorkspace() async throws {
+        let store = try RockyStore.inMemory()
+        let first = try makeModel(store: store)
+        await first.bootstrap()
+        await first.addRepo(at: try await GitFixture.localRepoOffMain(in: try Fixtures.temporaryDirectory("repos")))
+        let repoId = try #require(first.repos.first?.id)
+        await first.createWorkspace(repoId: repoId)
+        let workspace = try #require(first.workspaces[repoId]?.first)
+        first.addDiffComment(
+            workspaceId: workspace.id, path: "README.md", side: .old, lines: 1...1,
+            capture: CommentAnchor.Capture(snippet: ["hello"]), body: "Keep the greeting."
+        )
+
+        let relaunched = try makeModel(store: store)
+        await relaunched.bootstrap()
+        #expect(relaunched.comments(onFile: "README.md", workspaceId: workspace.id).map(\.body) == ["Keep the greeting."])
+
+        await relaunched.removeWorkspace(id: workspace.id)
+        #expect(relaunched.workspace(id: workspace.id) == nil)
+        #expect(relaunched.diffComments[workspace.id] == nil)
+        #expect(try store.comments(workspaceId: workspace.id).isEmpty)
+    }
+
+    // MARK: Editing (EDIT-01…EDIT-04)
+
+    private func read(_ path: String, in workspace: Workspace) async throws -> String {
+        let file = URL(fileURLWithPath: workspace.path).appendingPathComponent(path)
+        return try await Task.blocking { try String(contentsOf: file, encoding: .utf8) }.value
+    }
+
+    /// A workspace whose README.md is open in its diff tab's editor, read.
+    private func editingReadme(watchers: FakeWatchers = FakeWatchers()) async throws -> (AppModel, Workspace, String) {
+        let (model, workspace) = try await watchedWorkspace(watchers: watchers)
+        let readme = AppModel.editorPath(worktree: workspace.path, relativePath: "README.md")
+        model.openDiff(workspaceId: workspace.id, path: "README.md", mode: .edit)
+        await model.openEditor(workspaceId: workspace.id, path: readme)
+        #expect(model.editor(workspaceId: workspace.id, path: readme)?.document?.buffer.text == "hello\n")
+        return (model, workspace, readme)
+    }
+
+    /// EDIT-03 through the model: a change on disk reloads a clean editor, which says "Reloaded"; under unsaved edits
+    /// the edits stay and the conflict shows, until Reload takes the file's version.
+    @Test func aCleanEditorReloadsAndADirtyOneConflicts() async throws {
+        let watchers = FakeWatchers()
+        let (model, workspace, readme) = try await editingReadme(watchers: watchers)
+        let document = { model.editor(workspaceId: workspace.id, path: readme)?.document }
+
+        try await write("hello agent\n", to: "README.md", in: workspace)
+        watchers.fire(workspace.path)
+        try await waitUntil { document()?.buffer.text == "hello agent\n" }
+        #expect(document()?.reloadedAt != nil)
+        #expect(!model.isEditorDirty(workspaceId: workspace.id, path: readme))
+
+        model.setEditorText("hello mine\n", workspaceId: workspace.id, path: readme)
+        #expect(model.isEditorDirty(workspaceId: workspace.id, path: readme))
+        try await write("hello again\n", to: "README.md", in: workspace)
+        watchers.fire(workspace.path)
+        try await waitUntil { document()?.buffer.conflict == true }
+        #expect(document()?.buffer.text == "hello mine\n")
+        #expect(document()?.buffer.disk?.text == "hello again\n")
+
+        model.reloadEditor(workspaceId: workspace.id, path: readme)
+        #expect(document()?.buffer.text == "hello again\n")
+        #expect(document()?.buffer.conflict == false)
+        #expect(!model.isEditorDirty(workspaceId: workspace.id, path: readme))
+    }
+
+    /// Review Focus 3: a save never overwrites a version of the file the editor has not seen, even before its event
+    /// arrives. It writes nothing and shows the conflict; Keep Mine lets the next save through.
+    @Test func aSaveNeverOverwritesAChangeItHasNotSeenUntilKeepMine() async throws {
+        let (model, workspace, readme) = try await editingReadme()
+        model.setEditorText("hello mine\n", workspaceId: workspace.id, path: readme)
+        try await write("hello agent\n", to: "README.md", in: workspace)
+
+        #expect(await model.saveEditor(workspaceId: workspace.id, path: readme) == false)
+        #expect(try await read("README.md", in: workspace) == "hello agent\n")
+        let conflicted = try #require(model.editor(workspaceId: workspace.id, path: readme)?.document)
+        #expect(conflicted.buffer.conflict)
+        #expect(conflicted.buffer.text == "hello mine\n")
+
+        model.keepMine(workspaceId: workspace.id, path: readme)
+        #expect(await model.saveEditor(workspaceId: workspace.id, path: readme))
+        #expect(try await read("README.md", in: workspace) == "hello mine\n")
+        #expect(!model.isEditorDirty(workspaceId: workspace.id, path: readme))
+        #expect(model.editor(workspaceId: workspace.id, path: readme)?.document?.buffer.keepsMine == false)
+    }
+
+    /// EDIT-02 and EDIT-04: an unchanged file's change bars compare with the file at the base, and saving an edit writes
+    /// the file and brings it into Changes, with the same base. A file the base lacks compares with nothing.
+    @Test func savingAnUnchangedFileBringsItIntoChanges() async throws {
+        let (model, workspace, readme) = try await editingReadme()
+        try await waitUntil { model.changes[workspace.id] != nil }
+        #expect(model.changes[workspace.id]?.file(at: "README.md") == nil)
+        await model.loadEditorBase(workspaceId: workspace.id, relativePath: "README.md")
+        #expect(model.editorBaseText(workspaceId: workspace.id, relativePath: "README.md") == "hello\n")
+
+        model.setEditorText("hello\nworld\n", workspaceId: workspace.id, path: readme)
+        #expect(await model.saveEditor(workspaceId: workspace.id, path: readme))
+        #expect(!model.isEditorDirty(workspaceId: workspace.id, path: readme))
+        #expect(try await read("README.md", in: workspace) == "hello\nworld\n")
+        try await waitUntil { model.changes[workspace.id]?.file(at: "README.md")?.status == .modified }
+        #expect(model.editorBaseText(workspaceId: workspace.id, relativePath: "README.md") == "hello\n")
+
+        try await write("draft\n", to: "notes.md", in: workspace)
+        await model.refreshChanges(workspaceId: workspace.id)
+        model.openDiff(workspaceId: workspace.id, path: "notes.md", mode: .edit)
+        await model.loadEditorBase(workspaceId: workspace.id, relativePath: "notes.md")
+        #expect(model.editorBaseText(workspaceId: workspace.id, relativePath: "notes.md") == "")
+    }
+
+    /// One buffer per file: a file tab and a diff tab of the same file share it, and it goes with the last tab of the
+    /// file, unsaved edits included (the tab asked first). The file on disk is untouched.
+    @Test func anEditorGoesWithTheLastTabOfItsFile() async throws {
+        let (model, workspace, readme) = try await editingReadme()
+        model.openFile(workspaceId: workspace.id, path: readme)
+        model.setEditorText("edited\n", workspaceId: workspace.id, path: readme)
+
+        model.closeFile(workspaceId: workspace.id, path: readme)
+        #expect(model.isEditorDirty(workspaceId: workspace.id, path: readme))
+        model.closeDiff(workspaceId: workspace.id, path: "README.md")
+        #expect(model.editor(workspaceId: workspace.id, path: readme) == nil)
+        #expect(try await read("README.md", in: workspace) == "hello\n")
+    }
+
+    /// EDIT-03: a file that was missing when its tab opened is read once it appears; FIL-06's large text opens
+    /// read-only and takes no typing.
+    @Test func aMissingFileIsReadWhenItAppearsAndALargeOneIsReadOnly() async throws {
+        let watchers = FakeWatchers()
+        let (model, workspace) = try await watchedWorkspace(watchers: watchers)
+        let later = AppModel.editorPath(worktree: workspace.path, relativePath: "later.md")
+        model.openDiff(workspaceId: workspace.id, path: "later.md", mode: .edit)
+        await model.openEditor(workspaceId: workspace.id, path: later)
+        #expect(model.editor(workspaceId: workspace.id, path: later) == .missing)
+
+        try await write("here now\n", to: "later.md", in: workspace)
+        watchers.fire(workspace.path)
+        try await waitUntil { model.editor(workspaceId: workspace.id, path: later)?.document?.buffer.text == "here now\n" }
+
+        let large = AppModel.editorPath(worktree: workspace.path, relativePath: "large.log")
+        try await write(String(repeating: "a", count: TextFile.editableLimit + 1), to: "large.log", in: workspace)
+        model.openDiff(workspaceId: workspace.id, path: "large.log", mode: .edit)
+        await model.openEditor(workspaceId: workspace.id, path: large)
+        #expect(model.editor(workspaceId: workspace.id, path: large)?.document?.isReadOnly == true)
+        model.setEditorText("b", workspaceId: workspace.id, path: large)
+        #expect(!model.isEditorDirty(workspaceId: workspace.id, path: large))
+        #expect(await model.saveEditor(workspaceId: workspace.id, path: large) == false)
+    }
+
+    /// KBD-02's File ▸ Save: the file on screen, while it has unsaved edits. A tab without an editor on screen saves
+    /// nothing, and the file keeps its edits for its own tab.
+    @Test func saveWritesTheFileOnScreen() async throws {
+        let (model, workspace, readme) = try await editingReadme()
+        #expect(model.visibleEditorPath(workspaceId: workspace.id) == readme)
+        #expect(!model.canSaveVisibleEditor(workspaceId: workspace.id))
+        model.setEditorText("hello saved\n", workspaceId: workspace.id, path: readme)
+        #expect(model.canSaveVisibleEditor(workspaceId: workspace.id))
+
+        model.openFile(workspaceId: workspace.id, path: "/elsewhere/a.png")
+        #expect(!model.canSaveVisibleEditor(workspaceId: workspace.id))
+        #expect(await model.saveVisibleEditor(workspaceId: workspace.id) == false)
+        #expect(try await read("README.md", in: workspace) == "hello\n")
+
+        model.showDiff(workspaceId: workspace.id, path: "README.md")
+        #expect(await model.saveVisibleEditor(workspaceId: workspace.id))
+        #expect(try await read("README.md", in: workspace) == "hello saved\n")
+        #expect(!model.canSaveVisibleEditor(workspaceId: workspace.id))
+    }
+
+    /// EDIT-02 on quit: every file with unsaved edits is listed; Save All writes them, and a file that changed on disk
+    /// under its edits stays unsaved, with its conflict, for its tab to show.
+    @Test func saveAllWritesEveryUnsavedFileAndKeepsTheOnesThatChangedOnDisk() async throws {
+        let (model, workspace, readme) = try await editingReadme()
+        let notes = AppModel.editorPath(worktree: workspace.path, relativePath: "notes.md")
+        try await write("notes\n", to: "notes.md", in: workspace)
+        model.openDiff(workspaceId: workspace.id, path: "notes.md", mode: .edit)
+        await model.openEditor(workspaceId: workspace.id, path: notes)
+        #expect(model.unsavedEditors().isEmpty)
+
+        model.setEditorText("hello mine\n", workspaceId: workspace.id, path: readme)
+        model.setEditorText("notes mine\n", workspaceId: workspace.id, path: notes)
+        let unsaved = model.unsavedEditors()
+        #expect(unsaved.map(\.file) == ["README.md", "notes.md"])
+        #expect(unsaved.map(\.path) == [readme, notes])
+        #expect(model.unsavedEditors(workspaceId: "another").isEmpty)
+
+        // The agent wrote notes.md meanwhile: its save stops at the conflict and writes nothing.
+        try await write("notes agent\n", to: "notes.md", in: workspace)
+        let left = await model.saveEditors(unsaved)
+
+        #expect(left.map(\.file) == ["notes.md"])
+        #expect(try await read("README.md", in: workspace) == "hello mine\n")
+        #expect(try await read("notes.md", in: workspace) == "notes agent\n")
+        #expect(model.editor(workspaceId: workspace.id, path: notes)?.document?.buffer.conflict == true)
+        #expect(model.unsavedEditors().map(\.file) == ["notes.md"])
+
+        model.showDiff(workspaceId: workspace.id, path: "README.md")
+        model.showUnsavedEditor(try #require(left.first))
+        #expect(model.selectedWorkspaceId == workspace.id)
+        #expect(model.selectedDiffTabs[workspace.id] == "notes.md")
+    }
+
+    // MARK: Commit (GIT-04, ERR-02)
+
+    /// GIT-04 through the model: every change is committed with the subject trimmed and no empty body, the sheet's
+    /// state goes, the toast says so, and the Changes tab has nothing uncommitted left.
+    @Test func commitCommitsEveryChangeAndLeavesNoSheet() async throws {
+        let (model, workspace) = try await watchedWorkspace(watchers: FakeWatchers())
+        var toasts: [String] = []
+        model.onToast = { toasts.append($0) }
+        try await write("changed\n", to: "README.md", in: workspace)
+        try await write("new\n", to: "new.txt", in: workspace)
+        model.visibleRightPanelTab = .changes
+        try await waitUntil { model.changes[workspace.id]?.uncommitted.count == 2 }
+
+        #expect(await model.commitChanges(workspaceId: workspace.id, subject: "  Update the readme  ", description: " "))
+
+        #expect(model.commits[workspace.id] == nil)
+        #expect(toasts == ["Committed"])
+        #expect(model.changes[workspace.id]?.uncommitted.isEmpty == true)
+        #expect(model.changes[workspace.id]?.committed.map(\.path) == ["README.md", "new.txt"])
+        let worktree = URL(fileURLWithPath: workspace.path)
+        #expect(try await GitFixture.gitOffMain(["log", "-1", "--format=%B"], in: worktree) == "Update the readme")
+    }
+
+    /// ERR-02: a hook that refuses leaves the sheet's state: the message, the hook's output and git's exit status,
+    /// until the sheet closes. Nothing is committed, and an empty subject never reaches git.
+    @Test func aFailedCommitKeepsItsMessageAndOutputForTheSheet() async throws {
+        let (model, workspace) = try await watchedWorkspace(watchers: FakeWatchers())
+        let repo = try #require(model.repo(id: workspace.repoId))
+        // A worktree's hooks are its repository's.
+        let hook = URL(fileURLWithPath: repo.path).appendingPathComponent(".git/hooks/pre-commit")
+        try await Task.blocking {
+            try FileManager.default.createDirectory(at: hook.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("#!/bin/sh\necho 'lint failed: README.md' >&2\nexit 1\n".utf8).write(to: hook)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hook.path)
+        }.value
+        try await write("changed\n", to: "README.md", in: workspace)
+
+        #expect(await model.commitChanges(workspaceId: workspace.id, subject: "   ", description: "") == false)
+        #expect(model.commits[workspace.id] == nil)
+
+        #expect(await model.commitChanges(workspaceId: workspace.id, subject: "Edit", description: "Why") == false)
+
+        let progress = try #require(model.commits[workspace.id])
+        #expect(progress.subject == "Edit")
+        #expect(progress.description == "Why")
+        #expect(progress.lines == ["lint failed: README.md"])
+        #expect(progress.failure == "git commit exited 1")
+        #expect(!progress.isRunning)
+        let worktree = URL(fileURLWithPath: workspace.path)
+        #expect(try await GitFixture.gitOffMain(["log", "--format=%s"], in: worktree) == "init")
+
+        model.dismissCommit(workspaceId: workspace.id)
+        #expect(model.commits[workspace.id] == nil)
+    }
+
+    // MARK: All files (FIL-01…FIL-07)
+
+    /// Writes `text` to `path` in the worktree, creating its folders.
+    private func writeFile(_ text: String, to path: String, in workspace: Workspace) async throws {
+        let file = URL(fileURLWithPath: workspace.path).appendingPathComponent(path)
+        try await Task.blocking {
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(text.utf8).write(to: file)
+        }.value
+    }
+
+    private func folderPath(_ folder: String, in workspace: Workspace) -> String {
+        URL(fileURLWithPath: workspace.path).appendingPathComponent(folder).path
+    }
+
+    /// FIL-07 (Review Focus 1 and 6): with the All files tab hidden, events read no file list and no folder. The tab
+    /// reads git's list and the root when it first shows, nothing when it shows again with nothing changed, and a
+    /// workspace that is not selected keeps nothing and reads nothing.
+    @Test func hiddenFilesTabRunsNoGit() async throws {
+        let watchers = FakeWatchers()
+        let files = FakeWorktreeFiles()
+        let (model, workspace) = try await watchedWorkspace(watchers: watchers, files: files)
+        model.visibleRightPanelTab = .changes
+        try await writeFile("one\n", to: "src/a.ts", in: workspace)
+        watchers.fire(workspace.path)
+        try await waitUntil { model.diffStats[workspace.id]?.files == 1 }
+        #expect(files.listCount == 0)
+        #expect(files.listedFolders.isEmpty)
+        #expect(model.fileTrees[workspace.id] == nil)
+
+        model.visibleRightPanelTab = .files
+        try await waitUntil { model.fileTrees[workspace.id]?.list != nil && model.fileTrees[workspace.id]?.listings[""] != nil }
+        #expect(files.listCount == 1)
+        #expect(files.listedFolders == [""])
+        #expect(model.fileTrees[workspace.id]?.list?.paths == ["README.md", "src/a.ts"])
+
+        model.visibleRightPanelTab = .checks
+        model.visibleRightPanelTab = .files
+        await model.refreshFiles(workspaceId: workspace.id)
+        #expect(files.listCount == 1)
+        #expect(files.listedFolders == [""])
+
+        model.selectedWorkspaceId = nil
+        #expect(model.fileTrees[workspace.id] == nil)
+        try await writeFile("two\n", to: "src/b.ts", in: workspace)
+        watchers.fire(workspace.path)
+        try await waitUntil { model.diffStats[workspace.id]?.files == 2 }
+        #expect(files.listCount == 1)
+        #expect(files.listedFolders == [""])
+    }
+
+    /// FIL-07 (Review Focus 6): an event while the tab shows reads git's list and, of the folders, only the expanded
+    /// one it names; one naming a collapsed folder only drops that folder's listing.
+    @Test func anEventReReadsOnlyTheExpandedFolderItNames() async throws {
+        let watchers = FakeWatchers()
+        let files = FakeWorktreeFiles()
+        let (model, workspace) = try await watchedWorkspace(watchers: watchers, files: files)
+        try await writeFile("a\n", to: "src/a.ts", in: workspace)
+        try await writeFile("x\n", to: "docs/x.md", in: workspace)
+        let tree = { model.fileTrees[workspace.id] }
+        model.visibleRightPanelTab = .files
+        try await waitUntil { tree()?.listings[""]?.contains { $0.name == "src" } == true }
+        model.setFolder("src", expanded: true, workspaceId: workspace.id)
+        model.setFolder("docs", expanded: true, workspaceId: workspace.id)
+        try await waitUntil { tree()?.listings["src"] != nil && tree()?.listings["docs"] != nil }
+        await model.refreshFiles(workspaceId: workspace.id)
+        files.reset()
+
+        try await writeFile("b\n", to: "src/b.ts", in: workspace)
+        watchers.fire(workspace.path, folders: [folderPath("src", in: workspace)])
+        try await waitUntil { tree()?.listings["src"]?.map(\.name) == ["a.ts", "b.ts"] }
+        await model.refreshFiles(workspaceId: workspace.id)
+        #expect(files.listedFolders == ["src"])
+        #expect(files.listCount == 1)
+        #expect(tree()?.list?.paths.contains("src/b.ts") == true)
+
+        model.setFolder("docs", expanded: false, workspaceId: workspace.id)
+        files.reset()
+        watchers.fire(workspace.path, folders: [folderPath("docs", in: workspace)])
+        try await waitUntil { tree()?.listings["docs"] == nil }
+        await model.refreshFiles(workspaceId: workspace.id)
+        #expect(files.listedFolders.isEmpty)
+        #expect(files.listCount == 1)
+        #expect(tree()?.expanded == ["src"])
+    }
+
+    /// FIL-07: events while the tab is hidden only mark what they name; showing the tab reads it then, once.
+    @Test func eventsWhileHiddenAreReadWhenTheTabShows() async throws {
+        let watchers = FakeWatchers()
+        let files = FakeWorktreeFiles()
+        let (model, workspace) = try await watchedWorkspace(watchers: watchers, files: files)
+        try await writeFile("a\n", to: "src/a.ts", in: workspace)
+        let tree = { model.fileTrees[workspace.id] }
+        model.visibleRightPanelTab = .files
+        try await waitUntil { tree()?.listings[""]?.contains { $0.name == "src" } == true }
+        model.setFolder("src", expanded: true, workspaceId: workspace.id)
+        try await waitUntil { tree()?.listings["src"] != nil }
+        await model.refreshFiles(workspaceId: workspace.id)
+
+        model.visibleRightPanelTab = .changes
+        files.reset()
+        try await writeFile("b\n", to: "src/b.ts", in: workspace)
+        watchers.fire(workspace.path, folders: [folderPath("src", in: workspace)])
+        try await waitUntil { model.diffStats[workspace.id]?.files == 2 }
+        #expect(files.listCount == 0)
+        #expect(files.listedFolders.isEmpty)
+        #expect(tree()?.listings["src"]?.map(\.name) == ["a.ts"])
+
+        model.visibleRightPanelTab = .files
+        try await waitUntil { tree()?.listings["src"]?.map(\.name) == ["a.ts", "b.ts"] }
+        await model.refreshFiles(workspaceId: workspace.id)
+        #expect(files.listCount == 1)
+        #expect(files.listedFolders == ["src"])
+    }
+
+    /// FIL-01: the expanded folders are stored per workspace, come back after a relaunch, and Collapse All Folders
+    /// empties them.
+    @Test func expandedFoldersSurviveRelaunch() async throws {
+        let store = try RockyStore.inMemory()
+        let first = try makeModel(store: store)
+        await first.bootstrap()
+        await first.addRepo(at: try await GitFixture.localRepoOffMain(in: try Fixtures.temporaryDirectory("repos")))
+        let repoId = try #require(first.repos.first?.id)
+        await first.createWorkspace(repoId: repoId)
+        let workspace = try #require(first.workspaces[repoId]?.first)
+        try await writeFile("a\n", to: "src/a.ts", in: workspace)
+        // The first time, only the top level shows.
+        first.visibleRightPanelTab = .files
+        try await waitUntil { first.fileTrees[workspace.id]?.listings[""] != nil }
+        #expect(first.fileTrees[workspace.id]?.expanded.isEmpty == true)
+        first.setFolder("src", expanded: true, workspaceId: workspace.id)
+        #expect(try store.expandedFolders(workspaceId: workspace.id) == ["src"])
+
+        let files = FakeWorktreeFiles()
+        let relaunched = try makeModel(store: store, worktreeFiles: files)
+        await relaunched.bootstrap()
+        relaunched.selectedWorkspaceId = workspace.id
+        relaunched.visibleRightPanelTab = .files
+        try await waitUntil { relaunched.fileTrees[workspace.id]?.listings["src"]?.map(\.name) == ["a.ts"] }
+        #expect(relaunched.fileTrees[workspace.id]?.expanded == ["src"])
+        #expect(Set(files.listedFolders) == ["", "src"])
+
+        relaunched.collapseAllFolders(workspaceId: workspace.id)
+        #expect(relaunched.fileTrees[workspace.id]?.expanded.isEmpty == true)
+        #expect(try store.expandedFolders(workspaceId: workspace.id).isEmpty)
+    }
+
+    /// FIL-03: Show Ignored Files is stored per repository, column only, so another setting's save keeps it, and the
+    /// workspaces of that repository show their ignored entries.
+    @Test func showIgnoredFilesIsRememberedPerRepository() async throws {
+        let store = try RockyStore.inMemory()
+        let model = try makeModel(store: store)
+        await model.bootstrap()
+        let parent = try Fixtures.temporaryDirectory("repos")
+        await model.addRepo(at: try await GitFixture.localRepoOffMain(in: parent, name: "one"))
+        await model.addRepo(at: try await GitFixture.localRepoOffMain(in: parent, name: "two"))
+        let one = try #require(model.repos.first { $0.name == "one" })
+        let two = try #require(model.repos.first { $0.name == "two" })
+        #expect(!one.showsIgnoredFiles)
+
+        model.setShowsIgnoredFiles(true, repoId: one.id)
+        model.setLinkedPaths(repoId: one.id, ".env.local")
+        #expect(model.repo(id: one.id)?.showsIgnoredFiles == true)
+        #expect(model.repo(id: two.id)?.showsIgnoredFiles == false)
+
+        let relaunched = try makeModel(store: store)
+        await relaunched.bootstrap()
+        #expect(relaunched.repo(id: one.id)?.showsIgnoredFiles == true)
+        #expect(relaunched.repo(id: two.id)?.showsIgnoredFiles == false)
+        #expect(relaunched.repo(id: one.id)?.linkedPaths == ".env.local")
+
+        await relaunched.createWorkspace(repoId: one.id)
+        let workspace = try #require(relaunched.workspaces[one.id]?.first)
+        #expect(relaunched.showsIgnoredFiles(workspaceId: workspace.id))
+        try await writeFile("dist/\n", to: ".gitignore", in: workspace)
+        try await writeFile("built\n", to: "dist/out.js", in: workspace)
+        relaunched.visibleRightPanelTab = .files
+        try await waitUntil { relaunched.fileTrees[workspace.id]?.list != nil && relaunched.fileTrees[workspace.id]?.listings[""] != nil }
+        let state = try #require(relaunched.fileTrees[workspace.id])
+        let list = try #require(state.list)
+        let rows = FileTree.rows(listings: state.listings, expanded: state.expanded, list: list, showsIgnored: true)
+        #expect(rows.first { $0.path == "dist" }?.isIgnored == true)
+        #expect(rows.first { $0.path == ".gitignore" }?.isIgnored == false)
+    }
+
+    // MARK: Opening files (FIL-05)
+
+    /// FIL-05 (Review Focus 8): a single click in the tree opens the workspace's one preview tab, in place of the
+    /// last preview; a kept tab is only shown; the Changes tab's open keeps the preview of its file; closing the preview
+    /// forgets it.
+    @Test func aSingleClickReplacesThePreviewTab() async throws {
+        let (model, workspace) = try await watchedWorkspace(watchers: FakeWatchers())
+        model.openDiff(workspaceId: workspace.id, path: "kept.md")
+        model.openFromTree(workspaceId: workspace.id, path: "a.md", keep: false)
+        #expect(model.diffTabs[workspace.id] == ["kept.md", "a.md"])
+        #expect(model.previewTabs[workspace.id] == "a.md")
+
+        model.openFromTree(workspaceId: workspace.id, path: "b.md", keep: false)
+        #expect(model.diffTabs[workspace.id] == ["kept.md", "b.md"])
+        #expect(model.previewTabs[workspace.id] == "b.md")
+        #expect(model.selectedDiffTabs[workspace.id] == "b.md")
+
+        model.openFromTree(workspaceId: workspace.id, path: "kept.md", keep: false)
+        #expect(model.diffTabs[workspace.id] == ["kept.md", "b.md"])
+        #expect(model.previewTabs[workspace.id] == "b.md")
+        #expect(model.selectedDiffTabs[workspace.id] == "kept.md")
+
+        model.openDiff(workspaceId: workspace.id, path: "b.md")
+        #expect(model.previewTabs[workspace.id] == nil)
+        model.openFromTree(workspaceId: workspace.id, path: "c.md", keep: false)
+        #expect(model.diffTabs[workspace.id] == ["kept.md", "b.md", "c.md"])
+        model.closeDiff(workspaceId: workspace.id, path: "c.md")
+        #expect(model.previewTabs[workspace.id] == nil)
+    }
+
+    /// FIL-05: a double-click on the row (its second click) or on the preview tab keeps it; a double-click on another
+    /// row replaces the preview with a kept tab.
+    @Test func aDoubleClickKeepsThePreview() async throws {
+        let (model, workspace) = try await watchedWorkspace(watchers: FakeWatchers())
+        model.openFromTree(workspaceId: workspace.id, path: "a.md", keep: false)
+        model.openFromTree(workspaceId: workspace.id, path: "a.md", keep: true)
+        #expect(model.previewTabs[workspace.id] == nil)
+        model.openFromTree(workspaceId: workspace.id, path: "b.md", keep: false)
+        #expect(model.diffTabs[workspace.id] == ["a.md", "b.md"])
+
+        model.keepPreview(workspaceId: workspace.id)
+        #expect(model.previewTabs[workspace.id] == nil)
+        model.openFromTree(workspaceId: workspace.id, path: "c.md", keep: false)
+        #expect(model.diffTabs[workspace.id] == ["a.md", "b.md", "c.md"])
+
+        model.openFromTree(workspaceId: workspace.id, path: "d.md", keep: true)
+        #expect(model.diffTabs[workspace.id] == ["a.md", "b.md", "d.md"])
+        #expect(model.previewTabs[workspace.id] == nil)
+    }
+
+    /// FIL-05 (Review Focus 8): the first edit keeps the preview, so the next click opens another tab and the edits
+    /// stay; setting the text it already has is no edit.
+    @Test func theFirstEditKeepsThePreview() async throws {
+        let (model, workspace) = try await watchedWorkspace(watchers: FakeWatchers())
+        let readme = AppModel.editorPath(worktree: workspace.path, relativePath: "README.md")
+        model.openFromTree(workspaceId: workspace.id, path: "README.md", keep: false)
+        await model.openEditor(workspaceId: workspace.id, path: readme)
+        model.setEditorText("hello\n", workspaceId: workspace.id, path: readme)
+        #expect(model.previewTabs[workspace.id] == "README.md")
+
+        model.setEditorText("hello there\n", workspaceId: workspace.id, path: readme)
+        #expect(model.previewTabs[workspace.id] == nil)
+        model.openFromTree(workspaceId: workspace.id, path: "notes.md", keep: false)
+        #expect(model.diffTabs[workspace.id] == ["README.md", "notes.md"])
+        #expect(model.isEditorDirty(workspaceId: workspace.id, path: readme))
+    }
+
+    /// FIL-05: a file in Changes opens in Diff mode, or as its open tab was left; any other file in Edit.
+    @Test func aChangedFileOpensInDiffAndAnUnchangedOneInEdit() async throws {
+        let (model, workspace) = try await watchedWorkspace(watchers: FakeWatchers())
+        try await write("draft\n", to: "notes.md", in: workspace)
+        model.visibleRightPanelTab = .files
+        try await waitUntil { model.changes[workspace.id]?.files.map(\.path) == ["notes.md"] }
+
+        model.openFromTree(workspaceId: workspace.id, path: "notes.md", keep: true)
+        #expect(model.diffMode(workspaceId: workspace.id, path: "notes.md") == .diff)
+        model.setDiffMode(.edit, workspaceId: workspace.id, path: "notes.md")
+        model.openFromTree(workspaceId: workspace.id, path: "notes.md", keep: false)
+        #expect(model.diffMode(workspaceId: workspace.id, path: "notes.md") == .edit)
+
+        model.openFromTree(workspaceId: workspace.id, path: "README.md", keep: true)
+        #expect(model.diffMode(workspaceId: workspace.id, path: "README.md") == .edit)
+        #expect(model.diffTabs[workspace.id] == ["notes.md", "README.md"])
+    }
+
+    /// FIL-05 with DIFF-05: a badge's worktree file, spelled as FSEvents resolves it (`/private/var/…`), opens the same
+    /// worktree tab as the tree, with one buffer; a file outside the worktree keeps its file tab.
+    @Test func aBadgeInsideTheWorktreeOpensItsWorktreeTab() async throws {
+        let (model, workspace) = try await watchedWorkspace(watchers: FakeWatchers())
+        model.visibleRightPanelTab = .files
+        try await waitUntil { model.changes[workspace.id] != nil }
+        let worktree = URL(fileURLWithPath: workspace.path)
+        let canonical = await Task.blocking { FileWatcher.canonicalPath(worktree) }.value
+        #expect(canonical.hasPrefix("/private/") || !workspace.path.hasPrefix("/var/"))
+
+        model.openBadgeFile(workspaceId: workspace.id, path: canonical + "/README.md")
+        #expect(model.selectedDiffTabs[workspace.id] == "README.md")
+        #expect(model.diffMode(workspaceId: workspace.id, path: "README.md") == .edit)
+        #expect((model.openFiles[workspace.id] ?? []).isEmpty)
+
+        model.openFromTree(workspaceId: workspace.id, path: "README.md", keep: false)
+        #expect(model.diffTabs[workspace.id] == ["README.md"])
+        #expect(model.previewTabs[workspace.id] == nil)
+        await model.openEditor(workspaceId: workspace.id, path: AppModel.editorPath(worktree: workspace.path, relativePath: "README.md"))
+        #expect(model.editors[workspace.id]?.count == 1)
+
+        model.openBadgeFile(workspaceId: workspace.id, path: "/elsewhere/notes.md")
+        #expect(model.openFiles[workspace.id] == ["/elsewhere/notes.md"])
+    }
+
+    /// FIL-05's Reveal: the panel's tab turns to All files, the file's folders are expanded and stored, and once the
+    /// tab shows they are read down to the file's row.
+    @Test func revealExpandsTheFilesFolders() async throws {
+        let (model, workspace) = try await watchedWorkspace(watchers: FakeWatchers())
+        try await writeFile("a\n", to: "src/api/a.ts", in: workspace)
+        model.rightPanelTabs[workspace.id] = .changes
+        model.reveal(workspaceId: workspace.id, path: "src/api/a.ts")
+        #expect(model.rightPanelTab(workspaceId: workspace.id) == .files)
+        #expect(model.fileTrees[workspace.id]?.expanded == ["src", "src/api"])
+        #expect(try model.store.expandedFolders(workspaceId: workspace.id) == ["src", "src/api"])
+        #expect(model.revealedPaths[workspace.id] == "src/api/a.ts")
+
+        model.visibleRightPanelTab = .files
+        try await waitUntil { model.fileTrees[workspace.id]?.listings["src/api"]?.map(\.name) == ["a.ts"] }
+        model.revealHandled(workspaceId: workspace.id)
+        #expect(model.revealedPaths[workspace.id] == nil)
+    }
+
+    /// FIL-04's Go to File: the panel's tab turns to All files and asks its filter to take the keyboard, until that
+    /// workspace's tab says it did.
+    @Test func goToFileSelectsTheAllFilesTab() async throws {
+        let (model, workspace) = try await watchedWorkspace(watchers: FakeWatchers())
+        #expect(model.rightPanelTab(workspaceId: workspace.id) == .changes)
+        model.goToFile(workspaceId: workspace.id)
+        #expect(model.rightPanelTab(workspaceId: workspace.id) == .files)
+        #expect(model.goToFileRequest == workspace.id)
+        model.goToFileHandled(workspaceId: "another")
+        #expect(model.goToFileRequest == workspace.id)
+        model.goToFileHandled(workspaceId: workspace.id)
+        #expect(model.goToFileRequest == nil)
+    }
+
+    @Test func worktreeRelativePathIsOnlyForFilesInsideTheWorktree() {
+        #expect(AppModel.worktreeRelativePath(of: "/w/tokyo/src/a.ts", worktree: "/w/tokyo") == "src/a.ts")
+        #expect(AppModel.worktreeRelativePath(of: "/w/tokyo/a.ts", worktree: "/w/tokyo/") == "a.ts")
+        #expect(AppModel.worktreeRelativePath(of: "/w/tokyo-2/a.ts", worktree: "/w/tokyo") == nil)
+        #expect(AppModel.worktreeRelativePath(of: "/w/tokyo", worktree: "/w/tokyo") == nil)
+        #expect(AppModel.worktreeRelativePath(of: "/w/tokyo/", worktree: "/w/tokyo") == nil)
     }
 
     @Test func environmentCaptureFailureFallsBackAndReports() async throws {

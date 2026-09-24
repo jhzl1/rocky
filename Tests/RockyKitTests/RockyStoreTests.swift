@@ -216,6 +216,127 @@ struct RockyStoreTests {
         #expect(saved.storedPullRequest?.number == 4525)
     }
 
+    // MARK: Review comments (M3, CMT-03)
+
+    /// v9 adds the `diffComment` table: a v8 database opens with its rows and then keeps comments, their snippet and
+    /// context as they were written (a CRLF line keeps its "\r").
+    @Test func commentsMigrationCreatesTheTable() throws {
+        let path = try Fixtures.temporaryDirectory("store").appendingPathComponent("rocky.sqlite").path
+        let v8 = try DatabaseQueue(path: path)
+        try RockyStore.migrator.migrate(v8, upTo: "v8")
+        try v8.write { db in
+            try db.execute(sql: "INSERT INTO repo (id, name, path, colorIndex, createdAt) VALUES ('r1', 'app', '/r/app', 2, '2026-09-01 10:00:00.000')")
+            try db.execute(sql: """
+                INSERT INTO workspace (id, repoId, name, path, branch, port, createdAt)
+                VALUES ('w1', 'r1', 'lisbon', '/r/app-worktrees/lisbon', 'rocky/lisbon', 41000, '2026-09-01 10:00:00.000')
+                """)
+        }
+        try v8.close()
+
+        let store = try RockyStore(path: path)
+        #expect(try store.repos().first?.colorIndex == 2)
+        #expect(try store.workspaces(repoId: "r1").map(\.name) == ["lisbon"])
+        #expect(try store.comments(workspaceId: "w1").isEmpty)
+        let comment = DiffCommentRecord(
+            workspaceId: "w1",
+            path: "src/a.ts",
+            side: .old,
+            startLine: 3,
+            endLine: 4,
+            snippet: ["let a = 1", "let b = 2\r"],
+            contextBefore: ["// top"],
+            contextAfter: [],
+            body: "Why were these removed?",
+            createdAt: day
+        )
+        try store.saveComment(comment)
+        #expect(try store.comments(workspaceId: "w1") == [comment])
+    }
+
+    /// Comments come oldest first, are replaced by id and deleted one by one; removing their workspace removes them,
+    /// and another workspace's stay.
+    @Test func removingAWorkspaceRemovesItsComments() throws {
+        let store = try RockyStore.inMemory()
+        let repo = Repo(name: "app", path: "/dev/app")
+        try store.add(repo)
+        let lisbon = Workspace(repoId: repo.id, name: "lisbon", path: "/p", branch: "rocky/lisbon")
+        let oslo = Workspace(repoId: repo.id, name: "oslo", path: "/q", branch: "rocky/oslo")
+        try store.add(lisbon)
+        try store.add(oslo)
+        let first = DiffCommentRecord(workspaceId: lisbon.id, path: "a.ts", side: .new, startLine: 1, endLine: 1, snippet: ["a"], body: "One", createdAt: day)
+        var second = DiffCommentRecord(workspaceId: lisbon.id, path: "b.ts", side: .new, startLine: 2, endLine: 5, snippet: ["b"], body: "Two", createdAt: day.addingTimeInterval(60))
+        let other = DiffCommentRecord(workspaceId: oslo.id, path: "a.ts", side: .new, startLine: 1, endLine: 1, snippet: ["a"], body: "Elsewhere", createdAt: day)
+        for comment in [second, first, other] {
+            try store.saveComment(comment)
+        }
+        #expect(try store.comments(workspaceId: lisbon.id) == [first, second])
+
+        second.state = .sent
+        second.sentAt = day.addingTimeInterval(120)
+        try store.saveComment(second)
+        #expect(try store.comments(workspaceId: lisbon.id) == [first, second])
+        try store.deleteComment(id: first.id)
+        #expect(try store.comments(workspaceId: lisbon.id) == [second])
+
+        try store.deleteWorkspace(id: lisbon.id)
+        #expect(try store.comments(workspaceId: lisbon.id).isEmpty)
+        #expect(try store.comments(workspaceId: oslo.id) == [other])
+    }
+
+    /// FIL-01, FIL-03: a database at the previous migration opens, gains the expanded folders' table and the
+    /// repository's Show Ignored Files (off), and keeps its rows.
+    @Test func treeStateMigrationAddsItsTableAndColumn() throws {
+        let path = try Fixtures.temporaryDirectory("store").appendingPathComponent("rocky.sqlite").path
+        let v9 = try DatabaseQueue(path: path)
+        try RockyStore.migrator.migrate(v9, upTo: "v9")
+        try v9.write { db in
+            try db.execute(sql: "INSERT INTO repo (id, name, path, colorIndex, createdAt) VALUES ('r1', 'app', '/r/app', 2, '2026-09-01 10:00:00.000')")
+            try db.execute(sql: """
+                INSERT INTO workspace (id, repoId, name, path, branch, port, createdAt)
+                VALUES ('w1', 'r1', 'lisbon', '/r/app-worktrees/lisbon', 'rocky/lisbon', 41000, '2026-09-01 10:00:00.000')
+                """)
+        }
+        try v9.close()
+
+        let store = try RockyStore(path: path)
+        let repo = try #require(try store.repos().first)
+        #expect(repo.colorIndex == 2)
+        #expect(repo.showsIgnoredFiles == false)
+        #expect(try store.workspaces(repoId: "r1").map(\.name) == ["lisbon"])
+        #expect(try store.expandedFolders(workspaceId: "w1").isEmpty)
+
+        try store.setShowsIgnoredFiles(true, repoId: "r1")
+        #expect(try store.repos().first?.showsIgnoredFiles == true)
+        // Column-only: the other settings stay as they were.
+        #expect(try store.repos().first?.colorIndex == 2)
+        try store.setExpandedFolders(["src", "src/api"], workspaceId: "w1")
+        #expect(try store.expandedFolders(workspaceId: "w1") == ["src", "src/api"])
+    }
+
+    /// FIL-01: the expanded folders are replaced as a set, kept per workspace, and go with their workspace.
+    @Test func expandedFoldersRoundTripAndGoWithTheWorkspace() throws {
+        let store = try RockyStore.inMemory()
+        let repo = Repo(name: "app", path: "/dev/app")
+        try store.add(repo)
+        let lisbon = Workspace(repoId: repo.id, name: "lisbon", path: "/p", branch: "rocky/lisbon")
+        let oslo = Workspace(repoId: repo.id, name: "oslo", path: "/q", branch: "rocky/oslo")
+        try store.add(lisbon)
+        try store.add(oslo)
+
+        try store.setExpandedFolders(["src", "src/api", "docs"], workspaceId: lisbon.id)
+        try store.setExpandedFolders(["src"], workspaceId: oslo.id)
+        #expect(try store.expandedFolders(workspaceId: lisbon.id) == ["src", "src/api", "docs"])
+        try store.setExpandedFolders(["src"], workspaceId: lisbon.id)
+        #expect(try store.expandedFolders(workspaceId: lisbon.id) == ["src"])
+        try store.setExpandedFolders([], workspaceId: lisbon.id)
+        #expect(try store.expandedFolders(workspaceId: lisbon.id).isEmpty)
+
+        try store.setExpandedFolders(["a"], workspaceId: lisbon.id)
+        try store.deleteWorkspace(id: lisbon.id)
+        #expect(try store.expandedFolders(workspaceId: lisbon.id).isEmpty)
+        #expect(try store.expandedFolders(workspaceId: oslo.id) == ["src"])
+    }
+
     @Test func persistsAcrossReopen() throws {
         let path = try Fixtures.temporaryDirectory("db").appendingPathComponent("rocky.sqlite").path
         try RockyStore(path: path).add(Repo(name: "app", path: "/dev/app"))

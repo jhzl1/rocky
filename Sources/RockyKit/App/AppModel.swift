@@ -111,6 +111,20 @@ public final class AppModel {
     public private(set) var workspaces: [String: [Workspace]] = [:]
     public var selectedWorkspaceId: String? {
         didSet {
+            if oldValue != selectedWorkspaceId {
+                // The workspace left behind stops reading comments (REV-01) and drops its full diff (GIT-01): only the
+                // selected workspace keeps one. The new workspace's panel says what it shows once it appears.
+                if let oldValue {
+                    pullRequests.setCommentsVisible(false, workspaceId: oldValue)
+                    changes[oldValue] = nil
+                    // FIL-07: a workspace that is not selected keeps nothing of its All files tab and reads nothing.
+                    fileTrees[oldValue] = nil
+                    staleFileTrees[oldValue] = nil
+                }
+                visibleRightPanelTab = nil
+                // A diff tab on screen in the new workspace needs its full diff at once (DIFF-01), panel or not.
+                refreshShownChangesIfStale()
+            }
             // Seeing a workspace reads what finished there (ROW-04).
             if let selectedWorkspaceId, isWindowActive { unreadWorkspaceIds.remove(selectedWorkspaceId) }
             // Opened again at the next launch (user decision, 2026-09-23).
@@ -176,8 +190,50 @@ public final class AppModel {
     @ObservationIgnored private var knownGitHubRepositories: [String: GitHubRepository] = [:]
     /// Shows a line in the window's toast (`GST-02`, `GST-03`, `ERR-01`); set by the app.
     @ObservationIgnored public var onToast: (@MainActor (String) -> Void)?
-    /// The tab each workspace's right panel shows (`PNL-03`), in memory; none is Checks.
+    /// The tab each workspace's right panel shows (`PNL-03`), in memory; none is Changes (`rightPanelTab(workspaceId:)`).
     public var rightPanelTabs: [String: RightPanelTab] = [:]
+    /// The tab the selected workspace's right panel shows while the panel is open, else nil. Set by `RightPanel`. It
+    /// decides what runs: REV-01's comments are read while it is Checks, the full diff is computed while it is Changes
+    /// or All files (`showsChanges(workspaceId:)`), and the worktree's files are read while it is All files
+    /// (`showsFiles(workspaceId:)`, FIL-07).
+    public var visibleRightPanelTab: RightPanelTab? = nil {
+        didSet {
+            guard visibleRightPanelTab != oldValue else { return }
+            if let selectedWorkspaceId {
+                pullRequests.setCommentsVisible(visibleRightPanelTab == .checks, workspaceId: selectedWorkspaceId)
+            }
+            refreshShownChangesIfStale()
+            refreshShownFilesIfNeeded()
+        }
+    }
+    /// GIT-03: every workspace's `+A −D` and changed file count, from `GitChangesService.shortstat` after each change
+    /// on disk, or from its full diff while that is computed. In memory; computed once when the workspace is loaded.
+    public private(set) var diffStats: [String: DiffStat] = [:]
+    /// GIT-01: the selected workspace's changes against its base, computed while it shows them
+    /// (`showsChanges(workspaceId:)`) and dropped when another workspace is selected.
+    public private(set) var changes: [String: WorkspaceChanges] = [:]
+    /// ERR-02: the last git failure of each workspace's Changes tab.
+    public private(set) var changesFailures: [String: ChangesFailure] = [:]
+    /// GIT-04: each workspace's commit sheet state while its commit runs, and after a failure until the sheet closes
+    /// (`dismissCommit`). The Changes tab shows its sheet while there is one, so a sheet that went with its tab (a
+    /// workspace switch from the menu) comes back with it.
+    public private(set) var commits: [String: CommitProgress] = [:]
+    /// GIT-01: each workspace's FSEvents stream, from `watchWorkspace`.
+    @ObservationIgnored private let watchWorkspace: @Sendable (URL, @escaping @Sendable (FolderEvents) -> Void) -> any WorkspaceWatch
+    @ObservationIgnored private var watchers: [String: any WorkspaceWatch] = [:]
+    /// The workspaces whose stream is running or starting; a stream that finishes starting for a workspace no longer
+    /// here is stopped at once.
+    @ObservationIgnored private var watchedWorkspaceIds: Set<String> = []
+    /// Workspaces that changed on disk while their full diff was not computed (hidden, or git busy): it is computed
+    /// again when it shows.
+    @ObservationIgnored private var staleChanges: Set<String> = []
+    /// Each workspace's git refresh in flight, so events that arrive meanwhile become one more run, not more processes.
+    @ObservationIgnored private var gitRefreshes: [String: GitRefresh] = [:]
+
+    private struct GitRefresh {
+        let task: Task<Void, Never>
+        var runsAgain = false
+    }
     /// The pull request actions running in each workspace, so their buttons spin and ignore a second click.
     public private(set) var runningPullRequestActions: [String: Set<PullRequestAction>] = [:]
     /// `PR-05`: the merge method each workspace picked from the menu, until Rocky quits (user decision: never stored).
@@ -233,6 +289,67 @@ public final class AppModel {
     public private(set) var openFiles: [String: [String]] = [:]
     /// The file tab each workspace shows instead of its conversation; none shows the selected conversation.
     public private(set) var selectedFiles: [String: String] = [:]
+    /// DIFF-01: each workspace's diff tabs, worktree-relative paths in tab order, drawn after its file tabs. One tab per
+    /// file. A path that leaves `changes` keeps its tab, which then shows the file unchanged (the plan's "one tab per
+    /// worktree file"). Kept only while Rocky runs.
+    public private(set) var diffTabs: [String: [String]] = [:]
+    /// The diff tab each workspace shows instead of its conversation. At most one of this and `selectedFiles` is set
+    /// for a workspace. A diff tab on screen keeps the workspace's full diff computed (`showsChanges(workspaceId:)`).
+    public private(set) var selectedDiffTabs: [String: String] = [:] {
+        didSet { refreshShownChangesIfStale() }
+    }
+    /// Each diff tab's mode (`DIFF-01`'s Diff | Edit), by workspace and path; a tab without one shows its diff.
+    public private(set) var diffTabModes: [String: [String: DiffTabMode]] = [:]
+    /// DIFF-05: the diff tab each workspace was last asked to scroll to its first hunk.
+    public private(set) var diffScrollRequests: [String: DiffScrollRequest] = [:]
+    /// CMT-03: each workspace's review comments on its diffs, oldest first, read from the store once when the model
+    /// loads the workspace and dropped with it.
+    public private(set) var diffComments: [String: [DiffCommentRecord]] = [:]
+    /// EDIT-01…EDIT-03: the files open in the editor, by workspace and absolute path (a diff tab's file through
+    /// `editorPath(worktree:relativePath:)`, a file tab's path as it is). One buffer per file, whichever tabs show it,
+    /// so two tabs never hold two versions of one file. Kept while a tab of the workspace holds the file, in memory only:
+    /// unsaved edits stay across tab and workspace switches until the tab closes.
+    public private(set) var editors: [String: [String: EditorState]] = [:]
+    /// EDIT-04: each worktree file's text at the workspace's base, by worktree-relative path, read once per base and
+    /// path (`loadEditorBase`).
+    public private(set) var editorBases: [String: [String: EditorBase]] = [:]
+    /// The editors whose save is on its way ("workspace id" NUL "path"), so a second ⌘S writes nothing.
+    @ObservationIgnored private var savingEditors: Set<String> = []
+    /// FIL-01…FIL-07: the selected workspace's All files tab, git's list and the folders read so far, filled while the
+    /// tab shows and dropped when another workspace is selected. Its expanded folders are stored per workspace.
+    public private(set) var fileTrees: [String: FileTreeState] = [:]
+    /// What changed on disk since the tab's last read (FIL-07): events while it is hidden only mark it here, and
+    /// showing it reads what is marked.
+    @ObservationIgnored private var staleFileTrees: [String: StaleFileTree] = [:]
+    /// Each workspace's file reads in flight, so events that arrive meanwhile become one more run, not more processes.
+    @ObservationIgnored private var fileReads: [String: FileRead] = [:]
+    /// Each worktree's path as FSEvents reports it (`FileWatcher.canonicalPath`, `/private/var/…` for `/var/…`), resolved
+    /// once off the main actor when its stream starts: the tree's events and the badges' paths are matched with it.
+    @ObservationIgnored private var canonicalWorktrees: [String: String] = [:]
+    /// The All files tab's reads (`WorktreeFiles`); tests pass their own.
+    @ObservationIgnored private let worktreeFiles: @Sendable ([String: String]) -> any WorktreeFileReading
+    /// FIL-05: each workspace's one preview tab, a worktree-relative path of `diffTabs`: the tree's single click opens
+    /// it or replaces it; a double-click, a double-click on its tab or the first edit keeps it (it leaves this).
+    public private(set) var previewTabs: [String: String] = [:]
+    /// FIL-05's Reveal: the row each workspace's All files tab is to scroll into view, once it is drawn; the tab clears
+    /// it (`revealHandled`).
+    public private(set) var revealedPaths: [String: String] = [:]
+    /// FIL-04's Go to File: the workspace whose All files tab is to focus its filter and select its text; the tab
+    /// clears it (`goToFileHandled`).
+    public private(set) var goToFileRequest: String?
+
+    private struct StaleFileTree: Sendable {
+        var list = false
+        /// Worktree-relative folders whose rows show and whose listings an event named.
+        var folders: Set<String> = []
+    }
+
+    private struct FileRead {
+        let task: Task<Void, Never>
+        var runsAgain = false
+    }
+    /// The workspaces whose review (CMT-05) is on its way, so a second click sends nothing.
+    @ObservationIgnored private var sendingReviews: Set<String> = []
     /// The last command list each repository's agent announced (KIT-01), so a new conversation has one while its own
     /// agent starts. In memory only: the agent sends it again after every start. Observed: the popup shows it.
     private var lastCommands: [CommandListKey: [SlashCommand]] = [:]
@@ -275,8 +392,19 @@ public final class AppModel {
         lookUpGitHubRepository: @escaping @Sendable (_ clone: URL, _ environment: [String: String]) -> GitHubRepository? = { clone, environment in
             GitHubRemote.repository(ofClone: clone, environment: environment)
         },
-        githubSession: URLSession = GitHubClient.makeSession()
+        githubSession: URLSession = GitHubClient.makeSession(),
+        watchWorkspace: @escaping @Sendable (_ worktree: URL, _ onChange: @escaping @Sendable (FolderEvents) -> Void) -> any WorkspaceWatch = { worktree, onChange in
+            FileWatcher(
+                paths: FileWatcher.workspacePaths(worktree: worktree),
+                excluding: FileWatcher.excludedFolders,
+                debounce: FileWatcher.debounce,
+                onChange: onChange
+            )
+        },
+        worktreeFiles: @escaping @Sendable (_ environment: [String: String]) -> any WorktreeFileReading = { WorktreeFiles(environment: $0) }
     ) {
+        self.watchWorkspace = watchWorkspace
+        self.worktreeFiles = worktreeFiles
         let loaderBox = PullRequestLoaderBox()
         self.pullRequests = PullRequestMonitor(store: store, load: { workspaceId, includeLocal, comments in
             guard let model = loaderBox.model else { throw CancellationError() }
@@ -697,6 +825,17 @@ public final class AppModel {
             processes.removeValue(forKey: id)
             fetchedPullRequestHeads[id] = nil
             rightPanelTabs[id] = nil
+            diffTabs[id] = nil
+            selectedDiffTabs[id] = nil
+            diffTabModes[id] = nil
+            diffScrollRequests[id] = nil
+            editors[id] = nil
+            editorBases[id] = nil
+            previewTabs[id] = nil
+            revealedPaths[id] = nil
+            if goToFileRequest == id { goToFileRequest = nil }
+            fileTrees[id] = nil
+            staleFileTrees[id] = nil
             mergeMethodPicks[id] = nil
             mergeConfirmations[id] = nil
             mergeErrors[id] = nil
@@ -738,7 +877,7 @@ public final class AppModel {
     /// Switches the workspace to one of its tabs. The agent of the tab left behind keeps running.
     public func showConversation(workspace: Workspace, conversationId: String) async {
         selectedConversationIds[workspace.id] = conversationId
-        selectedFiles[workspace.id] = nil
+        showConversationTab(workspaceId: workspace.id)
         if chats[conversationId] == nil {
             guard let record = try? store.session(id: conversationId), let agent = AgentKind(rawValue: record.agent) else { return }
             do {
@@ -759,7 +898,7 @@ public final class AppModel {
             try store.add(record)
             reloadConversations(workspaceId: workspace.id)
             selectedConversationIds[workspace.id] = record.id
-            selectedFiles[workspace.id] = nil
+            showConversationTab(workspaceId: workspace.id)
             let chat = try await makeChat(workspace: workspace, record: record, agent: agent)
             startInBackground(chat)
             return chat
@@ -788,18 +927,28 @@ public final class AppModel {
         var files = openFiles[workspaceId] ?? []
         if !files.contains(path) { files.append(path) }
         openFiles[workspaceId] = files
+        selectedDiffTabs[workspaceId] = nil
         selectedFiles[workspaceId] = path
     }
 
     public func showFile(workspaceId: String, path: String) {
         guard openFiles[workspaceId]?.contains(path) == true else { return }
+        selectedDiffTabs[workspaceId] = nil
         selectedFiles[workspaceId] = path
     }
 
-    /// Closes a file tab; if it was on screen, the selected conversation comes back.
+    /// The selected conversation comes back over the workspace's file and diff tabs, which stay open.
+    private func showConversationTab(workspaceId: String) {
+        selectedFiles[workspaceId] = nil
+        selectedDiffTabs[workspaceId] = nil
+    }
+
+    /// Closes a file tab; if it was on screen, the selected conversation comes back. Its editor goes with it, unsaved
+    /// edits included (the tab asks first, `EDIT-02`), unless a diff tab shows the same file.
     public func closeFile(workspaceId: String, path: String) {
         openFiles[workspaceId]?.removeAll { $0 == path }
         if selectedFiles[workspaceId] == path { selectedFiles[workspaceId] = nil }
+        dropEditorIfUnused(workspaceId: workspaceId, path: path)
     }
 
     /// Returns the workspace's last open conversation with `agent` (or a new one), started.
@@ -1404,14 +1553,28 @@ public final class AppModel {
     /// the workspace shows that conversation instead of a file tab. Never queued (user decision): while its turn runs,
     /// or with its agent stopped, nothing is sent, also when the turn started while this one waited. Returns when the
     /// turn ends, whose end refreshes the pull request (`PR-07`).
-    public func sendAgentAction(workspaceId: String, text: String, attachments: [URL]) async {
+    ///
+    /// `willSend` runs right before the prompt goes out, and only if it does: the agent is started first, so a start
+    /// that fails, or a turn the user began meanwhile, sends nothing and calls nothing (`CMT-05`'s Sent).
+    public func sendAgentAction(
+        workspaceId: String,
+        text: String,
+        attachments: [URL],
+        willSend: (@MainActor () -> Void)? = nil
+    ) async {
         guard agentActionAvailability(workspaceId: workspaceId) == .available, let workspace = workspace(id: workspaceId) else { return }
         if existingChat(workspaceId: workspaceId) == nil {
             await showConversations(workspace: workspace)
         }
         guard let chat = existingChat(workspaceId: workspaceId) else { return }
-        selectedFiles[workspaceId] = nil
+        showConversationTab(workspaceId: workspaceId)
         guard agentActionAvailability(workspaceId: workspaceId) == .available else { return }
+        if let willSend {
+            if chat.state == .idle || chat.state == .starting { await chat.start() }
+            // `send`, on this actor too, then finds the agent ready and sends at once.
+            guard chat.state == .ready else { return }
+            willSend()
+        }
         await chat.send(text, attachments: attachments)
     }
 
@@ -1785,6 +1948,1160 @@ public final class AppModel {
         }
     }
 
+    // MARK: Changes (GIT-01, GIT-03, GIT-05, CHG-01…CHG-03)
+
+    /// The tab a workspace's right panel shows: the one it picked, else Changes, the design's default (M2.7 fell back to
+    /// Checks). The pull request pill still picks Checks.
+    public func rightPanelTab(workspaceId: String) -> RightPanelTab {
+        rightPanelTabs[workspaceId] ?? .changes
+    }
+
+    /// Whether the workspace's full diff is computed on each change: it is selected and shows it, in its Changes tab, in
+    /// its All files tab (FIL-02's letters, FIL-05's "Becoming changed") or in a diff tab on screen, so an open diff
+    /// follows the agent with the panel on Checks or closed.
+    private func showsChanges(workspaceId: String) -> Bool {
+        guard workspaceId == selectedWorkspaceId else { return false }
+        return visibleRightPanelTab == .changes || visibleRightPanelTab == .files || selectedDiffTabs[workspaceId] != nil
+    }
+
+    /// GIT-01's "on a change": the sidebar's stats for every workspace, and the full diff for the one on screen. Called
+    /// on the main actor for each batch of the workspace's stream; `events` name the folders (FIL-07's tree reads them).
+    private func filesChanged(workspaceId: String, events: FolderEvents) {
+        guard workspace(id: workspaceId) != nil else { return }
+        Task { await refreshChanges(workspaceId: workspaceId) }
+        // EDIT-03: the workspace's open editors look at their files.
+        checkEditors(workspaceId: workspaceId)
+        // FIL-07: the All files tab's list and the folders the events name.
+        fileTreeChanged(workspaceId: workspaceId, events: events)
+    }
+
+    /// Runs git for the workspace now: its stats, and its full diff while it shows it (the Changes tab's Refresh, a
+    /// change on disk). Serialized per workspace: asked again while a run is in flight, it runs once more after it, so a
+    /// burst of events never piles up git processes. Returns once the workspace's state is current.
+    public func refreshChanges(workspaceId: String) async {
+        if let running = gitRefreshes[workspaceId] {
+            gitRefreshes[workspaceId]?.runsAgain = true
+            await running.task.value
+            return
+        }
+        let task = Task { await runGitRefreshes(workspaceId: workspaceId) }
+        gitRefreshes[workspaceId] = GitRefresh(task: task)
+        await task.value
+    }
+
+    private func runGitRefreshes(workspaceId: String) async {
+        repeat {
+            gitRefreshes[workspaceId]?.runsAgain = false
+            await refreshGitOnce(workspaceId: workspaceId)
+        } while gitRefreshes[workspaceId]?.runsAgain == true
+        gitRefreshes[workspaceId] = nil
+    }
+
+    /// What one git run found: the full diff and the review comments it moved (CMT-04), the stats alone, a worktree busy
+    /// with a rebase, merge or index lock (GIT-01 skips it until the next event), or git's failure.
+    private enum GitReading: Sendable {
+        case changes(WorkspaceChanges, movedComments: [DiffCommentRecord])
+        case stat(DiffStat)
+        case busy
+        case failed(String)
+    }
+
+    private func refreshGitOnce(workspaceId: String) async {
+        await launchEnvironment?.value
+        guard let workspace = workspace(id: workspaceId) else { return }
+        let wantsChanges = showsChanges(workspaceId: workspaceId)
+        let service = GitChangesService(environment: environment(for: workspace))
+        let worktree = URL(fileURLWithPath: workspace.path)
+        let baseRef = workspace.baseRef
+        // CMT-04 follows every refresh of the full diff: the comments that can move, as they are now.
+        let anchored: [DiffCommentRecord] = wantsChanges
+            ? (diffComments[workspaceId] ?? []).filter { $0.side == .new && $0.state != .outdated }
+            : []
+        let reading = await Task.blocking { () -> GitReading in
+            guard !GitChangesService.isBusy(worktree: worktree) else { return .busy }
+            do {
+                let base = try service.base(worktree: worktree, baseRef: baseRef)
+                // The full diff has the totals too: one reading, not two.
+                if wantsChanges {
+                    let found = try service.changes(worktree: worktree, base: base)
+                    let moved = CommentAnchor.reanchor(anchored) { path in
+                        let file = worktree.appendingPathComponent(path)
+                        // A file that is gone outdates its comments; one Rocky does not read (binary, over 20 MB)
+                        // leaves them where they are.
+                        guard FileManager.default.fileExists(atPath: file.path) else { return [] }
+                        return DiffLayout.readLines(of: file)
+                    }
+                    return .changes(found, movedComments: moved)
+                }
+                return .stat(try service.shortstat(worktree: worktree, base: base))
+            } catch {
+                return .failed(GitBranchService.branchError(error).description)
+            }
+        }.value
+        // Removed while git ran.
+        guard self.workspace(id: workspaceId) != nil else { return }
+        switch reading {
+        case .changes(let found, let moved):
+            if showsChanges(workspaceId: workspaceId) { changes[workspaceId] = found }
+            applyReanchoring(moved, before: Dictionary(uniqueKeysWithValues: anchored.map { ($0.id, $0) }), workspaceId: workspaceId)
+            diffStats[workspaceId] = found.stat
+            staleChanges.remove(workspaceId)
+            if changesFailures[workspaceId]?.action == .diff { changesFailures[workspaceId] = nil }
+        case .stat(let stat):
+            diffStats[workspaceId] = stat
+            staleChanges.insert(workspaceId)
+        case .busy:
+            staleChanges.insert(workspaceId)
+        case .failed(let message):
+            staleChanges.insert(workspaceId)
+            if wantsChanges { changesFailures[workspaceId] = ChangesFailure(action: .diff, message: message) }
+        }
+        // The tab came into view while git ran without it: its diff is due now.
+        if !wantsChanges { refreshShownChangesIfStale() }
+    }
+
+    /// The selected workspace's full diff, when it shows it and has none yet or changed since the last one.
+    private func refreshShownChangesIfStale() {
+        guard let workspaceId = selectedWorkspaceId, showsChanges(workspaceId: workspaceId),
+              changes[workspaceId] == nil || staleChanges.contains(workspaceId) else { return }
+        // Marked current now, so a second call before the run starts asks for nothing more.
+        staleChanges.remove(workspaceId)
+        Task { await refreshChanges(workspaceId: workspaceId) }
+    }
+
+    /// GIT-01: one stream per workspace, started when the model loads it and stopped when it goes, with the state
+    /// kept for it. A new stream reads the stats once, so the sidebar has them without waiting for a change.
+    private func syncWatchers() {
+        let ids = Set(workspaces.values.joined().map(\.id))
+        for id in watchedWorkspaceIds.subtracting(ids) {
+            watchedWorkspaceIds.remove(id)
+            watchers.removeValue(forKey: id)?.stop()
+            diffStats[id] = nil
+            changes[id] = nil
+            changesFailures[id] = nil
+            commits[id] = nil
+            staleChanges.remove(id)
+            editors[id] = nil
+            editorBases[id] = nil
+            fileTrees[id] = nil
+            staleFileTrees[id] = nil
+            canonicalWorktrees[id] = nil
+            previewTabs[id] = nil
+            revealedPaths[id] = nil
+        }
+        for workspace in workspaces.values.joined() where !watchedWorkspaceIds.contains(workspace.id) {
+            startWatching(workspace)
+        }
+    }
+
+    private func startWatching(_ workspace: Workspace) {
+        let workspaceId = workspace.id
+        watchedWorkspaceIds.insert(workspaceId)
+        let watch = watchWorkspace
+        let worktree = URL(fileURLWithPath: workspace.path)
+        let onChange: @Sendable (FolderEvents) -> Void = { [weak self] events in
+            guard let self else { return }
+            Task { @MainActor in self.filesChanged(workspaceId: workspaceId, events: events) }
+        }
+        Task {
+            // Reading the worktree's `.git` file and resolving paths touch the disk: not on the main actor.
+            let (watcher, canonical) = await Task.blocking { (watch(worktree, onChange), FileWatcher.canonicalPath(worktree)) }.value
+            guard watchedWorkspaceIds.contains(workspaceId) else {
+                watcher.stop()
+                return
+            }
+            canonicalWorktrees[workspaceId] = canonical
+            watchers[workspaceId] = watcher
+            await refreshChanges(workspaceId: workspaceId)
+        }
+    }
+
+    /// The worktree-relative path of the diff tab on screen: CHG-03's selected row and where ⌥⌘↓ / ⌥⌘↑ start.
+    public func selectedChangedFile(workspaceId: String) -> String? {
+        selectedDiffTabs[workspaceId]
+    }
+
+    /// CHG-03's ⌥⌘↓ (`step` 1) and ⌥⌘↑ (-1): the next or previous file of the Changes tab's list, in its diff tab.
+    public func showAdjacentChangedFile(workspaceId: String, step: Int) {
+        let current = selectedChangedFile(workspaceId: workspaceId)
+        guard let next = changes[workspaceId]?.file(after: current, step: step) else { return }
+        openDiff(workspaceId: workspaceId, path: next.path)
+    }
+
+    /// GIT-05: the files' uncommitted changes go, tracked ones back to HEAD and untracked ones to the Trash; committed
+    /// changes stay. The diff tabs of the files discarded close, and a failure shows in the Changes tab with git's last
+    /// lines (ERR-02).
+    public func discardChanges(workspaceId: String, paths: [String]) async {
+        guard let workspace = workspace(id: workspaceId), let current = changes[workspaceId] else { return }
+        let files = paths.compactMap { current.file(at: $0) }.filter(\.isUncommitted)
+        guard !files.isEmpty else { return }
+        let service = GitChangesService(environment: environment(for: workspace))
+        let worktree = URL(fileURLWithPath: workspace.path)
+        let targets = files.map { (path: $0.path, isUntracked: $0.isUntracked) }
+        let (discarded, failure) = await Task.blocking { () -> ([String], String?) in
+            var discarded: [String] = []
+            var failures: [String] = []
+            for target in targets {
+                do {
+                    try service.discard(worktree: worktree, path: target.path, isUntracked: target.isUntracked)
+                    discarded.append(target.path)
+                } catch {
+                    failures.append(GitBranchService.branchError(error).description)
+                }
+            }
+            return (discarded, failures.isEmpty ? nil : failures.joined(separator: "\n"))
+        }.value
+        for path in discarded {
+            closeDiff(workspaceId: workspaceId, path: path)
+        }
+        await refreshChanges(workspaceId: workspaceId)
+        if let failure {
+            changesFailures[workspaceId] = ChangesFailure(action: .discard, message: failure)
+        } else if changesFailures[workspaceId]?.action == .discard {
+            changesFailures[workspaceId] = nil
+        }
+    }
+
+    /// Hides the Changes tab's failure line.
+    public func dismissChangesFailure(workspaceId: String) {
+        changesFailures[workspaceId] = nil
+    }
+
+    // MARK: Commit (GIT-04, ERR-02)
+
+    /// What one commit came to: made, or git's failure ("git commit exited 1", or why it did not run).
+    private enum CommitOutcome: Sendable {
+        case committed
+        case failed(String)
+    }
+
+    /// GIT-04's Commit: `git add -A`, then `git commit` with `subject` and `description` (trimmed; an empty description
+    /// is left out), in the worktree with the workspace environment. Hooks run, and what they write streams into
+    /// `commits` while it runs. A failure keeps the message, the output and git's exit status for the sheet (ERR-02);
+    /// a commit that worked says "Committed" and reads the changes again. Returns whether the commit was made.
+    public func commitChanges(workspaceId: String, subject: String, description: String) async -> Bool {
+        let subject = subject.trimmingCharacters(in: .whitespacesAndNewlines)
+        let description = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard workspace(id: workspaceId) != nil, !subject.isEmpty, commits[workspaceId]?.isRunning != true else { return false }
+        commits[workspaceId] = CommitProgress(subject: subject, description: description)
+        // The login shell's environment first, or the hooks would run without the user's PATH.
+        await launchEnvironment?.value
+        guard let workspace = workspace(id: workspaceId) else {
+            commits[workspaceId] = nil
+            return false
+        }
+        let service = GitChangesService(environment: environment(for: workspace))
+        let worktree = URL(fileURLWithPath: workspace.path)
+        let body: String? = description.isEmpty ? nil : description
+        // The lines reach the sheet in the order git wrote them: one stream, read here on the main actor.
+        let (output, sink) = AsyncStream<[String]>.makeStream()
+        let run = Task.blocking { () -> CommitOutcome in
+            defer { sink.finish() }
+            do {
+                try service.commit(worktree: worktree, subject: subject, description: body) { sink.yield($0) }
+                return .committed
+            } catch let failure as GitCommitFailure {
+                return .failed(failure.summary)
+            } catch {
+                return .failed(GitBranchService.branchError(error).description)
+            }
+        }
+        for await lines in output {
+            commits[workspaceId]?.append(lines)
+        }
+        let outcome = await run.value
+        // Removed while git ran.
+        guard self.workspace(id: workspaceId) != nil else {
+            commits[workspaceId] = nil
+            return false
+        }
+        switch outcome {
+        case .committed:
+            // The workspace's stream reports the commit too; this reads it now, so the sheet closes onto the new list.
+            await refreshChanges(workspaceId: workspaceId)
+            commits[workspaceId] = nil
+            onToast?("Committed")
+            return true
+        case .failed(let message):
+            commits[workspaceId]?.fail(message)
+            return false
+        }
+    }
+
+    /// The commit sheet closed: the failure it showed goes. A commit that still runs keeps its state, and its sheet.
+    public func dismissCommit(workspaceId: String) {
+        guard commits[workspaceId]?.isRunning == false else { return }
+        commits[workspaceId] = nil
+    }
+
+    // MARK: Diff tabs (DIFF-01…DIFF-05)
+
+    /// DIFF-01: shows the worktree file at `path` (worktree-relative) in its diff tab, opening the tab after the
+    /// workspace's others if needed. A `mode` is the tab's from now on; without one a new tab shows its diff and an
+    /// open tab keeps its mode (CHG-03's click selects the tab, its Edit asks for the editor).
+    public func openDiff(workspaceId: String, path: String, mode: DiffTabMode? = nil) {
+        guard workspace(id: workspaceId) != nil else { return }
+        // Opened as a regular tab (the Changes tab, a badge, ⌥⌘↓): the preview of the same file is kept (FIL-05).
+        if previewTabs[workspaceId] == path { previewTabs[workspaceId] = nil }
+        showWorktreeTab(workspaceId: workspaceId, path: path, mode: mode)
+    }
+
+    /// The worktree tab of `path` on screen, opened after the workspace's others if needed; `mode` is its mode from now
+    /// on.
+    private func showWorktreeTab(workspaceId: String, path: String, mode: DiffTabMode?) {
+        var tabs = diffTabs[workspaceId] ?? []
+        if !tabs.contains(path) { tabs.append(path) }
+        diffTabs[workspaceId] = tabs
+        if let mode { diffTabModes[workspaceId, default: [:]][path] = mode }
+        selectedFiles[workspaceId] = nil
+        selectedDiffTabs[workspaceId] = path
+    }
+
+    public func showDiff(workspaceId: String, path: String) {
+        guard diffTabs[workspaceId]?.contains(path) == true else { return }
+        selectedFiles[workspaceId] = nil
+        selectedDiffTabs[workspaceId] = path
+    }
+
+    /// Closes a diff tab; if it was on screen, the selected conversation comes back, as for a file tab. Its editor and
+    /// base go with it, unsaved edits included (the tab asks first, `EDIT-02`), unless a file tab shows the same file.
+    public func closeDiff(workspaceId: String, path: String) {
+        diffTabs[workspaceId]?.removeAll { $0 == path }
+        if selectedDiffTabs[workspaceId] == path { selectedDiffTabs[workspaceId] = nil }
+        forgetWorktreeTab(workspaceId: workspaceId, path: path)
+    }
+
+    /// What a worktree tab that closed, or a preview that was replaced, leaves behind: its mode, its base, its preview
+    /// mark, and its editor unless a file tab shows the same file.
+    private func forgetWorktreeTab(workspaceId: String, path: String) {
+        diffTabModes[workspaceId]?[path] = nil
+        editorBases[workspaceId]?[path] = nil
+        if previewTabs[workspaceId] == path { previewTabs[workspaceId] = nil }
+        if let workspace = workspace(id: workspaceId) {
+            dropEditorIfUnused(workspaceId: workspaceId, path: Self.editorPath(worktree: workspace.path, relativePath: path))
+        }
+    }
+
+    /// The mode the tab picked. The view shows the diff of a file that cannot be edited (`FileDiff.isEditable`)
+    /// whatever was picked.
+    public func diffMode(workspaceId: String, path: String) -> DiffTabMode {
+        diffTabModes[workspaceId]?[path] ?? .diff
+    }
+
+    public func setDiffMode(_ mode: DiffTabMode, workspaceId: String, path: String) {
+        guard diffTabs[workspaceId]?.contains(path) == true else { return }
+        diffTabModes[workspaceId, default: [:]][path] = mode
+    }
+
+    /// DIFF-05 and FIL-05: a file badge of the conversation. A worktree file in Changes opens its diff tab on the diff,
+    /// scrolled to its first hunk. While the workspace's changes are not read (its panel on Checks or closed), a worktree
+    /// file opens that way too, and the tab reads them. Any other worktree file opens its worktree tab in Edit, the tab
+    /// the tree opens, so one file never has two tabs and two buffers. A file outside the worktree opens a file tab, as
+    /// before M3.
+    public func openBadgeFile(workspaceId: String, path: String) {
+        guard let workspace = workspace(id: workspaceId), let relative = worktreeRelativePath(of: path, in: workspace) else {
+            openFile(workspaceId: workspaceId, path: path)
+            return
+        }
+        if let current = changes[workspaceId], current.file(at: relative) == nil {
+            openDiff(workspaceId: workspaceId, path: relative, mode: .edit)
+            return
+        }
+        openDiff(workspaceId: workspaceId, path: relative, mode: .diff)
+        let serial = (diffScrollRequests[workspaceId]?.serial ?? 0) + 1
+        diffScrollRequests[workspaceId] = DiffScrollRequest(path: relative, serial: serial)
+    }
+
+    /// `path` relative to the workspace's worktree, when it is a file inside it: spelled as the worktree's own path, or
+    /// resolved as FSEvents reports it (`canonicalWorktrees`, `/private/var/…` for `/var/…`), so a badge whose path the
+    /// agent resolved reaches the same tab, and the same buffer, as the tree's. No disk is touched: both spellings of
+    /// the worktree are known, and a link inside it (a linked `.env`) stays the worktree's file.
+    func worktreeRelativePath(of path: String, in workspace: Workspace) -> String? {
+        if let relative = Self.worktreeRelativePath(of: path, worktree: workspace.path) { return relative }
+        guard let canonical = canonicalWorktrees[workspace.id], canonical != workspace.path else { return nil }
+        return Self.worktreeRelativePath(of: path, worktree: canonical)
+    }
+
+    /// `path` relative to the worktree at `worktree`, when it is a file inside it; nil otherwise. A plain comparison of
+    /// the absolute paths, which touches no disk: badges carry the path the agent was given, the worktree's own.
+    static func worktreeRelativePath(of path: String, worktree: String) -> String? {
+        let root = worktree.hasSuffix("/") ? worktree : worktree + "/"
+        guard path.hasPrefix(root), path.count > root.count else { return nil }
+        return String(path.dropFirst(root.count))
+    }
+
+    /// DIFF-03's "Binary file · 24 KB → 31 KB": the file's size at the base (git's object) and on disk, nil for the
+    /// side it lacks (an added file has no base, a deleted one no file).
+    public func binarySizes(workspaceId: String, path: String) async -> (old: Int?, new: Int?) {
+        guard let workspace = workspace(id: workspaceId), let current = changes[workspaceId],
+              let file = current.file(at: path) else { return (nil, nil) }
+        let service = GitChangesService(environment: environment(for: workspace))
+        let worktree = URL(fileURLWithPath: workspace.path)
+        let base = current.base
+        let oldPath: String? = file.status == .added ? nil : (file.oldPath ?? file.path)
+        let newPath: String? = file.status == .deleted ? nil : file.path
+        return await Task.blocking { () -> (old: Int?, new: Int?) in
+            let old = oldPath.flatMap { service.blobSize(worktree: worktree, commit: base, path: $0) }
+            let new = newPath.flatMap { path -> Int? in
+                let attributes = try? FileManager.default.attributesOfItem(atPath: worktree.appendingPathComponent(path).path)
+                return attributes?[.size] as? Int
+            }
+            return (old, new)
+        }.value
+    }
+
+    // MARK: All files (FIL-01…FIL-07)
+
+    /// Whether the workspace's All files tab shows now: it is selected and its panel is open on that tab. Git's list and
+    /// the folders are read only then (FIL-07).
+    private func showsFiles(workspaceId: String) -> Bool {
+        workspaceId == selectedWorkspaceId && visibleRightPanelTab == .files
+    }
+
+    /// FIL-03's Show Ignored Files of the workspace's repository.
+    public func showsIgnoredFiles(workspaceId: String) -> Bool {
+        workspace(id: workspaceId).flatMap { repo(id: $0.repoId) }?.showsIgnoredFiles ?? false
+    }
+
+    /// The selected workspace's tab state, made the first time it is needed from the expanded folders the store keeps
+    /// for it: the first time ever there are none, so only the top level shows. nil for another workspace, which keeps
+    /// nothing.
+    private func prepareFileTree(workspaceId: String) -> FileTreeState? {
+        if let state = fileTrees[workspaceId] { return state }
+        guard workspaceId == selectedWorkspaceId, workspace(id: workspaceId) != nil else { return nil }
+        var state = FileTreeState()
+        do {
+            state.expanded = try store.expandedFolders(workspaceId: workspaceId)
+        } catch {
+            errorMessage = "Could not read the expanded folders: \(error)"
+        }
+        fileTrees[workspaceId] = state
+        return state
+    }
+
+    /// FIL-07: git's list when the tab has none or it is stale, and the listings its rows need that are missing or
+    /// stale. When the tab is hidden, or everything is current, nothing runs.
+    private func refreshShownFilesIfNeeded() {
+        guard let workspaceId = selectedWorkspaceId, showsFiles(workspaceId: workspaceId),
+              let state = prepareFileTree(workspaceId: workspaceId), needsRead(state, workspaceId: workspaceId) else { return }
+        Task { await refreshFiles(workspaceId: workspaceId) }
+    }
+
+    private func needsRead(_ state: FileTreeState, workspaceId: String) -> Bool {
+        let stale = staleFileTrees[workspaceId]
+        if state.list == nil || stale?.list == true { return true }
+        let shown = FileTree.shownFolders(
+            listings: state.listings,
+            expanded: state.expanded,
+            list: state.list,
+            showsIgnored: showsIgnoredFiles(workspaceId: workspaceId)
+        )
+        return shown.contains { state.listings[$0] == nil || stale?.folders.contains($0) == true }
+    }
+
+    /// Reads what the shown tab needs, serialized per workspace like `refreshChanges`: asked again while a read is in
+    /// flight, it reads once more after it. Returns once the tab's state is current.
+    func refreshFiles(workspaceId: String) async {
+        if let running = fileReads[workspaceId] {
+            fileReads[workspaceId]?.runsAgain = true
+            await running.task.value
+            return
+        }
+        let task = Task { await runFileReads(workspaceId: workspaceId) }
+        fileReads[workspaceId] = FileRead(task: task)
+        await task.value
+    }
+
+    private func runFileReads(workspaceId: String) async {
+        repeat {
+            fileReads[workspaceId]?.runsAgain = false
+            await readFilesOnce(workspaceId: workspaceId)
+        } while fileReads[workspaceId]?.runsAgain == true
+        fileReads[workspaceId] = nil
+    }
+
+    /// What one read found: git's list when it was read, its failure, and the folders read.
+    private struct FileTreeReading: Sendable {
+        var list: FileList?
+        var listFailure: String?
+        var listings: [String: [FileEntry]] = [:]
+    }
+
+    /// One read, in one blocking job: `ls-files` when the list is missing or stale, then the folders from the root down
+    /// through the expanded ones the rows reach, reading only those missing or stale (FIL-07). A folder that cannot be
+    /// read lists nothing, so it is not read again until an event names it.
+    private func readFilesOnce(workspaceId: String) async {
+        await launchEnvironment?.value
+        guard showsFiles(workspaceId: workspaceId), let workspace = workspace(id: workspaceId),
+              let state = fileTrees[workspaceId], needsRead(state, workspaceId: workspaceId) else { return }
+        // Cleared now: an event during the read marks what it names again, and the next run reads it.
+        let stale = staleFileTrees.removeValue(forKey: workspaceId) ?? StaleFileTree()
+        let readsList = state.list == nil || stale.list
+        let previous = state.list
+        let cached = state.listings
+        let expanded = state.expanded
+        let showsIgnored = showsIgnoredFiles(workspaceId: workspaceId)
+        let reader = worktreeFiles(environment(for: workspace))
+        let worktree = URL(fileURLWithPath: workspace.path)
+        let reading = await Task.blocking { () -> FileTreeReading in
+            var result = FileTreeReading()
+            var list = previous
+            if readsList {
+                do {
+                    let found = try reader.list(worktree: worktree, reusing: previous)
+                    result.list = found
+                    list = found
+                } catch {
+                    result.listFailure = GitBranchService.branchError(error).description
+                }
+            }
+            var pending = [""]
+            var visited: Set<String> = []
+            while let folder = pending.popLast() {
+                guard visited.insert(folder).inserted else { continue }
+                var entries = cached[folder]
+                if entries == nil || stale.folders.contains(folder) {
+                    let read = (try? reader.listing(worktree: worktree, folder: folder)) ?? []
+                    result.listings[folder] = read
+                    entries = read
+                }
+                pending += FileTree.shownSubfolders(of: folder, entries: entries ?? [], expanded: expanded, list: list, showsIgnored: showsIgnored)
+            }
+            return result
+        }.value
+        // Another workspace was selected, or this one removed, while it ran.
+        guard var current = fileTrees[workspaceId] else { return }
+        var changed = false
+        if let list = reading.list, list != current.list {
+            current.list = list
+            changed = true
+        }
+        if readsList, current.listFailure != reading.listFailure {
+            current.listFailure = reading.listFailure
+            changed = true
+        }
+        for (folder, entries) in reading.listings where current.listings[folder] != entries {
+            current.listings[folder] = entries
+            changed = true
+        }
+        if changed { fileTrees[workspaceId] = current }
+    }
+
+    /// FIL-07 after a batch of events: git's list is stale, and so is each folder the events name (or a subtree
+    /// holds). A folder whose rows show is read again while the tab shows, or when it shows next; any other is dropped
+    /// from the cache, so it is read when it opens. While the tab is hidden nothing runs.
+    private func fileTreeChanged(workspaceId: String, events: FolderEvents) {
+        guard var state = fileTrees[workspaceId], let workspace = workspace(id: workspaceId) else { return }
+        var folders: Set<String> = []
+        var subtrees: Set<String> = []
+        // As the worktree's own path spells it and as FSEvents does, so tests' events and FSEvents' are both read.
+        for root in Set([workspace.path, canonicalWorktrees[workspaceId] ?? workspace.path]) {
+            let named = FileTree.invalidated(by: events, worktree: root)
+            folders.formUnion(named.folders)
+            subtrees.formUnion(named.subtrees)
+        }
+        let shown = FileTree.shownFolders(
+            listings: state.listings,
+            expanded: state.expanded,
+            list: state.list,
+            showsIgnored: showsIgnoredFiles(workspaceId: workspaceId)
+        )
+        let inSubtree = { (folder: String) in
+            subtrees.contains { $0.isEmpty || folder == $0 || folder.hasPrefix($0 + "/") }
+        }
+        let hit = folders.union(state.listings.keys.filter(inSubtree)).union(shown.filter(inSubtree))
+        var stale = staleFileTrees[workspaceId] ?? StaleFileTree()
+        stale.list = true
+        var dropped = false
+        for folder in hit {
+            if shown.contains(folder) {
+                stale.folders.insert(folder)
+            } else if state.listings.removeValue(forKey: folder) != nil {
+                dropped = true
+            }
+        }
+        staleFileTrees[workspaceId] = stale
+        if dropped { fileTrees[workspaceId] = state }
+        if showsFiles(workspaceId: workspaceId) {
+            Task { await refreshFiles(workspaceId: workspaceId) }
+        }
+    }
+
+    /// FIL-02's disclosure: a folder opens or closes, and the workspace's expanded folders are stored. An opened folder
+    /// is read again each time, since a folder FSEvents leaves out (`node_modules`, shown with Show Ignored Files)
+    /// hears of no change.
+    public func setFolder(_ path: String, expanded: Bool, workspaceId: String) {
+        guard var state = prepareFileTree(workspaceId: workspaceId), state.expanded.contains(path) != expanded else { return }
+        if expanded {
+            state.expanded.insert(path)
+            staleFileTrees[workspaceId, default: StaleFileTree()].folders.insert(path)
+        } else {
+            state.expanded.remove(path)
+        }
+        fileTrees[workspaceId] = state
+        storeExpandedFolders(state.expanded, workspaceId: workspaceId)
+        refreshShownFilesIfNeeded()
+    }
+
+    /// The "⋯" menu's Collapse All Folders: the stored set is emptied too.
+    public func collapseAllFolders(workspaceId: String) {
+        guard var state = prepareFileTree(workspaceId: workspaceId), !state.expanded.isEmpty else { return }
+        state.expanded = []
+        fileTrees[workspaceId] = state
+        storeExpandedFolders([], workspaceId: workspaceId)
+    }
+
+    /// FIL-03's Show Ignored Files, remembered per repository: its column alone is written, and the model's copy of the
+    /// repository follows. Ignored folders left expanded show again, and their listings are read.
+    public func setShowsIgnoredFiles(_ shows: Bool, repoId: String) {
+        guard let index = repos.firstIndex(where: { $0.id == repoId }), repos[index].showsIgnoredFiles != shows else { return }
+        do {
+            try store.setShowsIgnoredFiles(shows, repoId: repoId)
+        } catch {
+            errorMessage = "Could not save Show Ignored Files: \(error)"
+            return
+        }
+        repos[index].showsIgnoredFiles = shows
+        refreshShownFilesIfNeeded()
+    }
+
+    private func storeExpandedFolders(_ expanded: Set<String>, workspaceId: String) {
+        do {
+            try store.setExpandedFolders(expanded, workspaceId: workspaceId)
+        } catch {
+            errorMessage = "Could not save the expanded folders: \(error)"
+        }
+    }
+
+    /// FIL-05 from the tree (`path` worktree-relative): a single click or Return (`keep` false) opens the workspace's
+    /// one preview tab or replaces it, unless the preview has unsaved edits; a double-click (`keep` true) keeps it. A
+    /// file in Changes opens in Diff mode, or as its open tab was left; any other in Edit, its only mode. A tab already
+    /// open is only shown, and a kept one never turns into the preview.
+    public func openFromTree(workspaceId: String, path: String, keep: Bool) {
+        guard let workspace = workspace(id: workspaceId) else { return }
+        var tabs = diffTabs[workspaceId] ?? []
+        let preview = previewTabs[workspaceId]
+        if !tabs.contains(path) {
+            if let preview, let index = tabs.firstIndex(of: preview),
+               !isEditorDirty(workspaceId: workspaceId, path: Self.editorPath(worktree: workspace.path, relativePath: preview)) {
+                tabs[index] = path
+                diffTabs[workspaceId] = tabs
+                forgetWorktreeTab(workspaceId: workspaceId, path: preview)
+            } else {
+                tabs.append(path)
+                diffTabs[workspaceId] = tabs
+            }
+            previewTabs[workspaceId] = keep ? nil : path
+        } else if keep, preview == path {
+            previewTabs[workspaceId] = nil
+        }
+        // Before the changes are read the tab picks nothing: it shows its diff, and Edit once it is known unchanged.
+        var mode: DiffTabMode?
+        if let current = changes[workspaceId], current.file(at: path) == nil { mode = .edit }
+        showWorktreeTab(workspaceId: workspaceId, path: path, mode: mode)
+    }
+
+    /// FIL-05: a double-click on the preview tab, or the first edit, keeps it: the next click in the tree opens another.
+    public func keepPreview(workspaceId: String) {
+        previewTabs[workspaceId] = nil
+    }
+
+    /// FIL-05's Reveal in All Files and the tree's Reveal Active File (`path` worktree-relative): the panel's tab turns
+    /// to All files, the file's folders are expanded and stored, and the tab scrolls its row into view once it is drawn
+    /// (`revealedPaths`). The view opens the panel and clears the filter.
+    public func reveal(workspaceId: String, path: String) {
+        guard workspace(id: workspaceId) != nil else { return }
+        rightPanelTabs[workspaceId] = .files
+        let ancestors = FileTree.ancestors(of: path)
+        if var state = prepareFileTree(workspaceId: workspaceId) {
+            if !state.expanded.isSuperset(of: ancestors) {
+                state.expanded.formUnion(ancestors)
+                fileTrees[workspaceId] = state
+                storeExpandedFolders(state.expanded, workspaceId: workspaceId)
+            }
+        } else {
+            let stored = (try? store.expandedFolders(workspaceId: workspaceId)) ?? []
+            if !stored.isSuperset(of: ancestors) { storeExpandedFolders(stored.union(ancestors), workspaceId: workspaceId) }
+        }
+        revealedPaths[workspaceId] = path
+        refreshShownFilesIfNeeded()
+    }
+
+    /// The All files tab scrolled the revealed row into view.
+    public func revealHandled(workspaceId: String) {
+        revealedPaths[workspaceId] = nil
+    }
+
+    /// FIL-04's Go to File (⌘P): the panel's tab turns to All files, whose filter takes the keyboard with its text
+    /// selected (`goToFileRequest`). The command opens the panel.
+    public func goToFile(workspaceId: String) {
+        guard workspace(id: workspaceId) != nil else { return }
+        rightPanelTabs[workspaceId] = .files
+        goToFileRequest = workspaceId
+    }
+
+    /// The All files tab focused its filter for `goToFileRequest`.
+    public func goToFileHandled(workspaceId: String) {
+        if goToFileRequest == workspaceId { goToFileRequest = nil }
+    }
+
+    // MARK: Editing (EDIT-01…EDIT-04)
+
+    /// The key of a worktree tab's file in `editors`: the worktree's path joined with the tab's relative path, as the diff
+    /// tab builds its file's URL.
+    public static func editorPath(worktree: String, relativePath: String) -> String {
+        URL(fileURLWithPath: worktree).appendingPathComponent(relativePath).path
+    }
+
+    public func editor(workspaceId: String, path: String) -> EditorState? {
+        editors[workspaceId]?[path]
+    }
+
+    /// Whether the file's editor has unsaved edits: its tab's dot (DIFF-01) and the question on close (EDIT-02).
+    public func isEditorDirty(workspaceId: String, path: String) -> Bool {
+        editors[workspaceId]?[path]?.document?.buffer.isDirty ?? false
+    }
+
+    /// EDIT-01: reads the file at `path` (absolute) into the editor, off the main actor. A file already open keeps its
+    /// buffer, so its unsaved edits survive the tab being hidden and shown again.
+    public func openEditor(workspaceId: String, path: String) async {
+        guard workspace(id: workspaceId) != nil, editors[workspaceId]?[path] == nil else { return }
+        editors[workspaceId, default: [:]][path] = .loading
+        let url = URL(fileURLWithPath: path)
+        let snapshot = await Task.blocking { TextFile.snapshot(of: url) }.value
+        // Closed, or the workspace removed, while it was read.
+        guard editors[workspaceId]?[path] == .loading else { return }
+        editors[workspaceId]?[path] = EditorState(snapshot)
+    }
+
+    /// The editor's text as it is typed (EDIT-01). A read-only file (over 2 MB) takes none.
+    public func setEditorText(_ text: String, workspaceId: String, path: String) {
+        guard var document = editors[workspaceId]?[path]?.document, !document.isReadOnly, document.buffer.text != text else { return }
+        document.buffer.text = text
+        editors[workspaceId]?[path] = .document(document)
+        // FIL-05: the first edit keeps a preview tab, so a preview never holds unsaved edits.
+        if let preview = previewTabs[workspaceId], let workspace = workspace(id: workspaceId),
+           Self.editorPath(worktree: workspace.path, relativePath: preview) == path {
+            previewTabs[workspaceId] = nil
+        }
+    }
+
+    /// What one save found: written with its new stamp and size, the file changed since the buffer read it (and what
+    /// it holds now), or the write's failure.
+    private enum SaveResult: Sendable {
+        case saved(FileStamp, size: Int)
+        case changed(TextFile.Snapshot)
+        case failed(String)
+    }
+
+    /// EDIT-02's ⌘S and Save: writes the editor's text over the file in one step, with the file's line endings and byte
+    /// order mark, at a link's target (`TextFile.write`). EDIT-03 and Review Focus 3: the file must still be what the
+    /// buffer loaded, or the version Keep Mine was chosen over; otherwise nothing is written and the conflict banner
+    /// shows. A file only touched (its date moved, not its bytes) is taken in and written. A save inside the worktree
+    /// refreshes the changes, so the diff and the change bars follow. Returns whether the file was written.
+    @discardableResult
+    public func saveEditor(workspaceId: String, path: String) async -> Bool {
+        let key = workspaceId + "\u{0}" + path
+        guard !savingEditors.contains(key), let first = editors[workspaceId]?[path]?.document, !first.isReadOnly,
+              first.buffer.isDirty || first.buffer.keepsMine else { return false }
+        savingEditors.insert(key)
+        defer { savingEditors.remove(key) }
+        let url = URL(fileURLWithPath: path)
+        for _ in 0..<2 {
+            guard let document = editors[workspaceId]?[path]?.document else { return false }
+            let buffer = document.buffer
+            let text = buffer.text
+            let data = document.format.encode(text)
+            // The check and the write are one job, so the agent's window between them stays small (Known risks).
+            let result = await Task.blocking { () -> SaveResult in
+                let current = TextFile.snapshot(of: url)
+                guard buffer.canSave(current: current.stamp) else { return .changed(current) }
+                do {
+                    return .saved(try TextFile.write(data, to: url), size: data.count)
+                } catch {
+                    return .failed(error.localizedDescription)
+                }
+            }.value
+            // Closed while it was written.
+            guard var latest = editors[workspaceId]?[path]?.document else { return false }
+            switch result {
+            case .saved(let stamp, let size):
+                latest.buffer.saved(text, stamp: stamp)
+                latest.size = size
+                editors[workspaceId]?[path] = .document(latest)
+                if let workspace = workspace(id: workspaceId), Self.worktreeRelativePath(of: path, worktree: workspace.path) != nil {
+                    Task { await refreshChanges(workspaceId: workspaceId) }
+                }
+                return true
+            case .changed(let current):
+                _ = latest.buffer.diskChanged(to: current.text ?? "", stamp: current.stamp)
+                editors[workspaceId]?[path] = .document(latest)
+                guard latest.buffer.canSave(current: current.stamp), latest.buffer.isDirty || latest.buffer.keepsMine else { return false }
+            case .failed(let message):
+                errorMessage = "Couldn’t save \(url.lastPathComponent): \(message)"
+                return false
+            }
+        }
+        return false
+    }
+
+    /// The file of the tab `workspaceId` shows over its conversation: its diff tab's file or its file tab's, as an
+    /// `editors` key; nil while a conversation shows.
+    public func visibleEditorPath(workspaceId: String) -> String? {
+        if let diff = selectedDiffTabs[workspaceId] {
+            guard let workspace = workspace(id: workspaceId) else { return nil }
+            return Self.editorPath(worktree: workspace.path, relativePath: diff)
+        }
+        return selectedFiles[workspaceId]
+    }
+
+    /// File ▸ Save (⌘S, KBD-02): whether the file on screen has edits to write, when its header shows Save (EDIT-02).
+    public func canSaveVisibleEditor(workspaceId: String) -> Bool {
+        guard let path = visibleEditorPath(workspaceId: workspaceId),
+              let document = editors[workspaceId]?[path]?.document else { return false }
+        return !document.isReadOnly && (document.buffer.isDirty || document.buffer.keepsMine)
+    }
+
+    /// File ▸ Save: `saveEditor` on the file on screen. Returns whether it was written.
+    @discardableResult
+    public func saveVisibleEditor(workspaceId: String) async -> Bool {
+        guard canSaveVisibleEditor(workspaceId: workspaceId), let path = visibleEditorPath(workspaceId: workspaceId) else { return false }
+        return await saveEditor(workspaceId: workspaceId, path: path)
+    }
+
+    // MARK: Unsaved edits (EDIT-02)
+
+    /// Every file with unsaved edits, in one workspace or in all: what closing a tab, or quitting Rocky, asks about.
+    /// Ordered by workspace title, then file.
+    public func unsavedEditors(workspaceId: String? = nil) -> [UnsavedEditor] {
+        var found: [UnsavedEditor] = []
+        for (id, files) in editors where workspaceId == nil || id == workspaceId {
+            guard let workspace = workspace(id: id) else { continue }
+            let workspaceTitle = title(for: workspace).text
+            for (path, state) in files where state.document?.buffer.isDirty == true {
+                let file = Self.worktreeRelativePath(of: path, worktree: workspace.path) ?? (path as NSString).abbreviatingWithTildeInPath
+                found.append(UnsavedEditor(workspaceId: id, path: path, file: file, workspaceTitle: workspaceTitle))
+            }
+        }
+        return found.sorted { ($0.workspaceTitle, $0.file, $0.workspaceId) < ($1.workspaceTitle, $1.file, $1.workspaceId) }
+    }
+
+    /// Save All: each file written as ⌘S writes it, one after the other. Returns the files still unsaved: a save that
+    /// a change on disk stopped (the tab shows the conflict, EDIT-03) or one that failed (`errorMessage`).
+    public func saveEditors(_ unsaved: [UnsavedEditor]) async -> [UnsavedEditor] {
+        var left: [UnsavedEditor] = []
+        for editor in unsaved {
+            await saveEditor(workspaceId: editor.workspaceId, path: editor.path)
+            if isEditorDirty(workspaceId: editor.workspaceId, path: editor.path) { left.append(editor) }
+        }
+        return left
+    }
+
+    /// The file's workspace and tab on screen, for a Save All that could not save it: its conflict banner is there.
+    public func showUnsavedEditor(_ editor: UnsavedEditor) {
+        guard let workspace = workspace(id: editor.workspaceId) else { return }
+        selectedWorkspaceId = workspace.id
+        if let relative = Self.worktreeRelativePath(of: editor.path, worktree: workspace.path),
+           diffTabs[workspace.id]?.contains(relative) == true {
+            showDiff(workspaceId: workspace.id, path: relative)
+        } else {
+            showFile(workspaceId: workspace.id, path: editor.path)
+        }
+    }
+
+    /// EDIT-03's Reload: the unsaved edits go, for the file's version on disk.
+    public func reloadEditor(workspaceId: String, path: String) {
+        guard var document = editors[workspaceId]?[path]?.document, document.buffer.disk != nil else { return }
+        document.buffer.reload()
+        editors[workspaceId]?[path] = .document(document)
+    }
+
+    /// EDIT-03's Keep Mine: the edits stay, and the next save overwrites the file's new version.
+    public func keepMine(workspaceId: String, path: String) {
+        guard var document = editors[workspaceId]?[path]?.document, document.buffer.conflict else { return }
+        document.buffer.keepMine()
+        editors[workspaceId]?[path] = .document(document)
+    }
+
+    /// Closes EDIT-03's agent-working banner in the file's tab, until the tab closes.
+    public func hideAgentBanner(workspaceId: String, path: String) {
+        guard var document = editors[workspaceId]?[path]?.document, !document.hidesAgentBanner else { return }
+        document.hidesAgentBanner = true
+        editors[workspaceId]?[path] = .document(document)
+    }
+
+    /// The agent whose turn runs in one of the workspace's conversations, for EDIT-03's "Claude Code is working in this
+    /// workspace and may change this file."; nil while none runs.
+    public func workingAgent(workspaceId: String) -> AgentKind? {
+        chats.first { chatWorkspaceIds[$0.key] == workspaceId && $0.value.state == .running }?.value.agent
+    }
+
+    /// EDIT-04: the version of a worktree file its change bars compare with: the file at the workspace's base, under its
+    /// old name for a rename, or none for a file the base lacks. nil until the changes are read.
+    public func editorBaseKey(workspaceId: String, relativePath: String) -> EditorBase.Key? {
+        guard let changes = changes[workspaceId] else { return nil }
+        let file = changes.file(at: relativePath)
+        if file?.status == .added { return EditorBase.Key(commit: changes.base, path: nil) }
+        return EditorBase.Key(commit: changes.base, path: file?.oldPath ?? relativePath)
+    }
+
+    /// Reads the base `editorBaseKey` names for a diff tab's file, once per key: `git cat-file blob` off the main
+    /// actor, and nothing for a file the base lacks.
+    public func loadEditorBase(workspaceId: String, relativePath: String) async {
+        guard let workspace = workspace(id: workspaceId),
+              let key = editorBaseKey(workspaceId: workspaceId, relativePath: relativePath),
+              editorBases[workspaceId]?[relativePath]?.key != key else { return }
+        guard let source = key.path else {
+            editorBases[workspaceId, default: [:]][relativePath] = EditorBase(key: key, text: "")
+            return
+        }
+        let service = GitChangesService(environment: environment(for: workspace))
+        let worktree = URL(fileURLWithPath: workspace.path)
+        let text = await Task.blocking { () -> String? in
+            guard let data = service.blob(worktree: worktree, commit: key.commit, path: source),
+                  !data.prefix(TextFile.sniffLength).contains(0) else { return nil }
+            return TextFormat.decode(data)?.text
+        }.value
+        // The tab closed, or the base moved, while git ran.
+        guard diffTabs[workspaceId]?.contains(relativePath) == true,
+              editorBaseKey(workspaceId: workspaceId, relativePath: relativePath) == key else { return }
+        editorBases[workspaceId, default: [:]][relativePath] = EditorBase(key: key, text: text)
+    }
+
+    /// The loaded base of a diff tab's change bars, when it is the one `editorBaseKey` names now; nil hides the bars.
+    public func editorBaseText(workspaceId: String, relativePath: String) -> String? {
+        guard let base = editorBases[workspaceId]?[relativePath],
+              base.key == editorBaseKey(workspaceId: workspaceId, relativePath: relativePath) else { return nil }
+        return base.text
+    }
+
+    /// One file `checkEditors` looks at, and the newest version of it the editor knew when the check started.
+    private struct EditorCheck: Sendable {
+        let path: String
+        let stamp: FileStamp
+    }
+
+    /// EDIT-03 after a change on disk: each open file of the workspace whose modification date moved is read again, in
+    /// one job off the main actor. A clean buffer takes the new text and shows "Reloaded"; one with unsaved edits keeps
+    /// them and shows the conflict. A file that came back is read, and a clean one that went shows as missing.
+    private func checkEditors(workspaceId: String) {
+        var checks: [EditorCheck] = []
+        for (path, state) in editors[workspaceId] ?? [:] {
+            switch state {
+            case .document(let document): checks.append(EditorCheck(path: path, stamp: document.buffer.latestStamp))
+            case .missing: checks.append(EditorCheck(path: path, stamp: .missing))
+            case .loading, .unavailable: break
+            }
+        }
+        guard !checks.isEmpty else { return }
+        let pending = checks
+        Task {
+            let found = await Task.blocking { () -> [(check: EditorCheck, snapshot: TextFile.Snapshot)] in
+                pending.compactMap { check -> (check: EditorCheck, snapshot: TextFile.Snapshot)? in
+                    let url = URL(fileURLWithPath: check.path)
+                    // A stat each; the file is read only when its date is not the one the editor knows.
+                    guard TextFile.modificationDate(of: url) != check.stamp.modificationDate else { return nil }
+                    return (check: check, snapshot: TextFile.snapshot(of: url))
+                }
+            }.value
+            for (check, snapshot) in found {
+                applyDiskChange(snapshot, checked: check.stamp, workspaceId: workspaceId, path: check.path)
+            }
+        }
+    }
+
+    private func applyDiskChange(_ snapshot: TextFile.Snapshot, checked: FileStamp, workspaceId: String, path: String) {
+        switch editors[workspaceId]?[path] {
+        case .missing?:
+            guard checked == .missing, snapshot.exists else { return }
+            editors[workspaceId]?[path] = EditorState(snapshot)
+        case .document(var document)?:
+            // Saved or reloaded while the file was read: the next event checks again.
+            guard document.buffer.latestStamp == checked, snapshot.stamp != checked else { return }
+            guard let text = snapshot.text else {
+                // Gone, or no longer text Rocky edits: a clean tab shows the file as it is now; unsaved edits stay, in
+                // conflict with an empty file.
+                if document.buffer.isDirty {
+                    _ = document.buffer.diskChanged(to: "", stamp: snapshot.stamp)
+                    editors[workspaceId]?[path] = .document(document)
+                } else {
+                    editors[workspaceId]?[path] = EditorState(snapshot)
+                }
+                return
+            }
+            if document.buffer.diskChanged(to: text, stamp: snapshot.stamp) == .reloaded {
+                // A fresh document, so a file whose line endings or size changed is written back the new way.
+                var reloaded = EditorDocument(snapshot: snapshot, text: text)
+                let now = Date()
+                reloaded.reloadedAt = now
+                reloaded.hidesAgentBanner = document.hidesAgentBanner
+                document = reloaded
+                endReloaded(at: now, workspaceId: workspaceId, path: path)
+            }
+            editors[workspaceId]?[path] = .document(document)
+        case .loading?, .unavailable?, nil:
+            return
+        }
+    }
+
+    /// EDIT-03's "Reloaded" shows for 2 s: one sleep per reload, never a timer.
+    private func endReloaded(at reloadedAt: Date, workspaceId: String, path: String) {
+        Task {
+            try? await Task.sleep(for: Self.reloadedDuration)
+            guard var document = editors[workspaceId]?[path]?.document, document.reloadedAt == reloadedAt else { return }
+            document.reloadedAt = nil
+            editors[workspaceId]?[path] = .document(document)
+        }
+    }
+
+    static let reloadedDuration = Duration.seconds(2)
+
+    /// Drops a file's editor once no tab of the workspace shows it: no file tab at `path`, and no diff tab whose file it
+    /// is.
+    private func dropEditorIfUnused(workspaceId: String, path: String) {
+        guard editors[workspaceId]?[path] != nil, openFiles[workspaceId]?.contains(path) != true else { return }
+        if let workspace = workspace(id: workspaceId),
+           let relative = Self.worktreeRelativePath(of: path, worktree: workspace.path),
+           diffTabs[workspaceId]?.contains(relative) == true { return }
+        editors[workspaceId]?[path] = nil
+    }
+
+    // MARK: Review comments (CMT-01…CMT-05)
+
+    /// The comments on one file of the workspace (`path` worktree-relative), oldest first: its diff tab's cards and
+    /// the count on its Changes row (CHG-03).
+    public func comments(onFile path: String, workspaceId: String) -> [DiffCommentRecord] {
+        (diffComments[workspaceId] ?? []).filter { $0.path == path }
+    }
+
+    /// CMT-05's "2 comments ready": the workspace's pending comments, oldest first, which Send to agent sends.
+    public func readyComments(workspaceId: String) -> [DiffCommentRecord] {
+        (diffComments[workspaceId] ?? []).filter { $0.state == .pending }
+    }
+
+    /// CMT-02's Comment: a pending comment on `lines` of `side`, keeping `capture` for `CommentAnchor` (CMT-04). The
+    /// body is trimmed; an empty one saves nothing.
+    public func addDiffComment(
+        workspaceId: String,
+        path: String,
+        side: DiffCommentRecord.Side,
+        lines: ClosedRange<Int>,
+        capture: CommentAnchor.Capture,
+        body: String
+    ) {
+        let text = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, workspace(id: workspaceId) != nil else { return }
+        let comment = DiffCommentRecord(
+            workspaceId: workspaceId,
+            path: path,
+            side: side,
+            startLine: lines.lowerBound,
+            endLine: lines.upperBound,
+            snippet: capture.snippet,
+            contextBefore: capture.contextBefore,
+            contextAfter: capture.contextAfter,
+            body: text
+        )
+        do {
+            try store.saveComment(comment)
+            diffComments[workspaceId, default: []].append(comment)
+        } catch {
+            errorMessage = "Could not save the comment: \(error)"
+        }
+    }
+
+    /// CMT-02's Edit: a new body, trimmed; the comment keeps its lines and its state.
+    public func editDiffComment(id: String, workspaceId: String, body: String) {
+        let text = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, var comment = diffComments[workspaceId]?.first(where: { $0.id == id }), comment.body != text else { return }
+        comment.body = text
+        saveComments([comment], workspaceId: workspaceId)
+    }
+
+    /// CMT-02's Delete.
+    public func deleteDiffComment(id: String, workspaceId: String) {
+        do {
+            try store.deleteComment(id: id)
+            diffComments[workspaceId]?.removeAll { $0.id == id }
+        } catch {
+            errorMessage = "Could not delete the comment: \(error)"
+        }
+    }
+
+    /// CMT-05's Send to agent: the pending comments, in `ReviewPrompt`'s format on the live branch, as one prompt to the
+    /// selected conversation (AGT-00: its agent starts if needed, the workspace shows it, and nothing goes while its turn
+    /// runs or its agent is stopped). They turn Sent as the prompt goes out, not before, so a prompt that never went
+    /// leaves them pending. Returns when the turn ends.
+    public func sendReview(workspaceId: String) async {
+        guard !sendingReviews.contains(workspaceId), let workspace = workspace(id: workspaceId),
+              agentActionAvailability(workspaceId: workspaceId) == .available else { return }
+        let ready = readyComments(workspaceId: workspaceId)
+        guard !ready.isEmpty else { return }
+        // The branch the agent may have renamed, as the compare URL names it.
+        let branch = pullRequests.panels[workspaceId]?.local?.branch ?? workspace.branch
+        let prompt = ReviewPrompt.build(branch: branch, comments: ready)
+        let ids = Set(ready.map(\.id))
+        sendingReviews.insert(workspaceId)
+        defer { sendingReviews.remove(workspaceId) }
+        await sendAgentAction(workspaceId: workspaceId, text: prompt, attachments: []) { [weak self] in
+            self?.markSent(ids, workspaceId: workspaceId)
+        }
+    }
+
+    private func markSent(_ ids: Set<String>, workspaceId: String) {
+        let now = Date()
+        let sent = (diffComments[workspaceId] ?? []).filter { ids.contains($0.id) && $0.state == .pending }.map { comment in
+            var marked = comment
+            marked.state = .sent
+            marked.sentAt = now
+            return marked
+        }
+        saveComments(sent, workspaceId: workspaceId)
+    }
+
+    /// CMT-04 after a refresh: `moved` is `CommentAnchor.reanchor` of `before`, run while git ran. A comment whose lines
+    /// changed meanwhile (an edit or a delete) is left for the next refresh; one sent meanwhile still moves.
+    private func applyReanchoring(_ moved: [DiffCommentRecord], before: [String: DiffCommentRecord], workspaceId: String) {
+        guard !moved.isEmpty, let current = diffComments[workspaceId] else { return }
+        var updates: [DiffCommentRecord] = []
+        for update in moved {
+            guard var comment = current.first(where: { $0.id == update.id }), let old = before[update.id],
+                  comment.startLine == old.startLine, comment.endLine == old.endLine, comment.state != .outdated else { continue }
+            comment.startLine = update.startLine
+            comment.endLine = update.endLine
+            if update.state == .outdated { comment.state = .outdated }
+            updates.append(comment)
+        }
+        saveComments(updates, workspaceId: workspaceId)
+    }
+
+    /// Writes changed comments to the store and to `diffComments`, in place.
+    private func saveComments(_ comments: [DiffCommentRecord], workspaceId: String) {
+        guard !comments.isEmpty, var all = diffComments[workspaceId] else { return }
+        for comment in comments {
+            do {
+                try store.saveComment(comment)
+            } catch {
+                errorMessage = "Could not save the comment: \(error)"
+                continue
+            }
+            if let index = all.firstIndex(where: { $0.id == comment.id }) { all[index] = comment }
+        }
+        diffComments[workspaceId] = all
+    }
+
+    /// Reads the comments of workspaces the model has just loaded and drops those of workspaces that are gone (their
+    /// rows went with them, by cascade).
+    private func syncDiffComments() {
+        let ids = Set(workspaces.values.joined().map(\.id))
+        for id in Array(diffComments.keys) where !ids.contains(id) {
+            diffComments[id] = nil
+        }
+        for id in ids where diffComments[id] == nil {
+            diffComments[id] = (try? store.comments(workspaceId: id)) ?? []
+        }
+    }
+
     // MARK: Keyboard
 
     /// The workspaces the sidebar lists, top to bottom, leaving out folded repositories and search misses (KBD-01).
@@ -1875,6 +3192,8 @@ public final class AppModel {
             for repo in repos { byRepo[repo.id] = try store.workspaces(repoId: repo.id) }
             workspaces = byRepo
             pullRequests.seed(byRepo.values.flatMap { $0 })
+            syncWatchers()
+            syncDiffComments()
             refreshWorkspaceTitles()
         } catch {
             errorMessage = "\(error)"

@@ -26,6 +26,10 @@ public struct Repo: Codable, Sendable, Equatable, Identifiable, FetchableRecord,
     /// use least when the repository is added (`RepoMonogram.pickColor`); nil for a repository from before colors
     /// were stored, which gets one on the next launch.
     public var colorIndex: Int?
+    /// `FIL-03`'s Show Ignored Files in the All files tab: git-ignored entries shown dimmed. Off by default. Toggled
+    /// through `RockyStore.setShowsIgnoredFiles`, a column-only update; `AppModel` keeps its own copy current, so the
+    /// whole-row updates of the other settings write it back as it is.
+    public var showsIgnoredFiles: Bool
     public var createdAt: Date
 
     public init(
@@ -40,6 +44,7 @@ public struct Repo: Codable, Sendable, Equatable, Identifiable, FetchableRecord,
         linkedPaths: String? = nil,
         githubLogin: String? = nil,
         colorIndex: Int? = nil,
+        showsIgnoredFiles: Bool = false,
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -53,6 +58,7 @@ public struct Repo: Codable, Sendable, Equatable, Identifiable, FetchableRecord,
         self.linkedPaths = linkedPaths
         self.githubLogin = githubLogin
         self.colorIndex = colorIndex
+        self.showsIgnoredFiles = showsIgnoredFiles
         self.createdAt = createdAt
     }
 }
@@ -213,6 +219,74 @@ public struct ChatSessionRecord: Codable, Sendable, Equatable, Identifiable, Fet
     /// first token that names no command ("/notacommand hi") is an ordinary message and titles it.
     public static func title(from message: String, commands: [SlashCommand]) -> String? {
         SlashCommand.invoked(by: message, among: commands) == nil ? title(from: message) : nil
+    }
+}
+
+/// A review comment on a range of a diff tab's lines (`CMT-03`), which the user sends to the agent (`CMT-05`). It goes
+/// with its workspace.
+public struct DiffCommentRecord: Codable, Sendable, Equatable, Identifiable, FetchableRecord, PersistableRecord {
+    public static let databaseTableName = "diffComment"
+
+    /// The side of the diff a comment's lines are on (`CMT-01`): the worktree file's lines, which added and context rows
+    /// show, or the base's, which removed rows show. A range never mixes them.
+    public enum Side: String, Codable, Sendable, DatabaseValueConvertible {
+        case new, old
+    }
+
+    /// `CMT-02`'s chips. A pending comment waits for Send to agent; an outdated one lost its lines (`CMT-04`).
+    public enum State: String, Codable, Sendable, DatabaseValueConvertible {
+        case pending, sent, outdated
+    }
+
+    public var id: String
+    public var workspaceId: String
+    /// Worktree-relative, like the diff tab's path.
+    public var path: String
+    public var side: Side
+    /// 1-based and inclusive, numbered on `side`. `CommentAnchor` moves them as the worktree file changes (`CMT-04`);
+    /// an outdated comment keeps its last ones.
+    public var startLine: Int
+    public var endLine: Int
+    /// The commented lines as they were when the comment was written: what `CommentAnchor` looks for after each change,
+    /// and the code block of the review prompt. A CRLF file's lines keep their `\r`, as the diff's do.
+    public var snippet: [String]
+    /// Up to `CommentAnchor.contextLineCount` lines above and below the snippet, kept with it (`CMT-03`).
+    public var contextBefore: [String]
+    public var contextAfter: [String]
+    public var body: String
+    public var state: State
+    public var createdAt: Date
+    /// When Send to agent sent it; nil while it has not been sent.
+    public var sentAt: Date?
+
+    public init(
+        id: String = UUID().uuidString,
+        workspaceId: String,
+        path: String,
+        side: Side,
+        startLine: Int,
+        endLine: Int,
+        snippet: [String],
+        contextBefore: [String] = [],
+        contextAfter: [String] = [],
+        body: String,
+        state: State = .pending,
+        createdAt: Date = Date(),
+        sentAt: Date? = nil
+    ) {
+        self.id = id
+        self.workspaceId = workspaceId
+        self.path = path
+        self.side = side
+        self.startLine = startLine
+        self.endLine = endLine
+        self.snippet = snippet
+        self.contextBefore = contextBefore
+        self.contextAfter = contextAfter
+        self.body = body
+        self.state = state
+        self.createdAt = createdAt
+        self.sentAt = sentAt
     }
 }
 
