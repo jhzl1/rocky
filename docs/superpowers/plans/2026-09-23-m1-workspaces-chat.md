@@ -1,5 +1,7 @@
 # M1 Repos, Workspaces and Chat Implementation Plan
 
+**Status: done**, merged into `development` on 2026-09-23. Record: `docs/superpowers/m1-verification.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A native macOS app where you add a git repo, create workspaces (one git worktree each), and chat in each workspace with Claude Code or OpenCode over ACP, without the polling that drains Conductor's battery.

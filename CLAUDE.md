@@ -44,6 +44,10 @@ open build/Rocky.app
 - **Tests** are written with each change and run once: right before merging the milestone's branch. Build once
   at the end of a plan's tasks, not after each task. Run tests mid-work only when the user asks.
 - **Store migrations** are numbered in the order they land; plans say "the next free migration", never a number.
+- **The user guide, `docs/README.md`, is in Spanish** (the user's request, 2026-09-24; the one exception to English
+  docs): plain, neutral Spanish, with UI labels, commands and identifiers kept as they are. Every change that adds
+  or changes something the user sees or configures updates it in the same work, before the milestone merges, and
+  moves its "Última actualización" date.
 
 ## Git
 
@@ -58,7 +62,7 @@ open build/Rocky.app
 
 - **Menus are Rocky's own**: `MenuButton`, `MenuItem`, `MenuDivider`, `rockyContextMenu`, drawn by
   `MenuPresenter` / `MenuHost` in the style of the model menu. Never SwiftUI `Menu`, `.contextMenu` or a native
-  pop-up menu.
+  pop-up menu. An item without an icon takes no icon column; only menus whose items have icons keep the gutter.
 - **Zoom** (⌘+ ⌘- ⌘0): text through `Font.rocky(_:weight:design:)`, sizes of anything holding text or icons
   through `Zoom.shared(_:)`. Never `scaleEffect`: a scaled AppKit view loses its hit testing.
 - **Colors and motion** come from `Theme`:
@@ -76,12 +80,16 @@ open build/Rocky.app
   bar grow and shrink. Queued messages sit at the end of the transcript, after "Working", as one group with one
   caption.
 - **Live feedback**: `CircularProgress` (Core Animation), `ShimmerText` for live labels, elapsed times in the
-  monospaced font. Honor Reduce Motion, and pause animations while the window is inactive (`appearsActive`).
+  monospaced font. Honor Reduce Motion. Animations pause only while the window cannot be seen
+  (`NSWindow.occlusionState`: minimized, hidden, covered, another Space), never just because another app is active,
+  or a working agent looks stuck. "Is the user looking at Rocky" (unread marks, the alert sound, the Dock badge) is
+  `appearsActive`.
 - **Settings** is an in-app modal (`SettingsPresenter`, ⌘,), not a window.
 - **Key monitors**: an `NSEvent` monitor added from a SwiftUI view keeps the view as it was when it was added;
   read live state through a reference (`LiveFlag`). Esc goes first to an open menu, the settings modal or a sheet,
   then stops the agent's turn.
-- **Copy**: all UI copy, code, identifiers, comments and docs in English. Comments say why, in full sentences, at
+- **Copy**: all UI copy, code, identifiers, comments and docs in English, except the Spanish user guide
+  (`docs/README.md`). Comments say why, in full sentences, at
   the density of the surrounding code.
 
 ## Energy (spec Section 1)
@@ -89,10 +97,10 @@ open build/Rocky.app
 - Nothing polls at rest. No timers on the disk or the network: file changes come from FSEvents, and git runs only
   after a change, debounced.
 - Per-frame work goes to Core Animation, not a SwiftUI `TimelineView` redrawing every frame. `TimelineView`s pause
-  while the window is inactive.
+  while the window cannot be seen; the 30 fps shimmer is the one visible-but-inactive cost.
 - The agent of the conversation on screen starts in the background; the others start on their first message.
 - GitHub goes over `URLSession` (GraphQL/REST), never a `gh` process per refresh. Rocky polls only the selected
-  workspace, only while the window is key, with a backoff.
+  workspace, only while the window can be seen: every 30 s, every 15 s while checks run. No manual refresh button.
 - Agent updates are checked once a day against the npm registry over `URLSession`, plus a manual check.
 
 ## Agents and environment

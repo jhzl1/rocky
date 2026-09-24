@@ -359,7 +359,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
     <button type="button" id="demoPermission">Permission request</button>
     <button type="button" id="demoError">Agent error</button>
     <span class="sep"></span>
-    <button type="button" id="demoInactive" aria-pressed="false">Window not key</button>
+    <button type="button" id="demoInactive" aria-pressed="false">Window not visible</button>
     <button type="button" id="demoReduce" aria-pressed="false">Reduce Motion</button>
     <button type="button" id="demoPins" aria-pressed="false">Requirement pins</button>
     <button type="button" id="demoDiff" aria-pressed="false">Future: diff stats</button>
@@ -887,12 +887,12 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
     <p><span style="display:inline-flex;vertical-align:-3px;margin-right:6px" data-icon="spinner" data-size="14"></span>A faint full ring with a quarter arc that turns smoothly. It replaces today's Material-style arc everywhere, in one place: the <code>CircularProgress</code> view.</p>
     <dl>
       <dt>Geometry</dt><dd>In a 16-unit box: ring radius 5.5, stroke 1.8, ring opacity 22 %; arc from 12 to 3 o'clock, round caps. Color: the current foreground. Sizes 14 (sidebar, default), 12 (tabs, folded headers, model menu), zoom-scaled.</dd>
-      <dt>Motion</dt><dd>One full turn every 0.9 s, linear, continuous, at the display's refresh rate. It must look fluid: never stepped, no jump at the loop (user decision, 2026-09-23). Frozen at its angle while the window is not key; static with Reduce Motion.</dd>
+      <dt>Motion</dt><dd>One full turn every 0.9 s, linear, continuous, at the display's refresh rate. It must look fluid: never stepped, no jump at the loop (user decision, 2026-09-23). Frozen at its angle only while the window cannot be seen (<code>NSWindow.occlusionState</code> without <code>.visible</code>: minimized, hidden, fully covered or on another Space); it keeps turning while another app is active, since the user keeps Rocky visible beside other apps and a frozen spinner read as a stuck agent (user decision, 2026-09-24: "alive while visible"). Static with Reduce Motion.</dd>
       <dt>SwiftUI</dt><dd>Rewrite <code>CircularProgress.swift</code>, keeping the type name and signature so its 7 call sites compile unchanged.
         <ul>
           <li><strong>Not <code>TimelineView(.animation)</code></strong> (today's code): it runs the body every display frame, once per spinner, against the energy goal (spec Section 1).</li>
           <li>An <code>NSViewRepresentable</code> with two <code>CAShapeLayer</code>s (ring, arc) and a <code>CABasicAnimation</code> on <code>transform.rotation.z</code>, 0 → 2π, 0.9 s, linear, <code>repeatCount = .infinity</code>. The render server interpolates; the app does no work per frame.</li>
-          <li>Pause with layer <code>speed = 0</code> and <code>timeOffset</code> (resumes from the same angle) when the window does not appear active; no animation with Reduce Motion. Stroke colors from the environment in <code>updateNSView</code>.</li>
+          <li>Pause with layer <code>speed = 0</code> and <code>timeOffset</code> (resumes from the same angle) while the window is not visible (<code>occlusionState</code>), not merely inactive; no animation with Reduce Motion. Stroke colors from the environment in <code>updateNSView</code>.</li>
           <li>Delete <code>arc(at:)</code> and <code>easeInOut(_:)</code>.</li>
         </ul>
       </dd>
@@ -927,7 +927,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
       <dt>Where</dt><dd><code>ToolCallRow</code> while live and pending or in progress; <code>ToolGroupRow</code> while live with a running call (its "N tool calls" title shimmers); <code>ThinkingRow</code>. These three stop using <code>CircularProgress</code>.</dd>
       <dt>Working row</dt><dd><code>ThinkingRow</code> today shows only the arc and the elapsed time. It becomes the word <strong>"Working"</strong>, shimmering, followed by the elapsed time ("8s", "1m 5s"; monospaced digits, <code>textTertiary</code>, not shimmering). Not "Thinking": <code>ThoughtRow</code> already uses that label for the agent's thoughts. Consider renaming <code>ThinkingRow</code> to <code>WorkingRow</code>.</dd>
       <dt>Values</dt><dd>Base <code>textSecondary</code>; a band 40 % of the text's width, peaking at <code>textPrimary</code>, sweeps left to right in 1.6 s linear, rests 0.5 s, repeats. When the call completes, the label settles to its normal color in 150 ms, same text and font, no layout change.</dd>
-      <dt>Rules</dt><dd>Paused while the window is not key; static <code>textSecondary</code> with Reduce Motion; only live rows shimmer.</dd>
+      <dt>Rules</dt><dd>Paused only while the window cannot be seen (<code>NSWindow.occlusionState</code> without <code>.visible</code>: minimized, hidden, fully covered or on another Space), never just because another app is active ("alive while visible", 2026-09-24); static <code>textSecondary</code> with Reduce Motion; only live rows shimmer. Unread, the alert sound and the Dock badge still use "active" (the user is looking at Rocky).</dd>
       <dt>SwiftUI</dt><dd>New <code>ShimmerText</code>: the <code>Text</code> in <code>textSecondary</code>, overlaid by the same <code>Text</code> in <code>textPrimary</code> masked by a moving <code>LinearGradient</code>, driven by <code>TimelineView(.animation(minimumInterval: 1.0 / 30, paused: …))</code>.</dd>
     </dl>
   </section>

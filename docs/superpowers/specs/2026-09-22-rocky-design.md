@@ -86,14 +86,19 @@ tab is shown, so its settings are ready without a click. Hidden tabs start nothi
   agent replaying recorded JSON-RPC; energy script reading `CurrentPowerlog.PLSQL` over 30 min.
 
 ## Milestones (each gets its own implementation plan)
-| # | What | Done when |
-| --- | --- | --- |
-| M0 | Spike (throwaway) | Swift CLI talks ACP to all 3 agents; confirms `env` reaches agent tools and `GH_TOKEN` push over HTTPS |
-| M1 | Repos, workspaces, chat | create workspace, chat with OpenCode or Claude Code |
-| M2 | Terminal, scripts, env | terminal tabs, setup/run/archive, repo vars |
-| M2.5 | Visual design | a design spec (palette, type, icons, loading states, motion) applied across the app; replaces `Sources/RockyUI/Theme.swift`'s interim colors (added 2026-09-23) |
-| M3 | Diff, comments, PR | full flow through merge |
-| M4 | Multi-account + energy | per-repo account everywhere; energy measured vs Conductor |
+Status as of 2026-09-24. **Done** means merged into `development`; each plan's first lines say the same.
+
+| # | What | Done when | Status |
+| --- | --- | --- | --- |
+| M0 | Spike (throwaway) | Swift CLI talks ACP to all 3 agents; confirms `env` reaches agent tools and `GH_TOKEN` push over HTTPS | **Done** 2026-09-22 (`spikes/2026-09-22-m0-findings.md`) |
+| M1 | Repos, workspaces, chat | create workspace, chat with OpenCode or Claude Code | **Done** 2026-09-23 (`m1-verification.md`) |
+| M2 | Terminal, scripts, env | terminal tabs, setup/run/archive, repo vars | **Done** 2026-09-23; manual checklist still open (`m2-verification.md`) |
+| M2.5 | Visual design | a design spec (palette, type, icons, loading states, motion) applied across the app; replaces `Sources/RockyUI/Theme.swift`'s interim colors (added 2026-09-23) | **Done** 2026-09-23; manual checklist still open (`m2.5-verification.md`) |
+| M2.6 | Slash commands | the agent's commands in the message box; terminal-only ones in an embedded terminal (added 2026-09-23) | **Done** 2026-09-23, pushed; Task 9 with real agents still open (`m2.6-verification.md`) |
+| M2.7 | GitHub pull request panel | Conductor's right panel, one GitHub account per repository, PR state, checks, merge and agent actions (added 2026-09-23) | **In verification**: all tasks built on `feat/m2.7-github`, 351 tests pass; not committed or merged yet |
+| M2.8 | Conversations and agents | "+" creates at once, the default agent, agents in the model menu (added 2026-09-23) | **Designed**: HTML ready, plan not written; starts after M3 (user decision, 2026-09-24) |
+| M3 | Diff, comments, editor, files | review, comment, edit and commit; the All files tab to browse and edit any file (added 2026-09-24); its PR part moved to M2.7 | **Planned, next**: HTML and plan ready, All files being designed; starts once M2.7 is merged |
+| M4 | Multi-account + energy | per-repo account everywhere; energy measured vs Conductor | **Not planned**: M2.7 already gives each repository its account and `GH_TOKEN`; left: git identity and SSH key per account, and the energy measurement |
 
 ## M0 answers
 - `gh auth git-credential` honors `GH_TOKEN` for git over HTTPS (verified with `git ls-remote`; `git push` uses the same credential helper but was not exercised): with `GH_TOKEN` set, `gh`/git-over-HTTPS act as that token's account; without it, they fall back to the active `gh` account via `gh auth git-credential` (not an `osxkeychain` cache). Details: `docs/superpowers/spikes/2026-09-22-m0-findings.md`.

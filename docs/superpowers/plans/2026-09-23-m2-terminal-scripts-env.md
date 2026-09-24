@@ -1,5 +1,7 @@
 # M2 Terminal, Scripts and Env Implementation Plan
 
+**Status: done**, merged into `development` on 2026-09-23 (`3fd2151`). The manual checklist is still open: `docs/superpowers/m2-verification.md`.
+
 > **Execution:** task by task, one commit per task. Nothing is compiled or tested before Task 10 (global rule `## Tests` in `~/.claude/CLAUDE.md`). This plan gives decisions, files, public interfaces, required behavior and the tests to write. It does not carry the code: the implementer writes it.
 
 **Goal:** Each workspace gets terminal tabs, setup/run/archive scripts and its own environment (repo variables, secrets in the Keychain, its own ports), with no polling added.

@@ -1,0 +1,642 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rocky · Conversations spec</title>
+<!--
+==========================================================================================================
+HOW TO READ THIS FILE (for the agent that implements it)
+==========================================================================================================
+Visual, behavioral and technical source of truth for M2.8. dev-1 writes the plan from these requirement ids
+(docs/superpowers/plans/2026-09-23-m2.8-conversations.md).
+
+- What changes: "+" creates a conversation at once, with the agent last used in the repository, and the agent is
+  chosen afterwards in the message box's model menu, the way Conductor does it. The Claude instance stays a
+  repository setting. Codex is not part of M2.8.
+- User decisions (2026-09-23): the default is the agent last used in the repository; picking another agent's
+  model once the conversation has messages opens a new conversation; the Claude instance stays per repository;
+  Codex comes later, separately.
+- The sidebar, tabs, chat and message box are M2.5's, simplified. Only the "+" button, the model menu and the
+  switching behavior are specified here.
+- Requirement ids: CNV (new conversation), AGM (agent and model menu), KIT (RockyKit), OUT. Pins: button
+  "Requirement pins". When the mock and a requirement's text disagree, the text wins.
+==========================================================================================================
+-->
+<style>
+:root {
+  --page: #131519; --bg: #23272E; --sidebar: #1E2127; --panel: #1A1D22; --composer: #2A2F37; --composer-border: rgba(255,255,255,0.10);
+  --hairline: rgba(255,255,255,0.08); --hairline-soft: rgba(255,255,255,0.06);
+  --text: #E6E8EB; --text-2: #A3A9B1; --text-3: #858C95; --sep: #5C636C;
+  --fill-hover: rgba(255,255,255,0.04); --fill-selected: rgba(255,255,255,0.08); --fill-control: rgba(255,255,255,0.05);
+  --fill-icon-hover: rgba(255,255,255,0.06); --fill-button: rgba(255,255,255,0.08);
+  --accent: #78BDF5; --attention: #E8A94B; --danger: #F0876A; --success: #7CC08A;
+  --titlebar: 38px; --row: 28px; --r-row: 7px; --r-btn: 6px;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --dur-fast: 120ms; --dur-base: 150ms; --dur-enter: 220ms; --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--page); color: var(--text); font: 13px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; -webkit-font-smoothing: antialiased; display: flex; overflow: hidden; }
+[hidden] { display: none !important; }
+button { font: inherit; color: inherit; background: none; border: 0; margin: 0; padding: 0; text-align: left; cursor: pointer; }
+button:disabled { cursor: default; opacity: 0.45; }
+input { font: inherit; color: inherit; }
+svg { display: block; flex-shrink: 0; }
+code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 4px; }
+.grow { flex-grow: 1; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.stage { flex: 1 0 auto; overflow: auto; padding: 20px 24px 48px; }
+.doc-title { width: 1100px; margin: 0 0 4px; font-size: 18px; font-weight: 600; }
+.doc-sub { width: 1100px; margin: 0 0 14px; color: var(--text-2); font-size: 12.5px; line-height: 1.5; }
+.demo { width: 1100px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
+.demo-label { font-size: 10.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.07em; margin-right: 4px; }
+.demo button { height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.14); color: var(--text-2); font-size: 12px; }
+.demo button:hover { color: var(--text); border-color: rgba(255,255,255,0.3); }
+.demo button[aria-pressed="true"] { background: rgba(120,189,245,0.14); border-color: rgba(120,189,245,0.55); color: var(--text); }
+.demo .note { font-size: 12px; color: var(--text-3); margin-left: 6px; }
+.demo .note b { color: var(--text-2); font-weight: 500; }
+
+/* window: M2.5 shell, simplified */
+.window { position: relative; width: 1100px; height: 720px; display: flex; background: var(--bg); border-radius: 10px; overflow: hidden; box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 24px 60px rgba(0,0,0,0.45); }
+.lights { display: inline-flex; gap: 8px; } .light { width: 12px; height: 12px; border-radius: 50%; }
+.light.close { background: #FF5F57; } .light.min { background: #FEBC2E; } .light.zoom { background: #28C840; }
+.sidebar { width: 230px; flex-shrink: 0; display: flex; flex-direction: column; background: var(--sidebar); border-right: 1px solid var(--hairline); }
+.sb-top { height: var(--titlebar); display: flex; align-items: center; padding: 0 16px; }
+.sb-list { flex-grow: 1; overflow-y: auto; padding: 4px 8px; display: flex; flex-direction: column; gap: 2px; }
+.repo { height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 8px; margin-top: 8px; font-weight: 600; }
+.monogram { width: 16px; height: 16px; border-radius: 4px; color: #fff; font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.row { width: 100%; height: var(--row); display: flex; align-items: center; gap: 8px; padding: 0 8px 0 32px; border-radius: var(--r-row); transition: background var(--dur-fast); }
+.row:hover { background: var(--fill-hover); } .row.selected { background: var(--fill-selected); }
+.main { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; }
+.topbar { height: var(--titlebar); flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 0 12px 0 16px; }
+.crumb { color: var(--text-2); } .br { font: 12px var(--mono); }
+.tabs { height: 34px; flex-shrink: 0; display: flex; align-items: stretch; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--hairline); }
+.tab-wrap { position: relative; display: flex; align-items: center; }
+.tab-wrap.selected::before { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--text); }
+.tab { height: 100%; display: flex; align-items: center; gap: 7px; padding: 0 12px 0 10px; font-size: 12.5px; color: var(--text-2); max-width: 220px; }
+.tab-wrap.selected .tab { color: var(--text); }
+.tab span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tab-wrap.enter { animation: enter var(--dur-enter) var(--ease-out) both; }
+.new-conv { width: 28px; height: 28px; align-self: center; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r-btn); color: var(--text-2); margin-left: 2px; transition: background var(--dur-fast), color var(--dur-fast); }
+.new-conv:hover { background: var(--fill-icon-hover); color: var(--text); }
+.agent { width: 14px; height: 14px; border-radius: 4px; font-size: 9px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.agent.claude { color: #1E2127; background: #D97757; }
+.agent.opencode { color: #1E2127; background: #CFD3D8; }
+.agent.sm { width: 12px; height: 12px; font-size: 8px; border-radius: 3px; }
+.agent.lg { width: 16px; height: 16px; font-size: 10px; }
+.agent.xl { width: 22px; height: 22px; font-size: 12px; border-radius: 6px; }
+.chat { flex-grow: 1; min-height: 0; overflow-y: auto; padding: 20px 24px 12px; display: flex; flex-direction: column; align-items: center; }
+.col { width: 100%; max-width: 620px; display: flex; flex-direction: column; gap: 14px; font-size: 14px; }
+.chat-empty { color: var(--text-3); text-align: center; margin-top: 110px; font-size: 13px; line-height: 1.6; }
+.msg-user { align-self: flex-end; max-width: 480px; padding: 10px 14px; border-radius: 12px; background: rgba(255,255,255,0.06); line-height: 1.5; white-space: pre-wrap; }
+.msg-agent { line-height: 1.6; color: #D5D8DC; }
+.working { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
+.turn-footer { display: flex; align-items: center; gap: 8px; font-size: 10.5px; color: var(--text-2); }
+.enter { animation: enter var(--dur-enter) var(--ease-out) both; }
+@keyframes enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.shimmer { color: transparent; background: linear-gradient(90deg, var(--text-2) 0%, var(--text-2) 30%, var(--text) 50%, var(--text-2) 70%, var(--text-2) 100%); background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; animation: shimmer 2.1s linear infinite; }
+@keyframes shimmer { 0% { background-position: 100% 0; } 76% { background-position: 0% 0; } 100% { background-position: 0% 0; } }
+.spinner { animation: spin 0.9s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
+.composer-wrap { flex-shrink: 0; display: flex; justify-content: center; padding: 8px 24px 16px; position: relative; }
+.composer { width: 100%; max-width: 620px; border-radius: 12px; background: var(--composer); border: 1px solid var(--composer-border); padding: 10px 12px 8px; display: flex; flex-direction: column; gap: 8px; }
+.composer input { width: 100%; border: 0; outline: none; background: transparent; font-size: 14px; padding: 2px 2px; }
+.composer input::placeholder { color: var(--text-3); }
+.c-row { display: flex; align-items: center; gap: 8px; }
+.model-btn { height: 26px; display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; border-radius: 6px; background: rgba(255,255,255,0.06); font-size: 12px; transition: background var(--dur-fast); }
+.model-btn:hover:not(:disabled), .model-btn.open { background: rgba(255,255,255,0.1); }
+.model-btn .dim { color: var(--text-2); }
+.model-btn .chev { color: var(--text-2); transition: transform var(--dur-base); }
+.model-btn.open .chev { transform: rotate(180deg); }
+.send { margin-left: auto; width: 28px; height: 28px; border-radius: 7px; background: rgba(255,255,255,0.1); display: flex; align-items: center; justify-content: center; color: var(--text-2); }
+.send.ready { background: #FFFFFF; color: #111316; }
+.toast { position: absolute; left: 50%; top: 84px; z-index: 60; transform: translateX(-50%); padding: 8px 12px; border-radius: 8px; background: var(--panel); box-shadow: 0 0 0 1px rgba(255,255,255,0.1), 0 8px 24px rgba(0,0,0,0.45); font-size: 12px; color: var(--text-2); opacity: 0; pointer-events: none; transition: opacity var(--dur-base); white-space: nowrap; }
+.toast.show { opacity: 1; }
+
+/* AGM: the model menu */
+.menu { position: absolute; z-index: 40; display: flex; overflow: hidden; border-radius: 10px; background: var(--panel); box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 12px 34px rgba(0,0,0,0.55); }
+.menu.opening { animation: menu-in 120ms var(--ease-out); }
+.m-head .spinner { color: var(--text-2); align-self: center; }
+@keyframes menu-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.rail { width: 48px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 0; background: rgba(0,0,0,0.18); border-right: 1px solid var(--hairline); }
+.rail button { position: relative; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border-radius: 8px; opacity: 0.6; transition: background var(--dur-fast), opacity var(--dur-fast); }
+.rail button:hover { opacity: 0.85; background: var(--fill-hover); }
+.rail button[aria-selected="true"] { background: var(--fill-selected); opacity: 1; }
+.rail button[aria-selected="true"]::before { content: ""; position: absolute; left: -7px; top: 8px; bottom: 8px; width: 3px; border-radius: 2px; background: var(--text); }
+.rail .cur-dot { position: absolute; right: 3px; bottom: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 2px var(--panel); }
+.m-body { width: 380px; padding: 6px; }
+.m-head { display: flex; align-items: baseline; gap: 8px; padding: 6px 10px 8px; }
+.m-head b { font-size: 13px; font-weight: 600; }
+.m-head span { font-size: 11px; color: var(--text-3); }
+.m-title { padding: 6px 10px 4px; font-size: 10.5px; font-weight: 500; color: var(--text-3); }
+.m-row { width: 100%; min-height: 34px; display: flex; align-items: center; gap: 9px; padding: 5px 10px; border-radius: 7px; transition: background var(--dur-fast); }
+.m-row:hover { background: rgba(255,255,255,0.07); }
+.m-row.sel { background: var(--fill-selected); }
+.m-row .txt { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.m-row .nm { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-row .nm .dim { color: var(--text-2); margin-left: 6px; }
+.m-row .dt { font-size: 10.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.search { display: flex; align-items: center; gap: 6px; margin: 0 4px 4px; padding: 6px 10px; border-radius: 7px; background: rgba(255,255,255,0.06); color: var(--text-3); }
+.search input { flex-grow: 1; border: 0; outline: none; background: transparent; font-size: 12.5px; color: var(--text); }
+.scroll { max-height: 270px; overflow-y: auto; }
+.prov { padding: 8px 10px 2px; font-size: 10px; font-weight: 500; color: var(--text-3); }
+.chips { position: relative; display: flex; gap: 2px; margin: 0 10px 8px; padding: 2px; border-radius: 7px; background: var(--fill-control); }
+.chips button { position: relative; z-index: 1; flex: 1; height: 24px; border-radius: 5px; font-size: 12px; color: var(--text-2); text-align: center; transition: color var(--dur-base); }
+.chips button.on { color: var(--text); }
+/* AGM-07 motion: the selected level's fill slides between chips; new levels cross-fade; the section grows in and out. */
+.chips .pill { position: absolute; top: 2px; height: 24px; border-radius: 5px; background: var(--fill-selected); }
+.chips .pill.slide { transition: left 180ms var(--ease-out), width 180ms var(--ease-out); }
+.chips.swap button { animation: chip-swap 150ms ease-out both; }
+@keyframes chip-swap { from { opacity: 0; } to { opacity: 1; } }
+.eff { overflow: hidden; }
+.eff.in { animation: eff-in 200ms var(--ease-out) both; }
+.eff.out { animation: eff-out 120ms ease-in both; }
+@keyframes eff-in { from { max-height: 0; opacity: 0; transform: translateY(4px); } to { max-height: 90px; opacity: 1; transform: none; } }
+@keyframes eff-out { from { max-height: 90px; opacity: 1; } to { max-height: 0; opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .eff.in { animation: chip-swap 150ms ease-out both; } .eff.out { animation: none; display: none; }
+  .chips .pill.slide { transition: none; }
+}
+.divider { height: 1px; background: var(--hairline); margin: 6px 4px; }
+.fast { display: flex; align-items: center; padding: 6px 10px 8px; font-size: 13px; }
+.fast small { display: block; font-size: 10px; color: var(--text-3); }
+.switch { width: 28px; height: 16px; border-radius: 8px; background: rgba(255,255,255,0.18); position: relative; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff; transition: transform var(--dur-fast); }
+.switch.on { background: var(--success); } .switch.on::after { transform: translateX(12px); }
+.empty { padding: 18px 12px 12px; text-align: center; color: var(--text-2); font-size: 12.5px; line-height: 1.5; }
+.empty p { margin: 0 0 10px; color: var(--text-3); font-size: 12px; }
+.fill-btn { height: 26px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border-radius: var(--r-btn); background: #FFFFFF; color: #111316; font-size: 12.5px; font-weight: 500; }
+.starting { padding: 22px 12px; display: flex; justify-content: center; color: var(--text-2); }
+
+.spec-on .window [data-req] { outline: 1px dashed rgba(120,189,245,0.6); outline-offset: -1px; position: relative; }
+.spec-on .window [data-req]::after { content: attr(data-req); position: absolute; top: 1px; right: 1px; z-index: 45; padding: 2px 4px; border-radius: 3px; background: var(--accent); color: #0E1116; font: 600 9px/1 var(--mono); pointer-events: none; }
+
+/* spec */
+.spec { flex: 0 1 480px; min-width: 340px; overflow-y: auto; overflow-x: hidden; background: #16181C; border-left: 1px solid var(--hairline); padding: 22px 24px 80px; font-size: 12.5px; line-height: 1.55; color: var(--text-2); }
+.spec h1 { margin: 0 0 6px; font-size: 16px; color: var(--text); }
+.spec h2 { margin: 30px 0 8px; font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); }
+.spec p { margin: 6px 0; } .spec strong { color: var(--text); font-weight: 600; } .spec code { overflow-wrap: anywhere; }
+.spec pre { margin: 6px 0; padding: 8px 10px; border-radius: 6px; background: rgba(0,0,0,0.28); font: 11px/1.55 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+.req { margin: 0 -12px 6px; padding: 12px 12px 10px; border: 1px solid transparent; border-radius: 8px; transition: background 0.3s, border-color 0.3s; scroll-margin-top: 12px; }
+.req.flash { background: rgba(120,189,245,0.08); border-color: rgba(120,189,245,0.4); }
+.req > header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.req .id { font: 600 10.5px var(--mono); color: var(--accent); background: none; padding: 0; }
+.req h3 { flex-grow: 1; margin: 0; font-size: 13px; font-weight: 600; color: var(--text); }
+.scope { font-size: 10px; padding: 1px 6px; border-radius: 4px; border: 1px solid; white-space: nowrap; }
+.scope.in { color: var(--success); border-color: rgba(124,192,138,0.4); } .scope.out { color: var(--attention); border-color: rgba(232,169,75,0.5); }
+.scope.tech { color: var(--accent); border-color: rgba(120,189,245,0.45); }
+.req dl { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 5px 10px; margin: 8px 0 0; }
+.req dt { padding-top: 1px; font-size: 11px; color: var(--text-3); } .req dd { margin: 0; }
+.req ol, .req ul { margin: 2px 0 0; padding-left: 18px; } .req li { margin: 2px 0; }
+.spec table { width: 100%; border-collapse: collapse; margin: 6px 0; font-size: 11.5px; }
+.spec th { text-align: left; font-weight: 600; color: var(--text-3); padding: 4px 6px 4px 0; border-bottom: 1px solid var(--hairline); }
+.spec td { padding: 4px 6px 4px 0; border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: top; }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <h1 class="doc-title">Rocky · Conversations (M2.8)</h1>
+  <p class="doc-sub"><strong>+</strong> opens a conversation at once, with the agent you last used in that repository. The agent is chosen afterwards in the message box's model menu: pick a model of another agent, and an empty conversation switches to it; one with messages stays as it is and a new conversation opens with that agent. Try it: <strong>+</strong> in "lima", then the model menu.</p>
+  <div class="demo" aria-label="Demo controls">
+    <span class="demo-label">Demo controls, not part of Rocky</span>
+    <button type="button" id="demoCache" aria-pressed="false">OpenCode never started</button>
+    <button type="button" id="demoPins" aria-pressed="false">Requirement pins</button>
+    <span class="note" id="lastNote"></span>
+  </div>
+
+  <div class="window" id="win">
+    <nav class="sidebar" aria-label="Workspaces">
+      <div class="sb-top"><span class="lights"><span class="light close"></span><span class="light min"></span><span class="light zoom"></span></span></div>
+      <div class="sb-list" id="sbList"></div>
+    </nav>
+    <main class="main">
+      <header class="topbar" id="topbar"></header>
+      <div class="tabs" id="tabs"></div>
+      <div class="chat" id="chat"><div class="col" id="chatCol"></div></div>
+      <div class="composer-wrap" id="composerWrap">
+        <div class="composer">
+          <input id="input" placeholder="Ask Claude Code to make changes…" autocomplete="off" aria-label="Message">
+          <div class="c-row"><span id="modelSlot"></span><button class="send" id="sendBtn" aria-label="Send"></button></div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<aside class="spec" id="spec">
+  <h1>Requirements</h1>
+  <p>Plan (dev-1): <code>docs/superpowers/plans/2026-09-23-m2.8-conversations.md</code>. After M3 (order: M2.7, M3, M2.8). Labels: <span class="scope tech">Technical</span> for data and process facts; <span class="scope in">In scope</span> for behavior and UI.</p>
+  <p><strong>User decisions (2026-09-23):</strong> the default is the agent last used in the repository · with messages, another agent's model opens a new conversation · the Claude instance stays a repository setting · Codex comes later, separately.</p>
+  <p><strong>Today</strong> (for reference): "+" is a menu, "New Claude Code conversation" / "New OpenCode conversation" (<code>WorkspaceDetailView.swift</code>, <code>MenuButton(id: "new-conversation-…")</code>), and a conversation's agent never changes (<code>ChatSessionModel.agent</code> is a <code>let</code>).</p>
+
+  <h2>New conversation</h2>
+  <section class="req" id="REQ-CNV-01">
+    <header><code class="id">CNV-01</code><h3>"+" creates the conversation</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Button</dt><dd>The same 28 pt <code>plus</code> icon button after the tabs, no longer a menu. Tooltip "New conversation". One click adds the tab at the end, selects it and focuses the message box.</dd>
+      <dt>Agent</dt><dd>The default agent (CNV-02). Its process starts in the background right away, as today, so the model list is there before the first message.</dd>
+      <dt>Motion</dt><dd>The tab enters with M2.5's entrance (220 ms, from 6 pt below, fade).</dd>
+      <dt>SwiftUI</dt><dd>Replace the <code>MenuButton</code> in the tab strip with a <code>Button</code> in <code>RockyIconButtonStyle</code>, <code>.clickable()</code>, calling <code>AppModel.newConversation(workspace:)</code> (KIT-11).</dd>
+      <dt>Done when</dt><dd>One click, no menu; the message box button shows only the loading spinner until the agent reports its models.</dd>
+    </dl>
+  </section>
+  <section class="req" id="REQ-CNV-02">
+    <header><code class="id">CNV-02</code><h3>The default agent</h3><span class="scope tech">Technical</span></header>
+    <dl>
+      <dt>Rule</dt><dd>The agent of the conversation where you last sent a message <strong>in this repository</strong> (any of its workspaces, open or closed tabs). No message yet in the repository: Claude Code.</dd>
+      <dt>Also</dt><dd>The first conversation a workspace opens by itself (today <code>showConversations</code> creates a Claude Code one) uses the same rule.</dd>
+      <dt>Why</dt><dd>No setting to learn: if you work in OpenCode in a repository, its new conversations are OpenCode.</dd>
+      <dt>Kit</dt><dd>KIT-13.</dd>
+    </dl>
+  </section>
+
+  <h2>Choosing the agent</h2>
+  <section class="req" id="REQ-AGM-01">
+    <header><code class="id">AGM-01</code><h3>Agents in the model menu</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Layout</dt><dd>An <strong>agent rail</strong> at the left of the menu (user decision, 2026-09-23, option B of three). Rail: 48 pt wide, the menu's full height, black at 18 % over <code>panel</code>, a 1 pt <code>hairline</code> on its right. One 34 × 34 pt item per agent, radius 8, 6 pt apart from the top: <strong>only the agent's logo</strong> (<code>AgentIcon</code> 22 pt), so agents stack downwards (Codex later). Unselected 60 % opacity, hover 85 % on <code>fillHover</code>; selected <code>fillSelected</code> at full opacity with a 3 pt <code>textPrimary</code> bar at the rail's left edge. The conversation's agent carries a 6 pt <code>success</code> dot at its logo's bottom-right, ringed 2 pt in <code>panel</code>.</dd>
+      <dt>Body</dt><dd>Right of the rail, today's 380 pt content (the menu grows to 428 pt): a title row with the agent's name (13 semibold) and "42 models" (11 <code>textTertiary</code>), then the models. Rows carry no logo any more: the rail and the title say which agent they belong to.</dd>
+      <dt>Name</dt><dd>Rail items: tooltip and accessibility label with the agent's name, "(current)" for the conversation's agent ("Claude Code (current)").</dd>
+      <dt>Opens on</dt><dd>The conversation's agent. Selecting another rail item only changes what the body shows; nothing switches until a model is picked.</dd>
+      <dt>Current agent</dt><dd>Today's content: models (search and provider groups past 8), the effort chips of the selected model (AGM-07), the Fast switch when the agent offers it.</dd>
+      <dt>Other agent</dt><dd>Its models from the catalog (AGM-04), with the same rows, search and groups; no effort or Fast (they come from the agent's session). No hint row about what a pick will do (user decision, 2026-09-23): the switch or the new tab shows it.</dd>
+      <dt>Button</dt><dd>The message box button shows the agent's icon, the model and the effort, as today ("Opus 5.5 High").</dd>
+      <dt>A11y</dt><dd>The rail is a vertical tab list read by name: "Claude Code (current), selected"; ↑ / ↓ move between agents while it has focus.</dd>
+      <dt>SwiftUI</dt><dd>In <code>ModelMenuContent</code>: an <code>HStack(spacing: 0)</code> of the rail (<code>VStack</code> of buttons in <code>RockyIconButtonStyle</code>, <code>.clickable()</code>) and today's content for the agent shown; drop the <code>AgentIcon</code> from <code>modelRow</code>. The menu's <code>MenuButton</code> width goes from 380 to 428.</dd>
+    </dl>
+  </section>
+  <section class="req" id="REQ-AGM-02">
+    <header><code class="id">AGM-02</code><h3>Switching an empty conversation</h3><span class="scope tech">Technical</span></header>
+    <dl>
+      <dt>When</dt><dd>The picked model belongs to another agent, and the conversation has no user message and none queued.</dd>
+      <dt>Does</dt><dd>
+        <ol>
+          <li>Stop its agent (<code>ChatSessionModel.stop()</code>), also while it is still starting.</li>
+          <li>Update the record: <code>agent</code> = the new one, <code>acpSessionId</code> = nil (otherwise a resume would load a Claude session id in OpenCode).</li>
+          <li>Build a new <code>ChatSessionModel</code> for the same record id and start it; the tab keeps its place and its selection, its icon changes.</li>
+          <li>When the new session reports its options, set the picked model. If the model is gone from the agent's list, keep the agent's default and show "GPT-5.5 isn't available in OpenCode; using Claude Sonnet 5".</li>
+        </ol></dd>
+      <dt>Keeps</dt><dd>The unsent draft (text and attachments) and the message box focus.</dd>
+      <dt>Menu</dt><dd>Stays open (AGM-07): the rail's current dot moves to the new agent, the body keeps its models with the picked one checked and a spinner after the agent's name (AGM-05), and the Effort row appears with its animation once the session reports it. Key the menu by conversation id, not by the <code>ChatSessionModel</code>'s identity (today <code>"model-\(ObjectIdentifier(chat))"</code>), so rebuilding the chat does not close it.</dd>
+      <dt>Also</dt><dd>The new agent brings its own slash commands (M2.6): its handler is installed before its <code>session/new</code>, like any new chat.</dd>
+    </dl>
+  </section>
+  <section class="req" id="REQ-AGM-03">
+    <header><code class="id">AGM-03</code><h3>Another agent after messages</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>When</dt><dd>The picked model belongs to another agent, and the conversation has at least one user message (sent or queued).</dd>
+      <dt>Does</dt><dd>A new conversation with that agent opens at the end of the tabs and is selected; the picked model is set when its session reports its options (same fallback as AGM-02). The conversation you left stays as it is, with its agent still running.</dd>
+      <dt>Draft</dt><dd>The unsent draft (text and attachments) moves to the new conversation and leaves the old one empty.</dd>
+      <dt>Menu</dt><dd>Closes: the new tab's message box takes over.</dd>
+      <dt>Why</dt><dd>The history lives in the agent's session (<code>session/load</code>); it cannot move to another agent.</dd>
+    </dl>
+  </section>
+  <section class="req" id="REQ-AGM-04">
+    <header><code class="id">AGM-04</code><h3>The model catalog</h3><span class="scope tech">Technical</span></header>
+    <dl>
+      <dt>Why</dt><dd>An agent reports its models only in a session (the <code>model</code> config option, after <code>session/new</code>). Listing another agent's models must not start its process.</dd>
+      <dt>Rule</dt><dd>Every time a session reports its <code>model</code> option, Rocky records its choices (value, name, detail) for that agent. Claude's are keyed by Claude instance (<code>claudeConfigDir</code>, or "default"), because instances can differ; OpenCode's by agent only. The menu shows the list for the repository's Claude instance.</dd>
+      <dt>Stored</dt><dd>JSON at <code>~/Library/Application Support/Rocky/agent-models.json</code>, rewritten when a list changes. Model names only: no tokens, no keys, and no effort levels (an agent reports them only for its current model, AGM-07).</dd>
+      <dt>No list yet</dt><dd>The agent never ran on this Mac: its body shows "OpenCode hasn't reported its models yet." and a "Start OpenCode" button, which does what a pick would do (AGM-02 or AGM-03) with the agent's default model.</dd>
+    </dl>
+  </section>
+  <section class="req" id="REQ-AGM-05">
+    <header><code class="id">AGM-05</code><h3>While the agent is starting</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Body</dt><dd>The menu keeps showing that agent's models from the catalog (AGM-04), the picked one checked, so it neither shrinks nor jumps. A model picked meanwhile becomes the pending one. There is no Effort row until the session reports its options; then it grows in (AGM-07).</dd>
+      <dt>Signal</dt><dd><strong>Only the loading spinner, no "Starting…" text anywhere</strong> (user decision, 2026-09-23; a glow around the menu was tried and rejected). In the menu, a <code>CircularProgress</code> 12 in <code>textSecondary</code> replaces "42 models" after the agent's name in the title row.</dd>
+      <dt>No list</dt><dd>Only when the catalog has nothing for that agent: the spinner (<code>CircularProgress</code> 14) centred in the body, no text.</dd>
+      <dt>Button</dt><dd>Today a plain "Starting Claude Code…" label. Now a menu button right away with the spinner (<code>CircularProgress</code> 12) in place of the agent's logo, and the chevron; no text. Tooltip and accessibility label: "Starting Claude Code".</dd>
+      <dt>Rail</dt><dd>The other rail items work, so you can click "+" and pick OpenCode without waiting.</dd>
+    </dl>
+  </section>
+  <section class="req" id="REQ-AGM-06">
+    <header><code class="id">AGM-06</code><h3>While a turn runs</h3><span class="scope in">In scope</span></header>
+    <p>The menu stays disabled during a turn, as today (<code>.disabled(chat.state == .running)</code>). A message typed meanwhile goes into M2.5's queue, and that counts as a message for AGM-03.</p>
+  </section>
+  <section class="req" id="REQ-AGM-07">
+    <header><code class="id">AGM-07</code><h3>Effort follows the model</h3><span class="scope tech">Technical</span></header>
+    <dl>
+      <dt>Source</dt><dd>The session's <code>effort</code> config option (category <code>thought_level</code>), never a fixed list. OpenCode 1.18.32 builds it from the current model's variants plus "default", and omits it for a model without variants (<code>packages/opencode/src/acp/config-option.ts</code>, <code>buildEffortSelectOption</code>). So GPT-5.5 might offer Minimal · Low · Medium · High · Default, Claude Sonnet High · Max · Default, and Qwen3 Coder nothing. Claude's adapter also changes its levels with the model.</dd>
+      <dt>Model change</dt><dd>The agent answers <code>session/set_config_option</code> with the whole new list, and Rocky replaces its options with it (<code>ChatSessionModel.setOption</code>, as today). OpenCode resets the effort to the new model's "default" (else its first level) unless the model is the same (<code>service.ts</code>, <code>selectModelVariant</code>). Rocky shows what comes back and never carries "High" over by itself.</dd>
+      <dt>Menu</dt><dd>The Effort row shows exactly those choices, in the agent's order, as equal-width chips (1 to 6 fit in 380 pt), and disappears when the option is absent.</dd>
+      <dt>Stays open</dt><dd>Picking a model <strong>never closes the menu</strong>, with or without effort levels, so changing the effort right after is one click (user decision, 2026-09-23; today the pick closes it). Picking an effort keeps it open too, as today. It closes on Esc, a click outside, sending, or when another tab takes over (AGM-03).</dd>
+      <dt>Motion</dt><dd>
+        <ul>
+          <li><strong>Appears</strong> (the new model has levels, the last had none, or the session just reported them): the Effort section, divider and title included, grows from 0 to its height while fading in and rising 4 pt, 200 ms ease-out (<code>Theme.Motion.enter</code>). The menu grows upwards, since it hangs from its button.</li>
+          <li><strong>Goes</strong> (the new model has none): it shrinks to 0 and fades, 120 ms ease-in.</li>
+          <li><strong>Other levels</strong> (both models have levels): the chip labels cross-fade in 150 ms and the selected fill slides to the new model's level.</li>
+          <li><strong>Effort picked</strong>: the selected fill slides from the old chip to the new one, 180 ms ease-out.</li>
+          <li>Reduce Motion: fades only, no growth, no slide.</li>
+        </ul></dd>
+      <dt>SwiftUI</dt><dd>The section in an <code>if</code> with <code>.transition(.opacity.combined(with: .move(edge: .bottom)))</code>, its insertion under <code>withAnimation(Theme.Motion.enter)</code> when the options change; the fill as one background with <code>matchedGeometryEffect</code> in <code>EffortChips</code>; <code>@Environment(\.accessibilityReduceMotion)</code> for the fade-only path. The menu host must let its height follow the content (check <code>MenuPresenter</code> does not fix it).</dd>
+      <dt>Label</dt><dd>The button and the selected row show the effort after the model ("GPT-5.5 High"), except "Default", which is left out ("GPT-5.5", not "GPT-5.5 Default"). The chip keeps its "Default" name.</dd>
+      <dt>Other agent</dt><dd>Its body shows no effort, because the agent reports levels only for its current model. After the switch (AGM-02) or the new conversation (AGM-03), the model starts at its default effort, and the Effort row is in the menu from then on.</dd>
+      <dt>Done when</dt><dd>With OpenCode: picking GPT-5.5 keeps the menu open and animates its levels in; picking Qwen3 Coder animates the row out and the menu stays; picking Claude Sonnet after GPT-5.5 High shows Sonnet's default, not High.</dd>
+    </dl>
+  </section>
+
+  <h2>RockyKit</h2>
+  <section class="req" id="REQ-KIT-11">
+    <header><code class="id">KIT-11</code><h3>AppModel</h3><span class="scope tech">Technical</span></header>
+<pre>func newConversation(workspace: Workspace) async -> ChatSessionModel?          // CNV-01, default agent
+func newConversation(workspace: Workspace, agent: AgentKind,
+                     model: String?, draft: ComposerDraft?) async -> ChatSessionModel?   // AGM-03
+func switchAgent(conversationId: String, to: AgentKind, model: String?) async     // AGM-02
+func pickModel(conversationId: String, agent: AgentKind, model: String?) async    // decides AGM-02 or AGM-03
+var pendingDrafts: [String: ComposerDraft]                                      // read once by the new ChatView</pre>
+    <dl>
+      <dt>Model</dt><dd>The picked model waits on the chat (<code>pendingModel</code>) and is applied with <code>setOption(SessionConfigOption.model, …)</code> when the options first arrive.</dd>
+      <dt>Draft</dt><dd><code>ComposerDraft</code> (text, attachments) leaves <code>ComposerController</code> when the switch or the new conversation starts, and the next <code>ChatView</code> for that conversation takes it.</dd>
+      <dt>Tests</dt><dd>The default agent (CNV-02); a pick in an empty conversation switches it in place and clears <code>acpSessionId</code>; a pick with messages opens a new conversation and leaves the old one untouched; the pending model is applied once, with the fallback when it is missing; after a model change the effort shown is the one the agent answered (AGM-07).</dd>
+    </dl>
+  </section>
+  <section class="req" id="REQ-KIT-12">
+    <header><code class="id">KIT-12</code><h3>AgentModelCatalog</h3><span class="scope tech">Technical</span></header>
+<pre>struct AgentModelCatalog {
+  init(file: URL)
+  func models(agent: AgentKind, claudeInstance: String?) -> [SessionConfigOption.Choice]?
+  mutating func record(_ option: SessionConfigOption, agent: AgentKind, claudeInstance: String?)
+}</pre>
+    <p>Pure apart from its file. Tests: round trip; Claude instances kept apart; an unchanged list does not rewrite the file.</p>
+  </section>
+  <section class="req" id="REQ-KIT-13">
+    <header><code class="id">KIT-13</code><h3>The last agent used in a repository</h3><span class="scope tech">Technical</span></header>
+    <p><code>RockyStore.lastUsedAgent(repoId:) -&gt; AgentKind?</code>: the <code>agent</code> of the chat session whose newest user message (<code>chatMessage.kind = 'user'</code>) is the most recent among the repository's workspaces; nil without one. One query joining <code>chatMessage</code> → <code>chatSession</code> → <code>workspace</code>. Tests: across two workspaces of a repository; another repository's messages ignored; a closed tab still counts.</p>
+  </section>
+
+  <h2>Out of scope</h2>
+  <section class="req" id="REQ-OUT-40">
+    <header><code class="id">OUT-40</code><h3>Not in M2.8</h3><span class="scope out">Later</span></header>
+    <p>Codex (a later milestone: its <code>codex-acp</code> adapter, login and an environment check; the rail takes it as one more item) · choosing the Claude instance per conversation (it stays a repository setting; M4 ties it to the GitHub account) · moving a conversation's history to another agent · a default-agent setting.</p>
+  </section>
+</aside>
+
+<script>
+/* Demo behavior. Agents, models and timings are canned; the requirements on the right are what matters. */
+(() => {
+  'use strict';
+  const $ = (s) => document.querySelector(s);
+  const win = $('#win');
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  let seq = 0; const uid = () => 'c' + (++seq);
+  const svg = (s, body, w) => `<svg width="${s}" height="${s}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+  const spinner = (s) => `<svg class="spinner" width="${s}" height="${s}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" role="img" aria-label="Starting"><circle cx="8" cy="8" r="5.5" stroke-opacity="0.22"/><path d="M8 2.5a5.5 5.5 0 0 1 5.5 5.5"/></svg>`;
+  const I = {
+    plus: svg(14, '<path d="M8 3v10M3 8h10"/>', 1.6),
+    chev: svg(10, '<path d="M3.5 6l4.5 4.5L12.5 6"/>', 2),
+    check: svg(11, '<path d="M3.5 8.5l3 3 6-7"/>', 2.2),
+    up: svg(13, '<path d="M8 13V3.5M3.75 7.5L8 3.25l4.25 4.25"/>', 2.2),
+    search: svg(13, '<circle cx="7" cy="7" r="4.5"/><path d="M10.4 10.4l3.35 3.35"/>', 1.5),
+  };
+  const AGENT = { claude: 'Claude Code', opencode: 'OpenCode' };
+  const tile = (a, cls = '') => `<span class="agent ${a} ${cls}">${a === 'claude' ? 'C' : 'O'}</span>`;
+
+  // AGM-04: what each agent last reported. OpenCode's list is long, so it searches and groups.
+  const CATALOG = {
+    claude: [
+      { value: 'opus', name: 'Opus 5.5', detail: 'Most capable for complex work', efforts: ['low', 'medium', 'high', 'max'] },
+      { value: 'sonnet', name: 'Sonnet 5', detail: 'Best for everyday tasks', efforts: ['low', 'medium', 'high'] },
+      { value: 'haiku', name: 'Haiku 4.5', detail: 'Fastest for quick answers', efforts: [] },
+    ],
+    // AGM-07: each OpenCode model has its own variants; the effort option lists them plus "default".
+    opencode: [
+      ['Anthropic', 'claude-opus-5-5', 'Claude Opus 5.5', ['high', 'max']], ['Anthropic', 'claude-sonnet-5', 'Claude Sonnet 5', ['high', 'max']],
+      ['OpenAI', 'gpt-5.5', 'GPT-5.5', ['minimal', 'low', 'medium', 'high']], ['OpenAI', 'gpt-5.5-mini', 'GPT-5.5 mini', ['minimal', 'low', 'medium', 'high']], ['OpenAI', 'o5', 'o5', ['low', 'medium', 'high']],
+      ['Google', 'gemini-3-pro', 'Gemini 3 Pro', ['low', 'high']], ['Google', 'gemini-3-flash', 'Gemini 3 Flash', []],
+      ['OpenCode Zen', 'qwen3-coder', 'Qwen3 Coder', []], ['OpenCode Zen', 'kimi-k2', 'Kimi K2', []], ['OpenCode Zen', 'grok-code', 'Grok Code Fast', []],
+    ].map(([provider, value, name, efforts]) => ({ provider, value, name, efforts })),
+  };
+  const DEFAULT_MODEL = { claude: 'opus', opencode: 'claude-sonnet-5' };
+  const modelOf = (a, v) => CATALOG[a].find((m) => m.value === v) || { efforts: [] };
+  const effortChoices = (a, v) => { const e = modelOf(a, v).efforts; return a === 'opencode' && e.length ? [...e, 'default'] : e; };
+  const initialEffort = (a, v) => { const e = effortChoices(a, v); if (!e.length) return null; if (a === 'opencode') return 'default'; return e.includes('high') ? 'high' : e[0]; };
+  const effortName = (e) => e.charAt(0).toUpperCase() + e.slice(1);
+  const effortLabel = (c) => (c.effort && c.effort !== 'default' ? effortName(c.effort) : '');   // AGM-07: "Default" stays out of the label
+  const modelName = (a, v) => (CATALOG[a].find((m) => m.value === v) || {}).name || v;
+
+  const repos = { celes: { name: 'celes-platform', color: '#4C7BD9', last: 'claude' }, veritas: { name: 'veritas', color: '#8E6BE0', last: null } };
+  const conv = (agent, title, items) => ({ id: uid(), agent, title, items, state: 'ready', model: DEFAULT_MODEL[agent], effort: initialEffort(agent, DEFAULT_MODEL[agent]), fast: false, draft: '' });
+  const workspaces = [
+    { id: 'w1', repo: 'celes', name: 'tokyo', branch: 'jhzl/openapi-export', convs: [conv('claude', 'OpenAPI export', [{ k: 'user', t: 'Export the provider endpoints as OpenAPI 3.1.' }, { k: 'agent', t: 'Done: buildDocument() emits OpenAPI 3.1 and a test validates it.' }])] },
+    { id: 'w2', repo: 'celes', name: 'lima', branch: 'jhzl/invoice-rounding', convs: [] },
+    { id: 'w3', repo: 'veritas', name: 'quito', branch: 'jhzl/ocr-retry', convs: [] },
+  ];
+  workspaces.forEach((w) => { w.active = w.convs[0] ? w.convs[0].id : null; });
+  const state = { selected: 'w1', menu: null, noOpenCodeCache: false };
+  const W = () => workspaces.find((w) => w.id === state.selected);
+  const C = () => { const w = W(); return w.convs.find((c) => c.id === w.active); };
+  const hasMessages = (c) => c.items.some((i) => i.k === 'user');
+  const defaultAgent = (w) => repos[w.repo].last || 'claude';   // CNV-02
+
+  // ---------- render ----------
+  function renderSidebar() {
+    let html = '';
+    for (const rid of Object.keys(repos)) {
+      html += `<div class="repo"><span class="monogram" style="background:${repos[rid].color}">${repos[rid].name[0].toUpperCase()}</span>${esc(repos[rid].name)}</div>`;
+      for (const w of workspaces.filter((x) => x.repo === rid)) html += `<button class="row${w.id === state.selected ? ' selected' : ''}" data-action="select" data-ws="${w.id}">${esc(w.name)}</button>`;
+    }
+    $('#sbList').innerHTML = html;
+    $('#topbar').innerHTML = `<span class="crumb">${esc(repos[W().repo].name)}</span><span style="color:var(--sep)">/</span><span class="br">${esc(W().branch)}</span>`;
+    const r = repos[W().repo];
+    $('#lastNote').innerHTML = `Last agent used in <b>${esc(r.name)}</b>: <b>${r.last ? AGENT[r.last] : 'none yet (Claude Code)'}</b>`;
+  }
+  function renderTabs(enterId) {
+    const w = W();
+    $('#tabs').innerHTML = w.convs.map((c) => `<div class="tab-wrap${c.id === w.active ? ' selected' : ''}${c.id === enterId ? ' enter' : ''}"><button class="tab" data-action="tab" data-conv="${c.id}" title="${esc(c.title || 'New conversation')}">${c.state === 'starting' || c.state === 'running' ? spinner(12) : tile(c.agent)}<span>${esc(c.title || 'New conversation')}</span></button></div>`).join('') +
+      `<button class="new-conv" data-action="new" data-req="CNV-01" title="New conversation" aria-label="New conversation">${I.plus}</button>`;
+  }
+  function renderChat() {
+    const c = C();
+    if (!c) { $('#chatCol').innerHTML = '<p class="chat-empty">No conversation in this workspace yet.<br>Click + to open one.</p>'; return; }
+    const html = c.items.map((it) => it.k === 'user' ? `<div class="msg-user">${esc(it.t)}</div>` : it.k === 'agent' ? `<div class="msg-agent">${esc(it.t)}</div>` : `<div class="turn-footer">${tile(c.agent, 'sm')}<span>${esc(it.t)}</span></div>`).join('') +
+      (c.state === 'running' ? '<div class="working"><span class="shimmer">Working</span></div>' : '');
+    $('#chatCol').innerHTML = html || `<p class="chat-empty">New ${AGENT[c.agent]} conversation.<br>Pick another agent in the model menu before your first message to switch it.</p>`;
+    $('#chat').scrollTop = $('#chat').scrollHeight;
+  }
+  function renderComposer() {
+    const c = C();
+    const input = $('#input');
+    input.disabled = !c;
+    input.placeholder = c ? `Ask ${AGENT[c.agent]} to make changes…` : 'Open a conversation first';
+    if (c && input.value !== c.draft) input.value = c.draft;
+    let btn = '';
+    if (c) {
+      const open = state.menu ? ' open' : '';
+      if (c.state === 'starting') btn = `<button class="model-btn${open}" id="modelBtn" data-action="menu" data-req="AGM-05" title="Starting ${AGENT[c.agent]}" aria-label="Starting ${AGENT[c.agent]}">${spinner(12)}<span class="chev">${I.chev}</span></button>`;
+      else btn = `<button class="model-btn${open}" id="modelBtn" data-action="menu" data-req="AGM-01" ${c.state === 'running' ? 'disabled title="The agent is working"' : ''}>${tile(c.agent, 'lg')}<span>${esc(modelName(c.agent, c.model))}</span>${effortLabel(c) ? `<span class="dim">${effortLabel(c)}</span>` : ''}<span class="chev">${I.chev}</span></button>`;
+    }
+    $('#modelSlot').innerHTML = btn;
+    const s = $('#sendBtn'); s.innerHTML = I.up; s.classList.toggle('ready', Boolean(c && c.draft.trim()));
+  }
+  function renderAll(enterId) { renderSidebar(); renderTabs(enterId); renderChat(); renderComposer(); renderMenu(); }
+
+  // ---------- AGM menu ----------
+  function renderMenu() {
+    const old = $('.menu'); if (old) old.remove();
+    const c = C();
+    if (!state.menu || !c) return;
+    const seg = state.menu.agent;
+    const rail = Object.keys(AGENT).map((a) => { const name = a === c.agent ? `${AGENT[a]} (current)` : AGENT[a]; return `<button role="tab" aria-selected="${a === seg}" aria-label="${name}" title="${name}" data-action="seg" data-agent="${a}">${tile(a, 'xl')}${a === c.agent ? '<span class="cur-dot"></span>' : ''}</button>`; }).join('');
+    const starting = seg === c.agent && c.state === 'starting';
+    const noList = seg === 'opencode' && state.noOpenCodeCache;   // the catalog has nothing for OpenCode yet
+    const count = starting ? spinner(12) : noList ? '' : `${CATALOG[seg].length} models`;   // AGM-05: only the spinner while starting
+    let body = `<div class="m-head"><b>${AGENT[seg]}</b><span>${count}</span></div>`;
+    if (starting && noList) body += `<div class="starting">${spinner(14)}</div>`;   // AGM-05: no list yet, the spinner alone
+    else if (noList && c.agent !== 'opencode') body += `<div class="empty" data-req="AGM-04">OpenCode hasn't reported its models yet.<p>It lists them once it runs in a conversation.</p><button class="fill-btn" data-action="pick" data-agent="opencode" data-model="">Start OpenCode</button></div>`;
+    else body += modelList(seg, c);
+    const choices = effortChoices(c.agent, c.model);
+    const shown = seg === c.agent && c.state !== 'starting' && choices.length > 0;
+    const sig = shown ? `${c.agent}:${choices.join(',')}` : '';
+    const prev = state.menu.effortSig;   // undefined on the first render after opening: no motion
+    const effortHTML = (cls) => `<div class="eff ${cls}"><div class="divider"></div><div class="m-title">Effort</div><div class="chips${cls === 'swap' ? ' swap' : ''}" data-req="AGM-07"><span class="pill"></span>${choices.map((e) => `<button class="${e === c.effort ? 'on' : ''}" data-action="effort" data-e="${e}">${effortName(e)}</button>`).join('')}</div></div>`;
+    if (shown) body += effortHTML(prev === '' ? 'in' : prev && prev !== sig ? 'swap' : '');
+    else if (prev) body += state.menu.effortHTML.replace('class="eff ', 'class="eff out ');   // shrink the old one away
+    if (seg === c.agent && c.state !== 'starting' && seg === 'claude') {
+      body += `<div class="divider"></div><div class="fast"><div class="grow">Fast<small>Faster replies on the same model</small></div><button class="switch${c.fast ? ' on' : ''}" data-action="fast" aria-label="Fast"></button></div>`;
+    }
+    const m = document.createElement('div');
+    m.className = state.menu.opening ? 'menu opening' : 'menu';
+    state.menu.opening = false;
+    m.innerHTML = `<div class="rail" role="tablist" aria-label="Agent" aria-orientation="vertical" data-req="AGM-01">${rail}</div><div class="m-body">${body}</div>`;
+    win.appendChild(m);
+    const b = $('#modelBtn').getBoundingClientRect(); const box = win.getBoundingClientRect();
+    m.style.left = `${b.left - box.left}px`; m.style.bottom = `${box.bottom - b.top + 6}px`;
+    // Slide the selected fill from where it was to the chosen level (AGM-07).
+    const chipsEl = m.querySelector('.eff:not(.out) .chips');
+    if (chipsEl) {
+      const on = chipsEl.querySelector('button.on'); const pill = chipsEl.querySelector('.pill');
+      const to = on ? { left: on.offsetLeft, width: on.offsetWidth } : null;
+      const from = state.menu.pillRect;
+      if (to && from && prev === sig) { pill.style.left = `${from.left}px`; pill.style.width = `${from.width}px`; void pill.offsetWidth; pill.classList.add('slide'); }
+      else if (to && from && prev && prev !== sig) { pill.style.left = `${from.left}px`; pill.style.width = `${from.width}px`; void pill.offsetWidth; pill.classList.add('slide'); }
+      if (to) { pill.style.left = `${to.left}px`; pill.style.width = `${to.width}px`; } else pill.style.display = 'none';
+      state.menu.pillRect = to;
+    } else state.menu.pillRect = null;
+    const out = m.querySelector('.eff.out'); if (out) setTimeout(() => out.remove(), 130);
+    state.menu.effortSig = sig;
+    state.menu.effortHTML = shown ? effortHTML('') : '';
+    const q = m.querySelector('#mSearch'); if (q) { q.value = state.menu.query || ''; q.addEventListener('input', () => { state.menu.query = q.value; const pos = q.selectionStart; renderMenu(); const n = $('#mSearch'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } }); }
+  }
+  function modelList(agent, c) {
+    const list = CATALOG[agent];
+    const starting = agent === c.agent && c.state === 'starting';
+    const current = agent === c.agent ? (starting && c.pendingModel ? c.pendingModel : c.model) : null;
+    const row = (m) => `<button class="m-row${m.value === current ? ' sel' : ''}" data-action="pick" data-agent="${agent}" data-model="${m.value}"><span class="txt"><span class="nm">${esc(m.name)}${m.value === current && !starting && effortLabel(c) ? `<span class="dim">${effortLabel(c)}</span>` : ''}</span>${m.detail ? `<span class="dt">${esc(m.detail)}</span>` : ''}</span>${m.value === current ? I.check : ''}</button>`;
+    if (list.length <= 8) return list.map(row).join('');
+    const qy = (state.menu.query || '').toLowerCase();
+    const hits = list.filter((m) => !qy || m.name.toLowerCase().includes(qy) || m.provider.toLowerCase().includes(qy));
+    const groups = [...new Set(hits.map((m) => m.provider))];
+    return `<div class="search">${I.search}<input id="mSearch" placeholder="Search ${list.length} models" aria-label="Search models"></div><div class="scroll">` +
+      (hits.length ? groups.map((g) => `<div class="prov">${esc(g)}</div>` + hits.filter((m) => m.provider === g).map(row).join('')).join('') : `<div class="empty">No model matches “${esc(qy)}”</div>`) + '</div>';
+  }
+
+  // ---------- actions ----------
+  async function start(w, c, pendingModel) {
+    const token = uid(); c.startToken = token;
+    c.pendingModel = pendingModel || null;
+    c.state = 'starting'; renderAll();
+    await wait(2200);
+    if (c.startToken !== token) return;   // switched again while starting (AGM-05)
+    c.state = 'ready';
+    if (c.pendingModel) c.model = c.pendingModel;
+    c.pendingModel = null;
+    c.effort = initialEffort(c.agent, c.model);   // a new session starts at the model's default effort
+    if (c.pendingSend) { c.pendingSend = false; runTurn(w, c); return; }
+    if (w.id === state.selected) { renderTabs(); renderComposer(); renderMenu(); }
+  }
+  function newConversation(w, agent, model, draft) {   // CNV-01 / AGM-03
+    const c = conv(agent, null, []);
+    c.model = DEFAULT_MODEL[agent];
+    if (draft) c.draft = draft;
+    w.convs.push(c); w.active = c.id;
+    renderAll(c.id);
+    $('#input').focus();
+    start(w, c, model);
+    return c;
+  }
+  function pick(agent, model) {
+    const w = W(); const c = C();
+    if (agent === c.agent && c.state === 'starting') { c.pendingModel = model || c.pendingModel; renderAll(); return; }   // AGM-05: the pending model
+    if (agent === c.agent) {
+      if (model && model !== c.model) {
+        // AGM-07: the agent answers with the new model's levels; OpenCode resets to "default", Claude keeps a level the model has.
+        const keep = agent === 'claude' && effortChoices(agent, model).includes(c.effort);
+        c.model = model; c.effort = keep ? c.effort : initialEffort(agent, model);
+      }
+      renderAll(); return;   // AGM-07: the menu stays open, with or without levels
+    }
+    if (!hasMessages(c)) {   // AGM-02: switch in place; the menu stays open and follows the new agent
+      c.agent = agent; c.model = DEFAULT_MODEL[agent]; c.effort = initialEffort(agent, c.model);
+      state.menu.agent = agent;
+      toast(`Switched to ${AGENT[agent]}. acpSessionId cleared, new session starting.`);
+      start(w, c, model || null);
+      if (agent === 'opencode') state.noOpenCodeCache = false;
+      return;
+    }
+    state.menu = null;   // AGM-03: the new tab takes over
+    const draft = c.draft; c.draft = '';   // AGM-03: the draft moves
+    newConversation(w, agent, model || null, draft);
+    if (agent === 'opencode') state.noOpenCodeCache = false;
+    toast(`Opened a new ${AGENT[agent]} conversation${draft ? '; your draft moved with it' : ''}.`);
+    $('#demoCache').setAttribute('aria-pressed', String(state.noOpenCodeCache));
+  }
+  function send() {
+    const w = W(); const c = C();
+    if (!c || !c.draft.trim() || c.state === 'running') return;
+    const text = c.draft.trim(); c.draft = '';
+    if (!c.title) c.title = text.slice(0, 32) + (text.length > 32 ? '…' : '');
+    c.items.push({ k: 'user', t: text });
+    repos[w.repo].last = c.agent;   // CNV-02 source
+    if (c.state === 'starting') { c.pendingSend = true; renderAll(); return; }   // goes out once the agent is ready
+    runTurn(w, c);
+  }
+  async function runTurn(w, c) {
+    c.state = 'running'; renderAll();
+    await wait(1600);
+    c.items.push({ k: 'agent', t: c.agent === 'claude' ? 'Sure. Here is how I would approach it, step by step.' : 'On it. I will start by reading the files involved.' });
+    c.items.push({ k: 'footer', t: `${AGENT[c.agent]} · ${modelName(c.agent, c.model)} · 2s` });
+    c.state = 'ready';
+    if (w.id === state.selected) renderAll();
+  }
+
+  win.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-action]'); if (!b || !win.contains(b) || b.disabled) return;
+    const w = W(); const c = C();
+    switch (b.dataset.action) {
+      case 'select': state.selected = b.dataset.ws; state.menu = null; renderAll(); break;
+      case 'tab': w.active = b.dataset.conv; state.menu = null; renderAll(); break;
+      case 'new': state.menu = null; newConversation(w, defaultAgent(w), null, null); break;
+      case 'menu': state.menu = state.menu ? null : { agent: c.agent, query: '', opening: true }; renderComposer(); renderMenu(); break;
+      case 'seg': state.menu = { agent: b.dataset.agent, query: '' }; renderMenu(); break;   // a content swap: no effort motion
+      case 'pick': pick(b.dataset.agent, b.dataset.model); break;
+      case 'effort': c.effort = b.dataset.e; renderComposer(); renderMenu(); break;
+      case 'fast': c.fast = !c.fast; renderMenu(); break;
+      default: break;
+    }
+    e.stopPropagation();
+  });
+  document.addEventListener('mousedown', (e) => { if (state.menu && !e.target.closest('.menu') && !e.target.closest('#modelBtn')) { state.menu = null; renderComposer(); renderMenu(); } });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && state.menu) { state.menu = null; renderComposer(); renderMenu(); } });
+  $('#input').addEventListener('input', (e) => { const c = C(); if (c) { c.draft = e.target.value; $('#sendBtn').classList.toggle('ready', Boolean(c.draft.trim())); } });
+  $('#input').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); send(); } });
+  $('#sendBtn').addEventListener('click', send);
+  let toastTimer = null;
+  function toast(msg) { let t = win.querySelector('.toast'); if (!t) { t = document.createElement('div'); t.className = 'toast'; win.appendChild(t); } t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2600); }
+  $('#demoCache').addEventListener('click', (e) => { state.noOpenCodeCache = !state.noOpenCodeCache; e.currentTarget.setAttribute('aria-pressed', String(state.noOpenCodeCache)); renderMenu(); });
+  $('#demoPins').addEventListener('click', (e) => { e.currentTarget.setAttribute('aria-pressed', String(document.body.classList.toggle('spec-on'))); });
+  document.addEventListener('click', (e) => {
+    if (!document.body.classList.contains('spec-on')) return;
+    const el = e.target.closest('[data-req]'); if (!el) return;
+    const s = document.getElementById('REQ-' + el.dataset.req); if (!s) return;
+    s.scrollIntoView({ behavior: 'smooth', block: 'start' }); s.classList.add('flash'); setTimeout(() => s.classList.remove('flash'), 1400);
+  }, true);
+
+  renderAll();
+})();
+</script>
+</body>
+</html>

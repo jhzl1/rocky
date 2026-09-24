@@ -72,9 +72,10 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
 .outline-btn { height: 22px; display: inline-flex; align-items: center; padding: 0 7px; border-radius: 5px; border: 1px solid rgba(255,255,255,0.14); background: var(--panel); color: var(--text); font-size: 12px; white-space: nowrap; flex-shrink: 0; transition: border-color var(--dur-fast); }
 .outline-btn:hover { border-color: rgba(255,255,255,0.28); }
 
-.sidebar { width: 236px; flex-shrink: 0; display: flex; flex-direction: column; background: var(--sidebar); border-right: 1px solid var(--hairline); }
+.sidebar { width: 260px; flex-shrink: 0; display: flex; flex-direction: column; background: var(--sidebar); border-right: 1px solid var(--hairline); }
 .sb-top { height: var(--titlebar); display: flex; align-items: center; padding: 0 16px; }
 .sb-list { flex-grow: 1; overflow-y: auto; padding: 4px 8px; display: flex; flex-direction: column; gap: 2px; }
+.sb-foot { height: 37px; flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 0 10px 0 16px; border-top: 1px solid var(--hairline); font-size: 12.5px; color: var(--text-2); }
 .repo { height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 8px; margin-top: 8px; font-weight: 600; flex-shrink: 0; }
 .monogram { width: 16px; height: 16px; border-radius: 4px; color: #fff; font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
 .row-wrap { border-radius: var(--r-row); flex-shrink: 0; transition: background var(--dur-fast); }
@@ -86,7 +87,8 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
 .c-success { color: var(--success); display: flex; } .c-danger { color: var(--danger); display: flex; } .c-attention { color: var(--attention); display: flex; }
 .c-merged { color: var(--merged); display: flex; } .c-muted { color: var(--text-3); display: flex; } .c-2 { color: var(--text-2); display: flex; }
 
-.main { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; }
+.main { flex-grow: 1; min-width: 0; display: flex; }
+.colmain { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; }
 .topbar { height: var(--titlebar); flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 0 12px 0 16px; }
 .crumb { color: var(--text-2); } .br { font: 12px var(--mono); }
 .port { font: 11px var(--mono); color: var(--text-3); }
@@ -94,6 +96,13 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
 .pnl-toggle { height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border-radius: var(--r-btn); color: var(--text-2); font: 12px var(--mono); transition: background var(--dur-fast), color var(--dur-fast); }
 .pnl-toggle:hover { background: var(--fill-icon-hover); color: var(--text); }
 .pnl-toggle.on { background: var(--fill-selected); color: var(--text); }
+.icon-btn.on { background: var(--fill-selected); color: var(--text); }
+/* LAY-01: Run lives in the terminal bar */
+.run-mini { height: 24px; display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; border-radius: 5px; background: var(--fill-button); color: var(--text); font-size: 12px; font-weight: 500; transition: background var(--dur-fast); }
+.run-mini:hover { background: var(--fill-button-hover); }
+.pbar .sep { width: 1px; height: 14px; background: var(--hairline); margin: 0 4px; }
+.pbar .term-tab { display: inline-flex; align-items: center; gap: 6px; padding: 0 6px; }
+.sdot.run { background: var(--success); }
 .body { flex-grow: 1; min-height: 0; display: flex; }
 .center { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; }
 .tabs { height: 34px; flex-shrink: 0; display: flex; align-items: stretch; padding: 0 10px; border-bottom: 1px solid var(--hairline); }
@@ -117,7 +126,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
 .composer-wrap { flex-shrink: 0; display: flex; justify-content: center; padding: 8px 24px 14px; }
 .composer { width: 100%; max-width: 620px; border-radius: 12px; background: var(--composer); border: 1px solid var(--composer-border); padding: 12px 14px; color: var(--text-3); font-size: 14px; display: flex; align-items: center; }
 .composer .c-send { margin-left: auto; width: 28px; height: 28px; border-radius: 7px; background: rgba(255,255,255,0.1); display: flex; align-items: center; justify-content: center; color: var(--text-2); }
-.pbar { height: 32px; flex-shrink: 0; display: flex; align-items: center; gap: 6px; padding: 0 8px; background: var(--panel-bar); border-top: 1px solid var(--hairline); font-size: 12px; color: var(--text-2); }
+.pbar { height: 37px; flex-shrink: 0; display: flex; align-items: center; gap: 6px; padding: 0 8px; background: var(--panel-bar); border-top: 1px solid var(--hairline); font-size: 12px; color: var(--text-2); }
 .sdot { width: 6px; height: 6px; border-radius: 50%; } .sdot.done { background: var(--text-3); }
 .spinner { animation: spin 0.9s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
 .shimmer { color: transparent; background: linear-gradient(90deg, var(--text-2) 0%, var(--text-2) 30%, var(--text) 50%, var(--text-2) 70%, var(--text-2) 100%); background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; animation: shimmer 2.1s linear infinite; }
@@ -129,7 +138,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
 .window.pnl-closed .rpanel, .window.pnl-closed #pnlLine { display: none; }
 .rpanel { width: var(--pnl-w); flex-shrink: 0; display: flex; flex-direction: column; background: var(--sidebar); min-height: 0; position: relative; }
 /* HDR: 40 pt, tint by group */
-.hdr { --tone: var(--text); --tint: transparent; height: 40px; flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 0 8px; background: var(--tint); border-bottom: 1px solid var(--hairline); transition: background var(--dur-base); }
+.hdr { --tone: var(--text); --tint: transparent; height: 34px; flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 0 8px; background: var(--tint); border-bottom: 1px solid var(--hairline); transition: background var(--dur-base); }
 .hdr.in_sync { --tone: var(--success); --tint: rgba(124,192,138,0.13); }
 .hdr.out_of_sync { --tone: var(--text); --tint: rgba(255,255,255,0.05); }
 .hdr.queued { --tone: var(--attention); --tint: rgba(232,169,75,0.12); }
@@ -144,36 +153,40 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
 .pill .ext { padding: 0 4px; border-left: 1px solid rgba(255,255,255,0.14); }
 .hdr.in_sync .pill .ext { border-left-color: rgba(124,192,138,0.25); }
 .hdr-label { flex-grow: 1; min-width: 0; display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; color: var(--tone); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hdr-label.dim { color: var(--text-3); font-weight: 400; }
+.hdr { height: 38px; padding-right: 12px; border-bottom: 0; }   /* like the conversation's top bar: the next line is the tab rows' */   /* the toggle ends where the top bar's does (PNL-02) */
 .hdr-label span { overflow: hidden; text-overflow: ellipsis; }
 .hdr-label.anim { animation: lbl 150ms var(--ease-out); }
 @keyframes lbl { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
-.hbtn { height: 24px; display: inline-flex; align-items: center; gap: 5px; padding: 0 9px; border-radius: 5px; background: var(--text); color: #14161A; font-size: 12px; font-weight: 500; white-space: nowrap; flex-shrink: 0; transition: filter var(--dur-fast), background var(--dur-fast); }
-.hbtn:hover:not(:disabled) { filter: brightness(0.92); }
+.hbtn { height: 24px; display: inline-flex; align-items: center; gap: 5px; padding: 0 9px; border-radius: 5px; background: var(--fill-button); color: var(--text); font-size: 12px; font-weight: 500; white-space: nowrap; flex-shrink: 0; transition: filter var(--dur-fast), background var(--dur-fast); }
+.hbtn:hover:not(:disabled) { background: var(--fill-button-hover); }
+.hbtn.merge:hover:not(:disabled), .hbtn.archive:hover:not(:disabled), .hbtn.confirm:hover:not(:disabled) { filter: brightness(0.92); }
 .hbtn:disabled { opacity: 0.45; }
 .hbtn.merge { background: var(--success); color: #10251A; }
+.hbtn.merge:hover:not(:disabled) { background: var(--success); }
 .hbtn.archive { background: var(--merged); color: #1E1530; }
 .hbtn.confirm { background: var(--attention); color: #2A1C06; }
 .split .hbtn.merge:last-child { border-left-color: rgba(16,37,26,0.3); }
 .hbtn.outline { background: var(--panel); color: var(--text); border: 1px solid rgba(255,255,255,0.14); }
 .split { display: inline-flex; flex-shrink: 0; }
 .split .hbtn:first-child { border-radius: 5px 0 0 5px; }
-.split .hbtn:last-child { width: 22px; padding: 0; justify-content: center; border-radius: 0 5px 5px 0; border-left: 1px solid rgba(20,22,26,0.25); }
+.split .hbtn:last-child { width: 22px; padding: 0; justify-content: center; border-radius: 0 5px 5px 0; border-left: 1px solid rgba(255,255,255,0.08); }
 .badge-q { height: 22px; display: inline-flex; align-items: center; padding: 0 8px; border-radius: 5px; background: rgba(232,169,75,0.18); color: var(--attention); font-size: 12px; font-weight: 500; }
 /* tabs: pills */
-.ptabs { flex-shrink: 0; display: flex; align-items: center; gap: 4px; padding: 8px; border-bottom: 1px solid var(--hairline-soft); }
+.ptabs { height: 34px; flex-shrink: 0; display: flex; align-items: center; gap: 4px; padding: 0 8px; border-bottom: 1px solid var(--hairline); }
+/* PNL-03: a single tab is a section title, not a pill; it shares the 18 pt left edge with the header label and the content */
+.ptabs.single { padding: 0 18px; }
+.ptab-title { font-size: 12.5px; font-weight: 600; color: var(--text-2); }
+.hdr.nopill { padding-left: 18px; }
 .ptab { height: 26px; display: inline-flex; align-items: center; gap: 5px; padding: 0 9px; border-radius: 6px; font-size: 12.5px; color: var(--text-2); transition: background var(--dur-fast), color var(--dur-fast); }
 .ptab:hover:not(:disabled) { background: var(--fill-hover); color: var(--text); }
 .ptab.sel { background: var(--fill-selected); color: var(--text); }
 .ptab:disabled { color: var(--text-3); }
 .ptab .n { font: 11px var(--mono); color: var(--text-3); }
 .pbody { flex-grow: 1; min-height: 0; overflow-y: auto; padding: 6px 0 16px; }
-.pr-edit { padding: 6px 12px 8px 18px; display: flex; flex-direction: column; gap: 6px; }
-.pr-edit input, .pr-edit textarea { width: 100%; background: transparent; border: 1px solid transparent; border-radius: 5px; padding: 3px 5px; margin-left: -6px; outline: none; transition: border-color var(--dur-fast), background var(--dur-fast); }
-.pr-edit input { font-size: 13px; font-weight: 500; color: var(--text); }
-.pr-edit textarea { font-size: 12px; line-height: 1.5; color: var(--text-2); resize: none; min-height: 40px; max-height: 180px; overflow-y: auto; }
-.pr-edit input:hover, .pr-edit textarea:hover { border-color: var(--hairline); }
-.pr-edit input:focus, .pr-edit textarea:focus { border-color: rgba(120,189,245,0.5); background: rgba(0,0,0,0.15); }
-.pr-edit .row-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.pr-text { padding: 8px 12px 8px 18px; display: flex; flex-direction: column; gap: 4px; user-select: text; cursor: text; }
+.pr-text .pr-title { font-size: 13px; font-weight: 500; color: var(--text); }
+.pr-text .pr-body { font-size: 12px; line-height: 1.5; color: var(--text-2); white-space: pre-wrap; max-height: 180px; overflow-y: auto; }
 .sec-head { height: 30px; display: flex; align-items: center; gap: 6px; padding: 0 12px 0 18px; margin-top: 4px; }
 .sec-title { font-size: 12px; font-weight: 500; color: var(--text-3); }
 .sec-sum { font: 11px var(--mono); color: var(--text-3); }
@@ -197,15 +210,17 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
 .avatar { width: 16px; height: 16px; border-radius: 50%; background: #4C7BD9; color: #fff; font-size: 8px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .cm-who { font-weight: 500; flex-shrink: 0; }
 .cm-where { font: 11px var(--mono); color: var(--text-2); flex-grow: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pfoot { flex-shrink: 0; height: 34px; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 18px; border-top: 1px solid var(--hairline); font-size: 11.5px; color: var(--text-3); }
+.pfoot { flex-shrink: 0; height: 37px; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 18px; border-top: 1px solid var(--hairline); font-size: 11.5px; color: var(--text-3); }
 .nopr { padding: 10px 18px 4px; font-size: 12.5px; color: var(--text-2); line-height: 1.5; }
 .nopr strong { color: var(--text); font-weight: 500; }
 .menu { position: absolute; z-index: 30; min-width: 200px; padding: 5px; border-radius: 9px; background: var(--panel); box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 10px 30px rgba(0,0,0,0.5); }
-.menu-item { width: 100%; height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-radius: 6px; font-size: 13px; }
+.menu-item { width: 100%; height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-radius: 6px; font-size: 13px; white-space: nowrap; }
+.menu-item .trail { margin-left: auto; color: var(--text-3); display: flex; }
+
 .menu-item:hover:not(:disabled) { background: rgba(255,255,255,0.07); }
 .menu-item.tall { height: auto; align-items: flex-start; padding: 6px 8px; }
 .menu-item:disabled { opacity: 0.45; }
-.m-check { width: 14px; flex-shrink: 0; color: var(--text); }
+.m-check { width: 14px; flex-shrink: 0; margin-left: auto; padding-left: 12px; box-sizing: content-box; color: var(--text); }
 .m-text { display: flex; flex-direction: column; gap: 2px; }
 .m-desc { font-size: 11.5px; color: var(--text-3); }
 .toast { position: absolute; left: 50%; top: 52px; z-index: 60; transform: translateX(-50%); padding: 8px 12px; border-radius: 8px; background: var(--panel); box-shadow: 0 0 0 1px rgba(255,255,255,0.1), 0 8px 24px rgba(0,0,0,0.45); font-size: 12px; color: var(--text-2); opacity: 0; pointer-events: none; transition: opacity var(--dur-base); white-space: nowrap; }
@@ -245,7 +260,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
 
 <div class="stage">
   <h1 class="doc-title">Rocky · GitHub panel (M2.7)</h1>
-  <p class="doc-sub">Conductor's right panel in Rocky: a header tinted by the pull request's state with one primary action, and a Checks tab with the editable title and body, Git status, deployments, checks and comments. <strong>Each workspace in the sidebar is in a different state</strong>; select them. Actions marked "agent" send a prompt to the workspace's conversation.</p>
+  <p class="doc-sub">Conductor's layout and right panel in Rocky (LAY-01): a header tinted by the pull request's state with one primary action, and a Checks tab with the pull request's title and body, Git status, deployments, checks and comments. <strong>Each workspace in the sidebar is in a different state</strong>; select them. Actions marked "agent" send a prompt to the workspace's conversation.</p>
   <div class="demo" aria-label="Demo controls">
     <span class="demo-label">Demo controls, not part of Rocky</span>
     <button type="button" id="demoWorking" aria-pressed="false">Agent working here</button>
@@ -256,19 +271,22 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
     <nav class="sidebar" aria-label="Workspaces">
       <div class="sb-top"><span class="lights"><span class="light close"></span><span class="light min"></span><span class="light zoom"></span></span></div>
       <div class="sb-list" id="sbList"></div>
+      <div class="sb-foot"><span data-icon="plus"></span>Add repository<span class="grow"></span><span data-icon="gear"></span></div>
     </nav>
-    <main class="main">
+    <main class="main" id="main">
+      <div class="colmain" id="colmain">
       <header class="topbar" id="topbar"></header>
-      <div class="body">
+      <div class="body" id="bodyRow">
         <div class="center">
           <div class="tabs" id="tabs"></div>
           <div class="chat" id="chat"><div class="col" id="chatCol"></div></div>
           <div class="composer-wrap"><div class="composer">Ask Claude Code to make changes…<span class="c-send" data-icon="arrowUp"></span></div></div>
-          <div class="pbar"><span class="sdot done"></span>Setup<span class="grow"></span></div>
+          <div class="pbar" id="pbar"></div>
         </div>
-        <div class="vline grab" id="pnlLine" data-req="PNL-01"></div>
-        <aside class="rpanel" id="rpanel" aria-label="Pull request"></aside>
       </div>
+      </div>
+      <div class="vline grab" id="pnlLine" data-req="PNL-01"></div>
+      <aside class="rpanel" id="rpanel" aria-label="Pull request"></aside>
     </main>
   </div>
 </div>
@@ -279,23 +297,42 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
   <p><strong>User decisions (2026-09-23), relayed by dev-1:</strong> Conductor's right panel as the visual; the agent creates the pull request, Rocky does not ("El problema no es quien crea el PR, sino la visualización"); the repository's account reaches agents and terminals now (from M4); all GitHub reads over <code>URLSession</code> GraphQL on Rocky's refresh schedule, never Conductor's 5 s and never a <code>gh</code> process per refresh; notifications are M2.5's.</p>
 
   <!-- ============================== PANEL ============================== -->
+  <h2>Window layout</h2>
+  <p>User decision, 2026-09-23: layout A, like Conductor, picked from three proposals after the user found the first mock and build "descuadrado" and the top bar's Run out of place. Rocky's sizes at 100 %: sidebar 260, title bar row 38, tab rows 34, panel 350, bottom bars 36 + 1.</p>
+  <section class="req" id="REQ-LAY-01">
+    <header><code class="id">LAY-01</code><h3>Like Conductor</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Panel</dt><dd>Full height. Its PR header sits in the title bar row, 38 pt, in line with the conversation's top bar and, like it, with no line under it (its tint marks it); its tab row (34) lines up with the conversation's tab row; its footer (36 + 1) with the terminal bar and the sidebar footer. Every horizontal line crosses the window as one.</dd>
+      <dt>Top bar</dt><dd>Only over the conversation column: repository / branch, then Open. No PR pill: the panel header carries the PR.</dd>
+      <dt>Toggle</dt><dd>The panel toggle (PNL-02) is the last control of the panel header while the panel is open, and of the top bar once it is closed: the same spot at the window's top-right corner.</dd>
+      <dt>Run</dt><dd>Moves from the top bar (M2.5 TB) into the terminal panel bar, before its tabs: "▶ Run" 24 pt in Rocky's filled style, "■ Stop" while it runs, where its output shows anyway.</dd>
+      <dt>Note</dt><dd>It changes M2.5's top bar and terminal bar; recorded in the M2.7 plan's "Changes during implementation".</dd>
+    </dl>
+  </section>
   <h2>Panel</h2>
   <section class="req" id="REQ-PNL-01">
     <header><code class="id">PNL-01</code><h3>The right panel</h3><span class="scope in">In scope</span></header>
     <dl>
-      <dt>Layout</dt><dd>A column at the right of the window, under the top bar, next to the tabs, the conversation and the terminal panel. Background <code>sidebar</code>. Width 350, range 280–480, 1 pt <code>hairline</code> divider with a 9 pt grab area, persisted (<code>rightPanelWidth</code>). Open state global and persisted (<code>rightPanelOpen</code>, default open).</dd>
+      <dt>Layout</dt><dd>A full-height column at the right of the window, from the title bar row to the bottom, next to the conversation column (its top bar, tabs, conversation and terminal panel), LAY-01. Background <code>sidebar</code>. Width 350, range 280–480, 1 pt <code>hairline</code> divider with a 9 pt grab area, persisted (<code>rightPanelWidth</code>). Open state global and persisted (<code>rightPanelOpen</code>, default open).</dd>
+      <dt>Top</dt><dd>Its header draws in the title bar row, beside the conversation's top bar: the panel never overlaps the conversation column (in the first build its backgrounds covered the top bar's controls), and the header's empty space drags the window, like the top bar's.</dd>
       <dt>Parts</dt><dd>Header (HDR), tab row (PNL-03), the tab's content (scrolls), footer (PR-07). One right panel only: M3's Changes becomes its tab.</dd>
     </dl>
   </section>
   <section class="req" id="REQ-PNL-02">
     <header><code class="id">PNL-02</code><h3>Toggle in the top bar</h3><span class="scope in">In scope</span></header>
-    <p>Before Open, 28 pt (M2.5 moved the ports into the Open menu): with a pull request, its glyph in the header's tone + "#4525" (12 mono) + the checks glyph; without one, <code>sidebar.right</code> alone. Open: <code>fillSelected</code>. ⌘⇧G. Tooltip "Pull request #4525 · Ready to merge" / "Show the GitHub panel". It replaces M3's planned Changes toggle and PR chip.</p>
+    <dl>
+      <dt>Control</dt><dd>A 28 pt <code>sidebar.right</code> icon button, <code>fillSelected</code> while the panel is open, tooltip "Hide the pull request panel (⌥⌘B)" / "Show the pull request panel (⌥⌘B)". </dd>
+      <dt>Spot</dt><dd>Always the last control of the title bar row, at the window's top-right corner, <strong>in the same place whether the panel is open or closed</strong>, and never covered (user request, 2026-09-23: the panel could not be hidden in the app). It is the panel header's last control while the panel is open and the top bar's once it is closed (LAY-01).</dd>
+      <dt>Hides</dt><dd>The panel and its divider together; the conversation takes the width. ⌥⌘B and View ▸ Show / Hide Pull Request Panel do the same (KBD-03).</dd>
+      <dt>Replaces</dt><dd>M3's planned Changes toggle and PR chip.</dd>
+    </dl>
   </section>
   <section class="req" id="REQ-PNL-03">
     <header><code class="id">PNL-03</code><h3>Tabs</h3><span class="scope in">In scope</span></header>
     <dl>
-      <dt>Layout</dt><dd>Conductor's: pill buttons in an 8 pt padded row with 4 pt gaps, 26 pt, radius 6, 12.5 <code>textSecondary</code>; hover <code>fillHover</code>; selected <code>fillSelected</code> and <code>textPrimary</code>. Counts in 11 mono <code>textTertiary</code>. Target row: "All files · Changes 5 · Checks". Remembered per workspace.</dd>
-      <dt>M2.7</dt><dd>Ships <strong>Checks</strong> only; the row shows it alone. "Changes N" arrives with M3; "All files" (the worktree's file tree) is not planned yet; Conductor's right-side "Review" button is not planned (dev-1's extraction did not cover what it does). The mock draws the missing tabs dashed.</dd>
+      <dt>Layout</dt><dd>A 34 pt row with a <code>hairline</code> under it, in line with the conversation's tab row (LAY-01). With two or more tabs, 8 pt side padding and Conductor's pill buttons with 4 pt gaps, 26 pt, radius 6, 12.5 <code>textSecondary</code>; hover <code>fillHover</code>; selected <code>fillSelected</code> and <code>textPrimary</code>. Counts in 11 mono <code>textTertiary</code>. Target row: "All files · Changes 5 · Checks". Remembered per workspace.</dd>
+      <dt>One tab</dt><dd>M2.7 ships <strong>Checks</strong> only, so the row shows "Checks" as a <strong>section title, not a pill</strong>: 12.5 semibold <code>textSecondary</code>, 18 pt from the edge like the content under it, the row's hairline kept so it still meets the conversation's tab row. A lone pill read as a button that did nothing (user, 2026-09-23: "Ese botón de checks qué hace?"). The pills come back when M3 adds Changes.</dd>
+      <dt>Later</dt><dd>M3 adds "All files" (the worktree's file tree, FIL-01..07 in the M3 HTML) and "Changes N", so the row becomes pills: All files · Changes N · Checks; Conductor's right-side "Review" button is not planned (dev-1's extraction did not cover what it does).</dd>
     </dl>
   </section>
 
@@ -304,7 +341,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
   <section class="req" id="REQ-HDR-01">
     <header><code class="id">HDR-01</code><h3>Header bar</h3><span class="scope in">In scope</span></header>
     <dl>
-      <dt>Layout</dt><dd>40 pt, padding 8, gap 8, <code>hairline</code> below. Left the pill (HDR-03), then the label (13 medium, with a spinner where the state moves), then one action on the right: a 24 pt button, 12 medium, radius 5. The button never shrinks; the label truncates with an ellipsis and its tooltip carries the full text ("Add all comments to chat" leaves "PR change…" at 350 pt).</dd>
+      <dt>Layout</dt><dd>38 pt, in the title bar row beside the conversation's top bar (LAY-01), padding 8 left with the PR pill and 18 without it (so the label, the tab title and the content share one left edge), 12 right (so the panel toggle ends where the top bar's does), gap 8, <strong>no line under it</strong>, like the top bar: the next line is the tab rows' 34 pt hairline, which crosses the window as one. The tint marks the header. (Was 40 pt, then 34 pt under the top bar; changed with LAY-01, 2026-09-23.) Left the pill (HDR-03), then the label (13 medium, with a spinner where the state moves), then one action on the right: a 24 pt button, 12 medium, radius 5. The button never shrinks; the label truncates with an ellipsis and its tooltip carries the full text ("Add all comments to chat" leaves "PR change…" at 350 pt).</dd>
       <dt>Tint</dt><dd>By state group, Conductor's groups translated to Rocky tokens:
         <table>
           <tr><th>Group</th><th>Background</th><th>Label</th></tr>
@@ -315,7 +352,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
           <tr><td><span class="tone no_pr">no_pr / loading</span></td><td>none (the panel's <code>sidebar</code>)</td><td><code>textPrimary</code>; loading <code>textTertiary</code></td></tr>
         </table>
         Problems are <em>not</em> red: Conductor keeps failing checks, conflicts and requested changes in the neutral out_of_sync group; the red lives in the check and dot icons.</dd>
-      <dt>Buttons</dt><dd>Merge: <code>success</code> fill, dark text (Conductor uses white text on a darker green; Rocky's lighter <code>success</code> needs dark text for contrast). Archive: <code>merged</code> fill. The other actions: <code>textPrimary</code> fill, dark text (Conductor's "highlight-foreground"). Outline: <code>panel</code> with a 1 pt white 14 % border.</dd>
+      <dt>Buttons</dt><dd>Merge: <code>success</code> fill, dark text (Conductor uses white text on a darker green; Rocky's lighter <code>success</code> needs dark text for contrast). Archive: <code>merged</code> fill. The other actions (Create PR, Commit and push, Fix errors, Resolve…): Rocky's filled style, <code>fillButton</code> with <code>textPrimary</code>, hover <code>fillButtonHover</code>, the split's divider white at 8 % (HDR-04). Outline: <code>panel</code> with a 1 pt white 14 % border.</dd>
       <dt>Motion</dt><dd>The label slides in from 2 pt below with a fade, 150 ms, when it changes; the tint cross-fades in 150 ms.</dd>
       <dt>Token</dt><dd>M2.7 adds <code>merged</code> (#B48CF2) to <code>Theme</code>; M3's TOK-10 used to add it, and M2.7 lands first.</dd>
     </dl>
@@ -328,7 +365,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
       <tr><td>merged</td><td><span class="tone merged">merged</span></td><td>Merged</td><td>Archive (PR-06)</td></tr>
       <tr><td>queued_to_merge</td><td><span class="tone queued">queued</span></td><td>by <code>mergeQueueEntry.state</code>: AWAITING_CHECKS "Merge queue checks pending" · UNMERGEABLE "Merge queue blocked" · LOCKED "Merge queue locked" · else "Queued to merge"</td><td>static "Queued" badge</td></tr>
       <tr><td>working</td><td><span class="tone no_pr">loading</span></td><td>Working… (spinner)</td><td>none</td></tr>
-      <tr><td>create_pr</td><td><span class="tone no_pr">no_pr</span></td><td>(none)</td><td>split "Create PR" (AGT-01)</td></tr>
+      <tr><td>create_pr</td><td><span class="tone no_pr">no_pr</span></td><td>No pull request (<code>textTertiary</code>, regular weight)</td><td>split "Create PR" (AGT-01)</td></tr>
       <tr><td>commit_and_push</td><td><span class="tone out_of_sync">out_of_sync</span></td><td>Uncommitted changes</td><td>Commit and push (AGT-02)</td></tr>
       <tr><td>incompatible</td><td><span class="tone out_of_sync">out_of_sync</span></td><td>Incompatible with remote · Remote branch was rebased</td><td>Resolve (AGT-06)</td></tr>
       <tr><td>pull</td><td><span class="tone out_of_sync">out_of_sync</span></td><td>Behind by N commits</td><td>Pull (GST-03)</td></tr>
@@ -352,6 +389,14 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
       <dt>Kit</dt><dd>Pure <code>PullRequestHeader.state(pr:local:agentWorking:) -&gt; HeaderState</code> in RockyKit; a test per row and for overlaps (uncommitted and conflicts → commit_and_push; failing checks and draft → draft_pr).</dd>
     </dl>
   </section>
+  <section class="req" id="REQ-HDR-04">
+    <header><code class="id">HDR-04</code><h3>Polish from the running app</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Buttons</dt><dd>No white fill on the dark panel: the Create PR split button and the other action buttons use Rocky's filled style (HDR-01). The user found the light fill garish.</dd>
+      <dt>Menus</dt><dd>Every Rocky menu: a <code>MenuItem</code> without an icon takes no column, and only a menu whose items have icons keeps its 18 pt gutter (user decision, 2026-09-24: "no me gusta que los menús al lado izquierdo tengan tanto padding"). So the Create PR menu ("Create draft PR", "Create PR manually ↗"), the merge method menu (its check moves to the right end, PR-05) and the alert sound menu start their labels at the item's padding. The menu is as wide as its longest label (at least 200 pt) and a label never wraps. "↗" trails the item that opens the browser.</dd>
+      <dt>No PR</dt><dd>The header's left side is never empty: "No pull request" in <code>textTertiary</code> (HDR-02).</dd>
+    </dl>
+  </section>
   <section class="req" id="REQ-HDR-03">
     <header><code class="id">HDR-03</code><h3>The pull request pill</h3><span class="scope in">In scope</span></header>
     <p>24 pt, 12 medium, 1 pt border (white 14 %), radius 5, two segments. Left: "#4525", opens the Checks tab (Rocky's in-app view of the PR); ⌘-click opens it in the browser. Right, after a divider: ↗ (12 pt), opens it in the browser. In in_sync the text is <code>success</code> and the border <code>success</code> at 25 %; in merged, <code>merged</code>. Absent with no pull request.</p>
@@ -360,10 +405,10 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
   <!-- ============================== CHECKS TAB ============================== -->
   <h2>Checks tab (order: title, body, Git status, Deployments, Checks, Comments)</h2>
   <section class="req" id="REQ-PRB-01">
-    <header><code class="id">PRB-01</code><h3>Title and body, editable</h3><span class="scope in">In scope</span></header>
+    <header><code class="id">PRB-01</code><h3>Title and body, read-only</h3><span class="scope in">In scope</span></header>
     <dl>
-      <dt>Layout</dt><dd>Title: a borderless text field, 13 medium, looks like text until hovered (1 pt <code>hairline</code>) or focused (<code>accent</code> ring at 50 %). Body: a plain-text area, not rendered markdown (Conductor's too), 12 <code>textSecondary</code>, 2 lines at rest, grows to 180 pt, then scrolls. Padding 18 left.</dd>
-      <dt>Saving</dt><dd>When either differs from GitHub, "Discard" and "Save" (22 pt) appear under the body. Save: GraphQL <code>updatePullRequest(input: {pullRequestId, title, body})</code>, then refresh. Discard restores. A refresh never overwrites unsaved text.</dd>
+      <dt>Layout</dt><dd>Title: 13 medium <code>textPrimary</code>. Body: plain text, not rendered markdown (Conductor's too), 12 <code>textSecondary</code>, up to 180 pt tall, then it scrolls. Both are selectable text (copy works), with no field, no hover border and no focus ring. Padding 18 left, like the rest of the tab.</dd>
+      <dt>Read-only</dt><dd>Rocky does not edit them: no Discard / Save and no <code>updatePullRequest</code> (user decision, 2026-09-24: "no se puede editar ni el nombre del PR ni su cuerpo"). They change when GitHub's do, on the next refresh (PR-07).</dd>
       <dt>No PR</dt><dd>In place of both: "<strong>No pull request yet.</strong> Create PR asks Claude Code to commit, push and open it with <code>gh pr create</code>."</dd>
     </dl>
   </section>
@@ -421,7 +466,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
     <dl>
       <dt>Rows</dt><dd>28 pt: status icon, provider mark (Vercel if the URL contains "vercel", else GitHub), name (truncated), duration (11 mono <code>textTertiary</code>), ↗ (14 pt, <code>detailsUrl ?? targetUrl</code>). No per-row buttons.</dd>
       <dt>Icons</dt><dd>Running: <code>attention</code> spinner · FAILURE, ERROR, CANCELLED, TIMED_OUT, ACTION_REQUIRED: cross <code>danger</code> · SUCCESS, NEUTRAL, SKIPPED: check <code>success</code> · anything else: dot <code>textTertiary</code>.</dd>
-      <dt>Duration</dt><dd><code>completedAt − startedAt</code> as "1h 4m", "3m" or "45s"; while running "&lt;1m" or "3m", updated every 10 s only while the panel is visible and the window is key.</dd>
+      <dt>Duration</dt><dd><code>completedAt − startedAt</code> as "1h 4m", "3m" or "45s"; while running "&lt;1m" or "3m", updated every 10 s while the panel is open and the window is visible (<code>occlusionState</code>), even with another app active ("alive while visible", 2026-09-24).</dd>
       <dt>Order</dt><dd>Failed first, then running, then the API's order.</dd>
       <dt>Header</dt><dd>"Checks" and, when any failed, "Re-run" (CHK-02) and "Fix errors" (AGT-03) as ghost buttons.</dd>
       <dt>Source</dt><dd>The last commit's <code>statusCheckRollup.contexts(first: 100)</code>: <code>CheckRun</code> (name, status, conclusion, startedAt, completedAt, detailsUrl, databaseId, checkSuite.workflowRun.databaseId) and <code>StatusContext</code> (context, state, targetUrl).</dd>
@@ -455,7 +500,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
   <section class="req" id="REQ-AGT-01">
     <header><code class="id">AGT-01</code><h3>Create PR (split button)</h3><span class="scope in">In scope</span></header>
 <pre>Create a pull request for this branch. First commit any uncommitted changes and push with `git push -u origin HEAD`. Then run `gh pr create --base development` with a title under 80 characters and a description of at most five sentences. If the repository has a pull request template, fill it in.</pre>
-    <p>The menu part (chevron) offers "Create draft PR" (the same text with <code>--draft</code>) and "Create PR manually" (opens GitHub's compare page, <code>https://github.com/{owner}/{repo}/compare/{base}...{branch}?expand=1</code>, in the browser). Rocky's wording of Conductor's instructions (commit and <code>push -u</code> first; title under 80 characters; under five sentences; the template).</p>
+    <p>The menu part (chevron) offers "Create draft PR" (the same text with <code>--draft</code>) and "Create PR manually ↗" (no icon column, one line each, HDR-04; opens GitHub's compare page, <code>https://github.com/{owner}/{repo}/compare/{base}...{branch}?expand=1</code>, in the browser). Rocky's wording of Conductor's instructions (commit and <code>push -u</code> first; title under 80 characters; under five sentences; the template).</p>
   </section>
   <section class="req" id="REQ-AGT-02">
     <header><code class="id">AGT-02</code><h3>Commit and push</h3><span class="scope in">In scope</span></header>
@@ -506,14 +551,14 @@ Address each comment and say what you changed for each number.</pre>
     <header><code class="id">ACC-01</code><h3>GitHub account per repository</h3><span class="scope tech">Technical</span></header>
     <dl>
       <dt>Accounts</dt><dd>Logins from <code>gh auth status</code>; a token per login from <code>gh auth token --user &lt;login&gt;</code>, once per launch on first need, in memory only, never stored or logged.</dd>
-      <dt>Binding</dt><dd>Repository setting "GitHub account" (the next free migration: <code>repo.githubLogin</code>); default the login equal to the remote's owner, else gh's active account. Owner and name from <code>git remote get-url origin</code> (https, <code>git@host:o/n.git</code>, SSH aliases like <code>github-celes</code>).</dd>
+      <dt>Binding</dt><dd>Repository setting "GitHub account" (the next free migration: <code>repo.githubLogin</code>); the default, in order: (1) the login equal to the remote's owner; (2) else the first logged-in account, the active one first, whose token can read the repository: one GraphQL <code>repository(owner:, name:) { id }</code> per login until one succeeds, once per repository per launch; (3) else gh's active account. Example: <code>celes-app/celes-platform</code> matches no login, <code>jhzl1</code> gets a 404 and only <code>ocampos-biai</code> can read it, so step 2 picks <code>ocampos-biai</code>. Owner and name from <code>git remote get-url origin</code> (https, <code>git@host:o/n.git</code>, SSH aliases like <code>github-celes</code>).</dd>
       <dt>Shown</dt><dd>Panel footer; the repository settings sheet has the picker. Its first entry is "Automatic (jhzl1)", naming the login the default resolves to; choosing it stores nil.</dd>
       <dt>Errors</dt><dd>"GitHub access required" in the header (loading group) and <code>gh auth login --hostname github.com</code> in the tab.</dd>
     </dl>
   </section>
   <section class="req" id="REQ-ENV-01">
     <header><code class="id">ENV-01</code><h3>GH_TOKEN for every workspace process</h3><span class="scope tech">Technical</span></header>
-    <p>From M4 (spec Section 2, step 3, the token only). Agents, terminals and scripts of a workspace get <code>GH_TOKEN</code> = the repository account's token, the account layer of <code>WorkspaceEnvironment</code>, which comes last, as spec Section 3 says ("later wins": login env &lt; repository variables &lt; account variables). So the account's token wins over a repository variable named <code>GH_TOKEN</code>. (Corrected 2026-09-23: an earlier version put it before repository variables, against the spec.) The agent's <code>gh</code> and HTTPS <code>git</code> act as that account (M0: <code>gh auth git-credential</code> honors <code>GH_TOKEN</code>; push itself was never exercised, so verify it). An account change applies to new processes (M2 rule); the settings sheet says "Restart the conversation's agent to use the new account". <code>GIT_AUTHOR_*</code>, SSH keys and the Claude instance per account stay in M4.</p>
+    <p>From M4 (spec Section 2, step 3, the token only). Agents, terminals and scripts of a workspace get <code>GH_TOKEN</code> = the repository account's token, the account layer of <code>WorkspaceEnvironment</code>, which comes last, as spec Section 3 says ("later wins": login env &lt; repository variables &lt; account variables). So the account's token wins over a repository variable named <code>GH_TOKEN</code>. (Corrected 2026-09-23: an earlier version put it before repository variables, against the spec.) Rocky sets no <code>GIT_SSH_COMMAND</code> for git (its fetch, pull and push included): a repository's own <code>core.sshCommand</code>, such as an <code>includeIf</code> that picks a per-account key, stays in effect (it failed when overridden, 2026-09-23). The agent's <code>gh</code> and HTTPS <code>git</code> act as that account (M0: <code>gh auth git-credential</code> honors <code>GH_TOKEN</code>; push itself was never exercised, so verify it). An account change applies to new processes (M2 rule); the settings sheet says "Restart the conversation's agent to use the new account". <code>GIT_AUTHOR_*</code>, SSH keys and the Claude instance per account stay in M4.</p>
   </section>
 
   <!-- ============================== DATA ============================== -->
@@ -546,7 +591,7 @@ Address each comment and say what you changed for each number.</pre>
       <dt>Methods</dt><dd>Only those the repository allows (<code>squashMergeAllowed</code>, <code>mergeCommitAllowed</code>, <code>rebaseMergeAllowed</code>). One allowed: a plain button. Two or three: a split button; its chevron opens the menu. (User decision, 2026-09-23: choose among the allowed methods. Conductor uses only the first.)</dd>
       <dt>Default</dt><dd><code>viewerDefaultMergeMethod</code> when allowed: GitHub's last method this viewer used on the repository, else the repository's default. Otherwise the first allowed in the order squash, rebase, merge. A pick from the menu stays the workspace's method until Rocky quits. GitHub records the merge itself, so the next default follows it, and Rocky stores nothing.</dd>
       <dt>Button</dt><dd>24 pt, <code>success</code> fill (HDR-01), short label by method: "Squash", "Merge", "Rebase"; tooltip "Squash and merge into development".</dd>
-      <dt>Menu</dt><dd>Rocky's menu (<code>MenuButton</code> / <code>MenuItem</code>). One item per allowed method, with a check on the current method and a second line (11.5 <code>textTertiary</code>): <strong>Squash and merge</strong> "Combine all commits into one commit on development" · <strong>Rebase and merge</strong> "Replay each commit onto development, no merge commit" · <strong>Create a merge commit</strong> "Keep every commit and add a merge commit" (the order squash, rebase, merge). Rebase is disabled when <code>canBeRebased</code> is false: "GitHub can't rebase this branch cleanly".</dd>
+      <dt>Menu</dt><dd>Rocky's menu (<code>MenuButton</code> / <code>MenuItem</code>). One item per allowed method, with a second line (11.5 <code>textTertiary</code>) and a check at the item's right end on the current method; no leading column (HDR-04): <strong>Squash and merge</strong> "Combine all commits into one commit on development" · <strong>Rebase and merge</strong> "Replay each commit onto development, no merge commit" · <strong>Create a merge commit</strong> "Keep every commit and add a merge commit" (the order squash, rebase, merge). Rebase is disabled when <code>canBeRebased</code> is false: "GitHub can't rebase this branch cleanly".</dd>
       <dt>Confirm</dt><dd>Two clicks: the first turns the button into "Confirm squash" / "Confirm merge" / "Confirm rebase" (<code>attention</code>) for 4 s (a Rocky choice; Conductor merges on one click). Picking another method cancels the confirmation.</dd>
       <dt>Does</dt><dd>GraphQL <code>mergePullRequest(input: {pullRequestId, mergeMethod: SQUASH | MERGE | REBASE})</code>; "Merging…" with a spinner; errors under the header. The Git status row "Ready to merge" (GST-01) carries the same button, sharing its method and its confirmation.</dd>
       <dt>Kit</dt><dd>Pure <code>MergeMethods.available(repository:) -&gt; [MergeMethod]</code> and <code>MergeMethods.initial(available:viewerDefault:) -&gt; MergeMethod</code>, each with tests (one allowed; the viewer's default not allowed; the order squash, rebase, merge).</dd>
@@ -559,10 +604,10 @@ Address each comment and say what you changed for each number.</pre>
   <section class="req" id="REQ-PR-07">
     <header><code class="id">PR-07</code><h3>Refreshing without draining the battery</h3><span class="scope tech">Technical</span></header>
     <dl>
-      <dt>Rules</dt><dd>Selected workspace only, window key only. Immediately on selection, when the window becomes key, after a Rocky action (merge, push, pull, ready, save, re-run), and when an agent turn in that workspace ends; then 30, 60, 120, 300 s while nothing changes; back to 30 s while checks or deployments run or after any change. The local <code>git status</code> (GST-01) runs on the same triggers.</dd>
+      <dt>Rules</dt><dd>Selected workspace only, and only while the window is visible: it stops while the window cannot be seen (<code>NSWindow.occlusionState</code> without <code>.visible</code>: minimized, hidden, fully covered or on another Space), not when another app is active (user decision, 2026-09-24: "alive while visible"). Immediately on selection, when the window becomes visible again or active, after a Rocky action (merge, push, pull, ready, re-run), and when an agent turn in that workspace ends; then <strong>every 30 s</strong>, flat, and every <strong>15 s</strong> while checks or deployments run. No backoff (user decision, 2026-09-24): a change made outside Rocky (an approval, a comment, a re-run on github.com) shows within 30 s. Cost: 120 GraphQL queries an hour for the selected workspace, well inside GitHub's 5,000-point hourly budget per account, each a <code>URLSession</code> request with no process. The local <code>git status</code> (GST-01) runs on the same triggers.</dd>
       <dt>Stored</dt><dd>The last state per workspace (the next free migration: <code>prNumber, prUrl, prState, prHeaderState, prChecks, prUpdatedAt</code>, and hidden comment ids), shown for other workspaces and after relaunch.</dd>
-      <dt>Footer</dt><dd>"jhzl1 · Updated 12s ago" and refresh; offline "No internet connection · updated 5m ago".</dd>
-      <dt>Kit</dt><dd><code>GitHubClient</code>, pure <code>PollSchedule</code> (30, 60, 120, 300, 300; reset on change; 30 while running).</dd>
+      <dt>Footer</dt><dd>The account and "Updated 12s ago" (it keeps counting while the window is visible); no manual refresh button, since the automatic refresh makes it redundant (user decision, 2026-09-24; Retry stays in ERR-01's error line). Offline "No internet connection · updated 5m ago". 36 pt plus a 1 pt <code>hairline</code> on top (<code>WindowMetrics.bottomBarHeight</code>), so its line meets the sidebar footer's and the terminal bar's as one line.</dd>
+      <dt>Kit</dt><dd><code>GitHubClient</code>, pure <code>PollSchedule</code>: 30 s, or 15 s while checks or deployments run; nothing while the window cannot be seen. Tests: the two intervals, the stop and the immediate refresh when the window becomes visible.</dd>
     </dl>
   </section>
   <section class="req" id="REQ-PR-08">
@@ -583,7 +628,18 @@ Address each comment and say what you changed for each number.</pre>
   </section>
   <section class="req" id="REQ-KBD-03">
     <header><code class="id">KBD-03</code><h3>Keyboard</h3><span class="scope in">In scope</span></header>
-    <p>⌘⇧G shows and hides the panel. M3 adds ⌘⇧C for its Changes tab. No collision with M2, M2.5 or M2.6.</p>
+    <p><strong>⌥⌘B</strong> shows and hides the panel (View ▸ Show / Hide Pull Request Panel). Changed from ⌘⇧G, which is Edit ▸ Find ▸ Find Previous in macOS's standard Edit menu and wins over View (found in the app, 2026-09-23). ⌥⌘B is VS Code's "Toggle Secondary Side Bar", next to the ⌘J terminal panel Rocky already mirrors; Conductor's own shortcut for this is not known. M3 adds ⌘⇧C for its Changes tab. No collision with M2, M2.5 or M2.6.</p>
+  </section>
+
+  <h2>Open menu</h2>
+  <section class="req" id="REQ-OPN-01">
+    <header><code class="id">OPN-01</code><h3>Open the workspace in an editor</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Where</dt><dd>M2.5's Open menu (TB-03), right after "Open in Finder": one item per installed editor, alphabetical: "Open in Antigravity", "Open in Cursor", "Open in VS Code", "Open in Zed". Then a divider, then New Terminal and Copy Path as today. (User request, relayed by dev-1.)</dd>
+      <dt>Item</dt><dd>The app's own icon at 16 pt (<code>NSWorkspace.shared.icon(forFile:)</code> on the app's URL, as the menu's <code>MenuItem</code> icon) and the label. An editor that is not installed has no item; with none installed, the group and its divider are gone.</dd>
+      <dt>Detect</dt><dd><code>NSWorkspace.shared.urlForApplication(withBundleIdentifier:)</code>, checked when the menu opens (no caching, no polling): Antigravity <code>com.google.antigravity-ide</code>, Cursor <code>com.todesktop.230313mzl4w4u92</code>, VS Code <code>com.microsoft.VSCode</code>, Zed <code>dev.zed.Zed</code>.</dd>
+      <dt>Does</dt><dd><code>NSWorkspace.shared.open([worktreeURL], withApplicationAt: appURL, configuration:)</code> on the worktree folder. A failure shows a toast with the error's description.</dd>
+    </dl>
   </section>
 
   <h2>Out of scope</h2>
@@ -614,6 +670,9 @@ Address each comment and say what you changed for each number.</pre>
     cross: (s) => svg(s, '<path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/>', 2),
     ext: (s) => svg(s, '<path d="M9.5 2.5h4v4M13.5 2.5L7 9M12 9.5V12a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 12V5.5A1.5 1.5 0 0 1 4 4h2.5"/>', 1.4),
     chev: svg(10, '<path d="M3.5 6l4.5 4.5L12.5 6"/>', 2),
+    stop: '<svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="1.5" fill="currentColor"/></svg>',
+    plus: svg(14, '<path d="M8 3v10M3 8h10"/>', 1.6),
+    gear: svg(15, '<path d="M8 1.75l1.1 1.6 1.9-.5.5 1.9 1.6 1.1-.9 1.7.9 1.7-1.6 1.1-.5 1.9-1.9-.5L8 14.25l-1.1-1.6-1.9.5-.5-1.9-1.6-1.1.9-1.7-.9-1.7 1.6-1.1.5-1.9 1.9.5z"/><circle cx="8" cy="8" r="2.25"/>', 1.3),
     sidebarRight: svg(15, '<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2.25"/><path d="M9.75 2.75v10.5"/>', 1.3),
     refresh: svg(13, '<path d="M13 8a5 5 0 1 1-1.5-3.5M13 2.5v3h-3"/>', 1.4),
     play: '<svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 2.75v10.5L13 8z" fill="currentColor"/></svg>',
@@ -643,9 +702,9 @@ Address each comment and say what you changed for each number.</pre>
     { id: 'w10', repo: 'veritas', title: 'Export audit log', branch: 'jhzl/audit-log', local: L({ ahead: 1 }), pr: P({ number: 4536, title: 'Export the audit log as CSV', body: 'Adds a CSV export to the audit log page.' }) },
     { id: 'w11', repo: 'veritas', title: 'Rename billing tables', branch: 'jhzl/billing-rename', local: L({}), pr: P({ number: 4537, title: 'Rename the billing tables', body: 'Renames invoices_v2 to invoices and updates the queries.', mergeState: 'BLOCKED', review: 'REVIEW_REQUIRED', reviewRequests: 1 }) },
   ];
-  workspaces.forEach((w) => { w.turn = null; w.items = []; if (w.pr) { w.pr.editTitle = w.pr.title; w.pr.editBody = w.pr.body; } });
+  workspaces.forEach((w) => { w.turn = null; w.items = []; });
   const repos = { celes: { name: 'celes-platform', color: '#4C7BD9', allow: ['SQUASH', 'MERGE', 'REBASE'], viewerDefault: 'SQUASH' }, veritas: { name: 'veritas', color: '#8E6BE0', allow: ['SQUASH', 'MERGE'], viewerDefault: 'MERGE' } };
-  const state = { selected: 'w3', panelOpen: true, confirmMerge: null, lastLabel: {}, method: {} };
+  const state = { selected: 'w3', panelOpen: true, confirmMerge: null, lastLabel: {}, method: {}, running: false };
   const METHOD = {
     SQUASH: { short: 'Squash', confirm: 'Confirm squash', menu: 'Squash and merge', desc: 'Combine all commits into one commit on development', done: 'Squash-merged' },
     MERGE: { short: 'Merge', confirm: 'Confirm merge', menu: 'Create a merge commit', desc: 'Keep every commit and add a merge commit', done: 'Merged (merge commit)' },
@@ -687,8 +746,8 @@ Address each comment and say what you changed for each number.</pre>
     const c = pr ? counts(pr) : null;
     switch (st) {
       case 'merged': return { group: 'merged', label: 'Merged', btn: B('Archive', 'archive', 'archive') };
-      case 'no_changes': return { group: 'no_pr', label: 'No changes yet' };
-      case 'create_pr': return { group: 'no_pr', label: '', split: true };
+      case 'no_changes': return { group: 'no_pr', label: 'No changes yet', dim: true };
+      case 'create_pr': return { group: 'no_pr', label: 'No pull request', dim: true, split: true };   // HDR-04: never an empty left side
       case 'working': return { group: 'loading', label: 'Working…', spin: true };
       case 'commit_and_push': return { group: 'out_of_sync', label: 'Uncommitted changes', btn: B('Commit and push', 'agent-commit', '', { agent: true }) };
       case 'incompatible': return { group: 'out_of_sync', label: 'Incompatible with remote', btn: B('Resolve', 'agent-incompatible', '', { agent: true }) };
@@ -738,14 +797,26 @@ Address each comment and say what you changed for each number.</pre>
   // ---------- top bar (PNL-02) ----------
   function checksGlyph(pr, s) { const c = counts(pr); return c.failed ? `<span class="c-danger">${I.cross(s)}</span>` : c.pending ? `<span class="c-attention">${spinner(s)}</span>` : `<span class="c-success">${I.check(s)}</span>`; }
   function renderTopbar() {
-    const w = sel(); const pr = w.pr;
-    const merged = pr && pr.state === 'MERGED';
-    const toggle = pr ? `<span class="${glyphClass(w)}">${merged ? I.merge(13) : I.pr(13)}</span>#${pr.number}${merged ? '' : checksGlyph(pr, 12)}` : I.sidebarRight;
-    const tip = pr ? `Pull request #${pr.number} · ${header(w).label || 'No pull request'}` : 'Show the GitHub panel';
-    $('#topbar').innerHTML = `<span class="crumb">${esc(repos[w.repo].name)}</span><span style="color:var(--sep)">/</span><span class="br">${esc(w.branch)}</span><span class="grow"></span>` +
-      `<button class="pnl-toggle${state.panelOpen ? ' on' : ''}" data-action="toggle-panel" data-req="PNL-02" title="${esc(tip)} (⌘⇧G)" aria-label="${esc(tip)}">${toggle}</button>` +
-      `<button class="icon-btn" aria-label="Open in">${I.open}</button><button class="run">${I.play}<span>Run</span></button>`;
+    const w = sel();
+    const crumb = `<span class="crumb">${esc(repos[w.repo].name)}</span><span style="color:var(--sep)">/</span><span class="br">${esc(w.branch)}</span><span class="grow"></span>`;
+    const open = `<button class="icon-btn" aria-label="Open in" title="Open in">${I.open}</button>`;
+    // PNL-02: the toggle is always the title bar row's last control, at the window's top-right corner: in the panel
+    // header while the panel is open, here once it is closed. The same spot either way.
+    const panelIcon = state.panelOpen ? '' : panelToggleHTML();
+    $('#topbar').innerHTML = crumb + open + panelIcon;   // LAY-01: no PR pill, no Run
+    $('#topbar').dataset.req = 'LAY-01';
+    renderPbar();
     win.classList.toggle('pnl-closed', !state.panelOpen);
+  }
+
+  function panelToggleHTML() {
+    const verb = state.panelOpen ? 'Hide' : 'Show';
+    return `<button class="icon-btn${state.panelOpen ? ' on' : ''}" data-action="toggle-panel" data-req="PNL-02" title="${verb} the pull request panel (⌥⌘B)" aria-label="${verb} the pull request panel">${I.sidebarRight}</button>`;
+  }
+  // ---------- terminal bar: Run moves here (LAY-01) ----------
+  function renderPbar() {
+    const run = `<button class="run-mini" data-action="run" title="${state.running ? 'Stop the run script' : 'Run the run script'}">${state.running ? I.stop : I.play}<span>${state.running ? 'Stop' : 'Run'}</span></button><span class="sep"></span>`;
+    $('#pbar').innerHTML = run + `<span class="term-tab"><span class="sdot done"></span>Setup</span>${state.running ? '<span class="term-tab"><span class="sdot run"></span>Run</span>' : ''}<span class="term-tab"><span class="sdot done"></span>Terminal 1</span><span class="grow"></span>`;
   }
 
   // ---------- conversation ----------
@@ -819,14 +890,12 @@ Address each comment and say what you changed for each number.</pre>
     const pill = pr ? `<span class="pill" data-req="HDR-03"><button data-action="pill-left" title="Show the pull request (⌘-click: open on GitHub)">#${pr.number}</button><button class="ext" data-action="view" aria-label="Open on GitHub">${I.ext(12)}</button></span>` : '';
     const labelChanged = animateLabel && state.lastLabel[w.id] !== h.label;
     state.lastLabel[w.id] = h.label;
-    const hdr = `<div class="hdr ${h.group}" data-req="HDR-01">${pill}<span class="hdr-label${labelChanged ? ' anim' : ''}" data-req="HDR-02" title="${esc(h.label)}">${h.spin ? spinner(13) : ''}<span>${esc(h.label)}</span></span>${action}</div>`;
-    const tabs = `<div class="ptabs" data-req="PNL-03"><button class="ptab" disabled data-scope="out" title="The worktree's file tree: not planned yet">All files</button><button class="ptab" disabled data-scope="out" title="Arrives with M3">Changes <span class="n">5</span></button><button class="ptab sel">Checks</button></div>`;
+    const hdr = `<div class="hdr ${h.group}${pr ? '' : ' nopill'}" data-req="HDR-01">${pill}<span class="hdr-label${h.dim ? ' dim' : ''}${labelChanged ? ' anim' : ''}" data-req="HDR-02" title="${esc(h.label)}">${h.spin ? spinner(13) : ''}<span>${esc(h.label)}</span></span>${action}${panelToggleHTML()}</div>`;
+    const tabs = `<div class="ptabs single" data-req="PNL-03"><span class="ptab-title">Checks</span></div>`;   // one tab: a title; pills come back with M3
     let body = '';
     if (!pr) body += `<div class="nopr" data-req="PRB-01"><strong>No pull request yet.</strong> Create PR asks Claude Code to commit, push and open it with <code>gh pr create</code>.</div>`;
     else {
-      const dirty = pr.editTitle !== pr.title || pr.editBody !== pr.body;
-      body += `<div class="pr-edit" data-req="PRB-01"><input id="prTitle" value="${esc(pr.editTitle)}" aria-label="Pull request title"><textarea id="prBody" rows="2" aria-label="Pull request description">${esc(pr.editBody)}</textarea>` +
-        (dirty ? '<div class="row-actions"><button class="ghost-btn" data-action="discard-edit">Discard</button><button class="outline-btn" data-action="save-edit">Save</button></div>' : '') + '</div>';
+      body += `<div class="pr-text" data-req="PRB-01"><div class="pr-title">${esc(pr.title)}</div><div class="pr-body">${esc(pr.body)}</div></div>`;   // read-only
     }
     body += `<div data-req="GST-01"><div class="sec-head"><span class="sec-title">Git status</span></div>` + statusRows(w).map((r) => `<div class="srow"><span class="lead"><span class="circ ${r.dot}"></span></span><span class="txt">${esc(r.text)}</span>${r.act}</div>`).join('') + '</div>';
     if (pr && pr.deployments.length) {
@@ -845,18 +914,8 @@ Address each comment and say what you changed for each number.</pre>
       body += `<div data-req="REV-01"><div class="sec-head"><span class="sec-title">Comments</span><span class="grow"></span><button class="ghost-btn" data-action="agent-comments" ${busy ? 'disabled title="The agent is working"' : ''}>Add all to chat</button></div>` +
         pr.threads.map((t, i) => t.hidden ? '' : `<div class="crow" title="${esc(t.body)}"><span class="lead ${t.added ? 'c-success' : ''}">${t.added ? I.check(12) : ''}</span><span class="avatar">${t.who.slice(0, 2).toUpperCase()}</span><span class="cm-who">${esc(t.who)}</span><span class="cm-where cm-meta">${esc(t.where || (t.review ? 'review' : t.body.slice(0, 50)))}</span><span class="grow hover-acts"></span><span class="hover-acts"><button class="ghost-btn" data-action="hide-comment" data-i="${i}">Hide</button><button class="outline-btn" data-action="agent-comment" data-i="${i}" ${busy ? 'disabled' : ''}>Add to chat</button></span></div>`).join('') + '</div>';
     }
-    const foot = `<div class="pfoot" data-req="PR-07"><span data-req="ACC-01">jhzl1</span><span>·</span><span>${pr ? `Updated ${ago(pr.updated)}` : 'No pull request'}</span><span class="grow"></span><button class="icon-btn sm" data-action="refresh" aria-label="Refresh" title="Refresh">${I.refresh}</button></div>`;
+    const foot = `<div class="pfoot" data-req="PR-07"><span data-req="ACC-01">jhzl1</span><span>·</span><span>${pr ? `Updated ${ago(pr.updated)}` : 'No pull request'}</span><span class="grow"></span></div>`;   // PR-07: no manual refresh
     $('#rpanel').innerHTML = hdr + tabs + `<div class="pbody">${body}</div>` + foot;
-    const tb = $('#prTitle'); const bb = $('#prBody');
-    if (bb) { const fit = () => { bb.style.height = 'auto'; bb.style.height = `${Math.min(180, bb.scrollHeight)}px`; }; fit(); bb.addEventListener('input', () => { pr.editBody = bb.value; fit(); syncEdit(); }); }
-    if (tb) tb.addEventListener('input', () => { pr.editTitle = tb.value; syncEdit(); });
-  }
-  function syncEdit() {
-    const pr = sel().pr; const box = $('.pr-edit'); if (!box) return;
-    const dirty = pr.editTitle !== pr.title || pr.editBody !== pr.body;
-    const acts = box.querySelector('.row-actions');
-    if (dirty && !acts) box.insertAdjacentHTML('beforeend', '<div class="row-actions"><button class="ghost-btn" data-action="discard-edit">Discard</button><button class="outline-btn" data-action="save-edit">Save</button></div>');
-    if (!dirty && acts) acts.remove();
   }
   function renderAll(animate) { renderSidebar(); renderTopbar(); renderCenter(); renderPanel(animate); }
 
@@ -887,7 +946,7 @@ Address each comment and say what you changed for each number.</pre>
     await wait(2300);
     let reply = 'Done.';
     const pr = w.pr;
-    if (kind === 'create' || kind === 'create-draft') { w.local = L({ ownCommits: 3 }); w.pr = P({ number: 4538, title: 'Emit OpenAPI 3.1 from the router', body: 'Adds buildDocument(), which walks the router and writes openapi.json, and a test that validates the document.', isDraft: kind === 'create-draft', mergeState: kind === 'create-draft' ? 'DRAFT' : 'BLOCKED', checks: [CK('lint', 'QUEUED', ''), CK('typecheck', 'QUEUED', ''), CK('unit', 'QUEUED', '')], updated: Date.now() }); w.pr.editTitle = w.pr.title; w.pr.editBody = w.pr.body; reply = `Committed the two files, pushed \`${w.branch}\` and opened pull request #4538 against ${BASE}.`; runChecks(w); }
+    if (kind === 'create' || kind === 'create-draft') { w.local = L({ ownCommits: 3 }); w.pr = P({ number: 4538, title: 'Emit OpenAPI 3.1 from the router', body: 'Adds buildDocument(), which walks the router and writes openapi.json, and a test that validates the document.', isDraft: kind === 'create-draft', mergeState: kind === 'create-draft' ? 'DRAFT' : 'BLOCKED', checks: [CK('lint', 'QUEUED', ''), CK('typecheck', 'QUEUED', ''), CK('unit', 'QUEUED', '')], updated: Date.now() }); reply = `Committed the two files, pushed \`${w.branch}\` and opened pull request #4538 against ${BASE}.`; runChecks(w); }
     if (kind === 'commit') { w.local.uncommitted = 0; reply = 'Committed the three files and pushed. The pull request has the new commit.'; }
     if (kind === 'ci') { pr.checks.forEach((k) => { if (FAILED.has(k.state)) { k.state = 'RUNNING'; k.dur = '<1m'; } }); reply = 'unit compared floats exactly and e2e waited for a removed selector. Fixed both and pushed.'; runChecks(w); }
     if (kind === 'conflicts' || kind === 'diverged') { if (pr) pr.mergeState = 'CLEAN'; w.local.behindBase = 0; reply = kind === 'conflicts' ? `Rebased onto origin/${BASE}, resolved the conflict in \`src/acp.ts\`, the tests pass, and pushed with --force-with-lease.` : `Merged origin/${BASE} and pushed.`; }
@@ -939,7 +998,8 @@ Address each comment and say what you changed for each number.</pre>
     const w = sel();
     switch (b.dataset.action) {
       case 'select': state.selected = b.dataset.ws; state.confirmMerge = null; closeMenu(); renderAll(false); break;
-      case 'toggle-panel': state.panelOpen = !state.panelOpen; renderTopbar(); break;
+      case 'toggle-panel': state.panelOpen = !state.panelOpen; renderTopbar(); renderPanel(false); break;
+      case 'run': state.running = !state.running; renderTopbar(); toast(state.running ? 'Runs the repository\'s Run script in the terminal panel.' : 'Stopped the Run script.'); break;
       case 'agent-create': runAgent(w, 'create'); break;
       case 'agent-commit': runAgent(w, 'commit'); break;
       case 'agent-ci': runAgent(w, 'ci'); break;
@@ -952,7 +1012,7 @@ Address each comment and say what you changed for each number.</pre>
         closeMenu();
         const cur = methodOf(w);
         const m = document.createElement('div'); m.className = 'menu';
-        m.innerHTML = allowedOf(w).map((k) => { const off = k === 'REBASE' && !w.pr.canBeRebased; return `<button class="menu-item tall" data-k="${k}" ${off ? 'disabled title="GitHub can\'t rebase this branch cleanly"' : ''}><span class="m-check">${k === cur ? '✓' : ''}</span><span class="m-text"><span>${METHOD[k].menu}</span><span class="m-desc">${METHOD[k].desc}</span></span></button>`; }).join('');
+        m.innerHTML = allowedOf(w).map((k) => { const off = k === 'REBASE' && !w.pr.canBeRebased; return `<button class="menu-item tall" data-k="${k}" ${off ? 'disabled title="GitHub can\'t rebase this branch cleanly"' : ''}><span class="m-text"><span>${METHOD[k].menu}</span><span class="m-desc">${METHOD[k].desc}</span></span><span class="m-check">${k === cur ? '✓' : ''}</span></button>`; }).join('');
         $('#rpanel').appendChild(m);
         const r = b.getBoundingClientRect(); const box = $('#rpanel').getBoundingClientRect();
         m.style.top = `${r.bottom - box.top + 4}px`; m.style.right = '8px';
@@ -964,7 +1024,7 @@ Address each comment and say what you changed for each number.</pre>
       case 'create-menu': {
         closeMenu();
         const m = document.createElement('div'); m.className = 'menu';
-        m.innerHTML = '<button class="menu-item" data-m="draft">Create draft PR</button><button class="menu-item" data-m="manual">Create PR manually</button>';
+        m.innerHTML = `<button class="menu-item" data-m="draft">Create draft PR</button><button class="menu-item" data-m="manual">Create PR manually<span class="trail">${I.ext(12)}</span></button>`;   // HDR-04: no icon gutter, one line
         $('#rpanel').appendChild(m);
         const r = b.getBoundingClientRect(); const box = $('#rpanel').getBoundingClientRect();
         m.style.top = `${r.bottom - box.top + 4}px`; m.style.right = '8px';
@@ -982,14 +1042,11 @@ Address each comment and say what you changed for each number.</pre>
       case 'pull-remote': w.local.behindRemote = 0; renderAll(true); toast('git pull'); break;
       case 'pull-base': pullBase(w); break;
       case 'rerun': w.pr.checks.forEach((k) => { if (FAILED.has(k.state)) { k.state = 'QUEUED'; k.dur = ''; } }); renderAll(true); toast('POST …/actions/runs/{run_id}/rerun-failed-jobs'); runChecks(w); break;
-      case 'save-edit': w.pr.title = w.pr.editTitle; w.pr.body = w.pr.editBody; renderAll(false); toast('updatePullRequest(title, body)'); break;
-      case 'discard-edit': w.pr.editTitle = w.pr.title; w.pr.editBody = w.pr.body; renderPanel(false); break;
-      case 'refresh': if (w.pr) { w.pr.updated = Date.now(); renderPanel(false); } break;
       default: break;
     }
   });
   document.addEventListener('mousedown', (e) => { if (menuEl && !menuEl.contains(e.target)) closeMenu(); });
-  document.addEventListener('keydown', (e) => { if (e.metaKey && e.shiftKey && e.key.toLowerCase() === 'g') { e.preventDefault(); state.panelOpen = !state.panelOpen; renderTopbar(); } });
+  document.addEventListener('keydown', (e) => { if (e.metaKey && e.altKey && e.code === 'KeyB') { e.preventDefault(); state.panelOpen = !state.panelOpen; renderTopbar(); renderPanel(false); } });   // KBD-03: ⌥⌘B
   const line = $('#pnlLine');
   line.addEventListener('pointerdown', (e) => {
     e.preventDefault(); line.setPointerCapture(e.pointerId);
