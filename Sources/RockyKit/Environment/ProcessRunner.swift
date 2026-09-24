@@ -8,8 +8,28 @@ public struct ProcessFailure: Error, Equatable, CustomStringConvertible {
     public var description: String { "\(command) exited \(status): \(stderr)" }
 }
 
-private final class OutputBox: @unchecked Sendable {
-    var data = Data()
+/// A pipe read to its end on a thread of its own; `wait` blocks until it is. Not a Dispatch queue: callers block
+/// Swift's cooperative threads while they wait, and with enough of them waiting (tests running git in parallel), a
+/// read queued on `DispatchQueue.global()` never got a thread and every caller waited forever.
+final class PipeDrain: @unchecked Sendable {
+    /// Read only after `wait` returned.
+    private(set) var data = Data()
+    private let done = DispatchSemaphore(value: 0)
+
+    init(_ handle: FileHandle) {
+        Thread { [self] in
+            data = handle.readDataToEndOfFile()
+            done.signal()
+        }.start()
+    }
+
+    func wait() {
+        done.wait()
+    }
+
+    func wait(timeout: DispatchTime) -> DispatchTimeoutResult {
+        done.wait(timeout: timeout)
+    }
 }
 
 public enum ProcessRunner {
@@ -34,15 +54,10 @@ public enum ProcessRunner {
         process.standardInput = FileHandle.nullDevice
         try process.run()
 
-        // Drain stderr concurrently: a full pipe would block the child forever.
-        let errorOutput = OutputBox()
-        let drained = DispatchSemaphore(value: 0)
-        DispatchQueue.global().async {
-            errorOutput.data = stderr.fileHandleForReading.readDataToEndOfFile()
-            drained.signal()
-        }
+        // Drain stderr while stdout is read: a full pipe would block the child forever.
+        let errorOutput = PipeDrain(stderr.fileHandleForReading)
         let output = stdout.fileHandleForReading.readDataToEndOfFile()
-        drained.wait()
+        errorOutput.wait()
         process.waitUntilExit()
 
         guard process.terminationStatus == 0 else {

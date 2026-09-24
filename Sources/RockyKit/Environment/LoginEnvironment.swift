@@ -5,10 +5,6 @@ public enum LoginEnvironmentError: Error, Equatable {
     case markerMissing
 }
 
-private final class CaptureBox: @unchecked Sendable {
-    var data = Data()
-}
-
 /// Captures the user's login-shell environment once, so agents see the same PATH as a terminal.
 /// Conductor spawned `zsh -l` repeatedly; Rocky runs it once per launch (spec Section 1).
 public enum LoginEnvironment {
@@ -52,18 +48,13 @@ public enum LoginEnvironment {
         process.terminationHandler = { _ in exited.signal() }
         try process.run()
 
-        let output = CaptureBox()
-        let drained = DispatchSemaphore(value: 0)
-        DispatchQueue.global().async {
-            output.data = stdout.fileHandleForReading.readDataToEndOfFile()
-            drained.signal()
-        }
+        let output = PipeDrain(stdout.fileHandleForReading)
         if exited.wait(timeout: .now() + timeout) == .timedOut {
             process.terminate()
             throw LoginEnvironmentError.timedOut
         }
         // A background job started by the profile can hold stdout open; do not wait for it forever.
-        guard drained.wait(timeout: .now() + 2) == .success else { throw LoginEnvironmentError.markerMissing }
+        guard output.wait(timeout: .now() + 2) == .success else { throw LoginEnvironmentError.markerMissing }
         let parsed = parse(output.data)
         guard !parsed.isEmpty else { throw LoginEnvironmentError.markerMissing }
         return parsed
