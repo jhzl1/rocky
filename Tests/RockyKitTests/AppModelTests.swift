@@ -33,7 +33,9 @@ struct AppModelTests {
                 let fake = Fixtures.fakeACPLaunch()
                 return AgentLaunch(executable: fake.executable, arguments: fake.arguments, environment: fake.environment, cwd: cwd, stderrLog: fake.stderrLog)
             },
-            installAdapter: { _, _ in }
+            installAdapter: { _, _, _, _ in },
+            latestVersion: { _ in "0.0.0" },
+            defaults: UserDefaults(suiteName: "rocky-tests-\(UUID().uuidString)")!
         )
     }
 
@@ -135,32 +137,8 @@ struct AppModelTests {
         await model.stopAllAgents()
     }
 
-    @Test func reopeningShowsTheLastChatWithoutStartingTheAgent() async throws {
-        let store = try RockyStore.inMemory()
-        let model = try makeModel(store: store)
-        await model.bootstrap()
-        let repo = try GitFixture.localRepo(in: try Fixtures.temporaryDirectory("repos"))
-        await model.addRepo(at: repo)
-        let repoId = try #require(model.repos.first?.id)
-        await model.createWorkspace(repoId: repoId)
-        let workspace = try #require(model.workspaces[repoId]?.first)
-        let chat = try #require(await model.openChat(workspace: workspace, agent: .opencode))
-        async let sending: Void = chat.send("hi")
-        try await answerNextPermission(chat)
-        await sending
-        await model.stopAllAgents()
-
-        let reopened = try makeModel(store: store)
-        await reopened.bootstrap()
-        #expect(reopened.lastAgent(workspaceId: workspace.id) == .opencode)
-        let prepared = try #require(await reopened.prepareChat(workspace: workspace, agent: .opencode))
-        #expect(prepared.state == .idle)
-        #expect(prepared.items.map(\.text) == ["hi", "Hello", "Run printenv"])
-        await reopened.stopAllAgents()
-    }
-
-    @Test func newConversationStartsEmptyAndKeepsTheOldOne() async throws {
-        let store = try RockyStore.inMemory()
+    /// A workspace with one Claude conversation that already has a turn ("hi").
+    private func workspaceWithAConversation(store: RockyStore) async throws -> (AppModel, Workspace, ChatSessionModel) {
         let model = try makeModel(store: store)
         await model.bootstrap()
         let repo = try GitFixture.localRepo(in: try Fixtures.temporaryDirectory("repos"))
@@ -172,15 +150,73 @@ struct AppModelTests {
         async let sending: Void = chat.send("hi")
         try await answerNextPermission(chat)
         await sending
-        let oldRecord = try #require(try store.latestSession(workspaceId: workspace.id, agent: "claude"))
+        return (model, workspace, chat)
+    }
 
-        let fresh = try #require(await model.newConversation(workspace: workspace, agent: .claude))
+    @Test func reopeningShowsTheLastConversationTitledByItsFirstMessage() async throws {
+        let store = try RockyStore.inMemory()
+        let (model, workspace, _) = try await workspaceWithAConversation(store: store)
+        await model.stopAllAgents()
+
+        let reopened = try makeModel(store: store)
+        await reopened.bootstrap()
+        await reopened.showConversations(workspace: workspace)
+        #expect(reopened.conversations[workspace.id]?.map(\.title) == ["hi"])
+        let chat = try #require(reopened.existingChat(workspaceId: workspace.id))
+        #expect(chat.agent == .claude)
+        #expect(chat.items.map(\.text) == ["hi", "Hello", "Run printenv"])
+        await reopened.stopAllAgents()
+    }
+
+    @Test func aFileOpensInATabAndAConversationTabCoversItAgain() async throws {
+        let store = try RockyStore.inMemory()
+        let (model, workspace, chat) = try await workspaceWithAConversation(store: store)
+        let conversationId = try #require(model.selectedConversationIds[workspace.id])
+
+        model.openFile(workspaceId: workspace.id, path: "/repo/a.png")
+        model.openFile(workspaceId: workspace.id, path: "/repo/b.md")
+        model.openFile(workspaceId: workspace.id, path: "/repo/a.png")
+        #expect(model.openFiles[workspace.id] == ["/repo/a.png", "/repo/b.md"])
+        #expect(model.selectedFiles[workspace.id] == "/repo/a.png")
+
+        await model.showConversation(workspace: workspace, conversationId: conversationId)
+        #expect(model.selectedFiles[workspace.id] == nil)
+        #expect(model.existingChat(workspaceId: workspace.id) === chat)
+
+        model.showFile(workspaceId: workspace.id, path: "/repo/b.md")
+        model.closeFile(workspaceId: workspace.id, path: "/repo/b.md")
+        #expect(model.openFiles[workspace.id] == ["/repo/a.png"])
+        #expect(model.selectedFiles[workspace.id] == nil)
+        await model.stopAllAgents()
+    }
+
+    @Test func newConversationOpensATabAndLeavesTheOtherRunning() async throws {
+        let store = try RockyStore.inMemory()
+        let (model, workspace, first) = try await workspaceWithAConversation(store: store)
+
+        let fresh = try #require(await model.newConversation(workspace: workspace, agent: .opencode))
         #expect(fresh.items.isEmpty)
-        #expect(fresh.state == .idle)
-        #expect(chat.state == .stopped("Stopped"))
         #expect(model.existingChat(workspaceId: workspace.id) === fresh)
-        #expect(try store.latestSession(workspaceId: workspace.id, agent: "claude")?.id != oldRecord.id)
-        #expect(try store.messages(sessionId: oldRecord.id).map(\.text) == ["hi", "Hello", "Run printenv"])
+        #expect(first.state == .ready)
+        let tabs = try #require(model.conversations[workspace.id])
+        #expect(tabs.map(\.agent) == ["claude", "opencode"])
+
+        await model.showConversation(workspace: workspace, conversationId: tabs[0].id)
+        #expect(model.existingChat(workspaceId: workspace.id) === first)
+        await model.stopAllAgents()
+    }
+
+    @Test func closingATabStopsItsAgentAndKeepsTheConversation() async throws {
+        let store = try RockyStore.inMemory()
+        let (model, workspace, first) = try await workspaceWithAConversation(store: store)
+        let firstId = try #require(model.selectedConversationIds[workspace.id])
+        await model.newConversation(workspace: workspace, agent: .claude)
+
+        await model.closeConversation(workspace: workspace, conversationId: firstId)
+        #expect(first.state == .stopped("Stopped"))
+        #expect(model.conversations[workspace.id]?.map(\.id).contains(firstId) == false)
+        #expect(try store.session(id: firstId)?.closedAt != nil)
+        #expect(try store.messages(sessionId: firstId).map(\.text) == ["hi", "Hello", "Run printenv"])
         await model.stopAllAgents()
     }
 

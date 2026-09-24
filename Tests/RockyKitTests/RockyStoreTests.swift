@@ -69,6 +69,28 @@ struct RockyStoreTests {
         #expect(messages[1].status == "completed")
     }
 
+    @Test func keepsAMessagesFilesAndToolKind() throws {
+        let store = try RockyStore.inMemory()
+        let repo = Repo(name: "app", path: "/dev/app")
+        try store.add(repo)
+        let workspace = Workspace(repoId: repo.id, name: "lisbon", path: "/p", branch: "b")
+        try store.add(workspace)
+        let session = ChatSessionRecord(workspaceId: workspace.id, agent: "claude")
+        try store.add(session)
+
+        try store.upsert(ChatMessageRecord(id: "a", sessionId: session.id, seq: 0, kind: "user", text: "look", status: nil, attachments: ["/tmp/shot.png"]))
+        try store.upsert(ChatMessageRecord(id: "b", sessionId: session.id, seq: 0, kind: "tool", text: "Read shot.png", status: "completed", attachments: ["/tmp/shot.png"], toolKind: "read"))
+
+        let messages = try store.messages(sessionId: session.id)
+        #expect(messages.map(\.attachments) == [["/tmp/shot.png"], ["/tmp/shot.png"]])
+        #expect(messages.map(\.toolKind) == [nil, "read"])
+    }
+
+    @Test func aTabTitleLeavesTheFilesOut() {
+        let marker = PromptAttachment.marker
+        #expect(ChatSessionRecord.title(from: "\(marker) Mira \(marker) esta imagen\nsegunda línea") == "Mira esta imagen")
+    }
+
     @Test func persistsAcrossReopen() throws {
         let path = try Fixtures.temporaryDirectory("db").appendingPathComponent("rocky.sqlite").path
         try RockyStore(path: path).add(Repo(name: "app", path: "/dev/app"))

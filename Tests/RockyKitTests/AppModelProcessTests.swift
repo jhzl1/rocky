@@ -17,7 +17,9 @@ struct AppModelProcessTests {
                 let fake = Fixtures.fakeACPLaunch()
                 return AgentLaunch(executable: fake.executable, arguments: fake.arguments, environment: fake.environment, cwd: cwd, stderrLog: fake.stderrLog)
             },
-            installAdapter: { _, _ in },
+            installAdapter: { _, _, _, _ in },
+            latestVersion: { _ in "0.0.0" },
+            defaults: UserDefaults(suiteName: "rocky-tests-\(UUID().uuidString)")!,
             secrets: secrets,
             // `-f` skips the rc files, so the tests do not depend on this machine's shell setup.
             terminalShell: { _ in ("/bin/zsh", ["-f"]) },
@@ -59,9 +61,9 @@ struct AppModelProcessTests {
         #expect(workspace.baseRef == "main")
     }
 
-    @Test func conductorJSONInTheWorkspaceWinsOverRepoSettings() async throws {
+    @Test func rockyJSONInTheWorkspaceWinsOverRepoSettings() async throws {
         let model = try makeModel()
-        let repoId = try await addRepo(model, committing: ["conductor.json": #"{"scripts":{"setup":"touch from-json"}}"#])
+        let repoId = try await addRepo(model, committing: ["rocky.json": #"{"scripts":{"setup":"touch from-json"}}"#])
         model.setScripts(repoId: repoId, setup: "touch from-settings", run: "", archive: "", runMode: .concurrent)
         await model.createWorkspace(repoId: repoId)
         let workspace = try #require(model.workspaces[repoId]?.first)
@@ -99,7 +101,7 @@ struct AppModelProcessTests {
         let workspace = try #require(model.workspaces[repoId]?.first)
 
         await model.startRun(workspaceId: workspace.id)
-        #expect(model.errorMessage == "\(workspace.name) has no run script. Add one in the repo settings or in conductor.json.")
+        #expect(model.errorMessage == "\(workspace.name) has no run script. Add one in the repo settings or in rocky.json.")
         #expect(model.existingProcesses(for: workspace.id)?.run == nil)
     }
 
@@ -134,7 +136,8 @@ struct AppModelProcessTests {
         _ = await model.openChat(workspace: workspace, agent: .opencode)
         #expect(launches.last?["API_URL"] == "http://localhost:9")
         #expect(launches.last?["API_TOKEN"] == "s3cret")
-        #expect(launches.last?["CONDUCTOR_PORT"] == "41000")
+        #expect(launches.last?["ROCKY_PORT"] == "41000")
+        #expect(launches.last?.keys.contains { $0.hasPrefix("CONDUCTOR_") } == false)
         #expect(try model.store.repoVars(repoId: repoId).first { $0.name == "API_TOKEN" }?.value == nil)
         #expect(try secrets.read(account: "\(repoId)/API_TOKEN") == "s3cret")
 

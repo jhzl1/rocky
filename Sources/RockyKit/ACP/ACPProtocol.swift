@@ -19,6 +19,9 @@ public enum PromptAttachment: Sendable, Equatable {
 
     /// Up to this size an image goes inline; a bigger one is sent as a link.
     public static let maxInlineImageBytes = 5_000_000
+    /// Marks where a file sits in a message's text, one per attachment in order: U+FFFC, the character a text view
+    /// uses for an embedded object.
+    public static let marker = "\u{FFFC}"
 
     public static func make(for url: URL, imagesAllowed: Bool) -> PromptAttachment {
         let mimeTypes = ["png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"]
@@ -32,31 +35,54 @@ public enum PromptAttachment: Sendable, Equatable {
     }
 }
 
-/// The models an agent offers for a session. Claude's adapter reports them as the `model` entry of
-/// `configOptions` (switched with `session/set_config_option`); older agents report `models`
-/// (switched with `session/set_model`), and then `configId` is nil.
-public struct ModelChoice: Sendable, Equatable {
-    public struct Option: Sendable, Equatable, Identifiable {
+/// A setting the agent offers for a session, such as the model or the effort. Claude's adapter reports them as
+/// `configOptions` and applies a change with `session/set_config_option`, answering with the whole updated list
+/// (the effort levels depend on the model). An agent that only reports the older `models` field gets a
+/// `model` option with `isLegacyModel`, switched with `session/set_model`.
+public struct SessionConfigOption: Sendable, Equatable, Identifiable {
+    public struct Choice: Sendable, Equatable, Identifiable {
         public let value: String
         public let name: String
         public let detail: String?
         public var id: String { value }
+
+        public init(value: String, name: String, detail: String? = nil) {
+            self.value = value
+            self.name = name
+            self.detail = detail
+        }
     }
 
-    public let configId: String?
+    public static let model = "model"
+    public static let effort = "effort"
+    /// Claude's fast mode: choices "on" and "off".
+    public static let fast = "fast"
+    /// The permission mode (Claude: default, acceptEdits, plan, auto…); plan mode is its "plan" choice.
+    public static let mode = "mode"
+    public static let planMode = "plan"
+
+    public let id: String
+    public let name: String
+    public let category: String?
     public var current: String
-    public let options: [Option]
+    public let choices: [Choice]
+    public var isLegacyModel = false
 
     public var currentName: String {
-        options.first { $0.value == current }?.name ?? current
+        choices.first { $0.value == current }?.name ?? current
     }
 }
 
 public enum SessionEvent: Sendable, Equatable {
     case agentText(String)
     case agentThought(String)
-    case toolCall(id: String, title: String, status: String)
-    case toolCallUpdate(id: String, status: String)
+    /// `kind` is ACP's tool kind (read, edit, execute, search, think…); `paths` are the files it touches.
+    case toolCall(id: String, title: String, status: String, kind: String? = nil, paths: [String] = [])
+    /// Only what changed: Claude's adapter first reports a tool with a placeholder title and fills it in later.
+    case toolCallUpdate(id: String, status: String?, title: String? = nil, kind: String? = nil, paths: [String]? = nil)
+    /// The agent changed its settings by itself, for example leaving plan mode once the plan is approved.
+    case configOptions([SessionConfigOption])
+    case currentMode(String)
     case ignored(String)
 }
 
@@ -76,7 +102,13 @@ public enum ACPProtocol {
     public static func initializeParams() -> JSONValue {
         [
             "protocolVersion": 1,
-            "clientCapabilities": ["fs": ["readTextFile": false, "writeTextFile": false], "terminal": false],
+            // `elicitation.form`: Rocky shows the agent's questions (`AgentQuestionRequest`). Without it Claude's adapter
+            // takes AskUserQuestion away.
+            "clientCapabilities": [
+                "fs": ["readTextFile": false, "writeTextFile": false],
+                "terminal": false,
+                "elicitation": ["form": [:]],
+            ],
         ]
     }
 
@@ -87,37 +119,52 @@ public enum ACPProtocol {
         )
     }
 
-    /// Reads the model list from a `session/new` or `session/load` result; nil when the agent offers none.
-    public static func modelChoice(from result: JSONValue) -> ModelChoice? {
-        if let option = result["configOptions"]?.arrayValue?.first(where: {
-            $0["id"]?.stringValue == "model" || $0["category"]?.stringValue == "model"
-        }), let configId = option["id"]?.stringValue {
-            // An option list may hold groups, each with its own `options`.
-            let options = (option["options"]?.arrayValue ?? [])
+    /// Reads the select-type settings from a `session/new`, `session/load` or `session/set_config_option`
+    /// result. Empty when the agent offers none.
+    public static func configOptions(from result: JSONValue) -> [SessionConfigOption] {
+        var options = (result["configOptions"]?.arrayValue ?? []).compactMap { entry -> SessionConfigOption? in
+            guard let id = entry["id"]?.stringValue else { return nil }
+            // A choice list may hold groups, each with its own `options`.
+            let choices = (entry["options"]?.arrayValue ?? [])
                 .flatMap { $0["options"]?.arrayValue ?? [$0] }
-                .compactMap { entry -> ModelChoice.Option? in
-                    guard let value = entry["value"]?.stringValue else { return nil }
-                    return ModelChoice.Option(value: value, name: entry["name"]?.stringValue ?? value, detail: entry["description"]?.stringValue)
+                .compactMap { choice -> SessionConfigOption.Choice? in
+                    guard let value = choice["value"]?.stringValue else { return nil }
+                    return SessionConfigOption.Choice(value: value, name: choice["name"]?.stringValue ?? value, detail: choice["description"]?.stringValue)
                 }
-            guard !options.isEmpty else { return nil }
-            return ModelChoice(configId: configId, current: option["currentValue"]?.stringValue ?? options[0].value, options: options)
+            guard !choices.isEmpty else { return nil }
+            return SessionConfigOption(
+                id: id,
+                name: entry["name"]?.stringValue ?? id,
+                category: entry["category"]?.stringValue,
+                current: entry["currentValue"]?.stringValue ?? choices[0].value,
+                choices: choices
+            )
         }
-        if let models = result["models"], let available = models["availableModels"]?.arrayValue {
-            let options = available.compactMap { entry -> ModelChoice.Option? in
+        if !options.contains(where: { $0.id == SessionConfigOption.model }),
+           let models = result["models"], let available = models["availableModels"]?.arrayValue {
+            let choices = available.compactMap { entry -> SessionConfigOption.Choice? in
                 guard let id = entry["modelId"]?.stringValue else { return nil }
-                return ModelChoice.Option(value: id, name: entry["name"]?.stringValue ?? id, detail: entry["description"]?.stringValue)
+                return SessionConfigOption.Choice(value: id, name: entry["name"]?.stringValue ?? id, detail: entry["description"]?.stringValue)
             }
-            guard !options.isEmpty else { return nil }
-            return ModelChoice(configId: nil, current: models["currentModelId"]?.stringValue ?? options[0].value, options: options)
+            if !choices.isEmpty {
+                options.append(SessionConfigOption(
+                    id: SessionConfigOption.model,
+                    name: "Model",
+                    category: "model",
+                    current: models["currentModelId"]?.stringValue ?? choices[0].value,
+                    choices: choices,
+                    isLegacyModel: true
+                ))
+            }
         }
-        return nil
+        return options
     }
 
-    public static func setModelRequest(sessionId: String, choice: ModelChoice, value: String) -> (method: String, params: JSONValue) {
-        if let configId = choice.configId {
-            return ("session/set_config_option", ["sessionId": .string(sessionId), "configId": .string(configId), "value": .string(value)])
+    public static func setConfigOptionRequest(sessionId: String, option: SessionConfigOption, value: String) -> (method: String, params: JSONValue) {
+        if option.isLegacyModel {
+            return ("session/set_model", ["sessionId": .string(sessionId), "modelId": .string(value)])
         }
-        return ("session/set_model", ["sessionId": .string(sessionId), "modelId": .string(value)])
+        return ("session/set_config_option", ["sessionId": .string(sessionId), "configId": .string(option.id), "value": .string(value)])
     }
 
     public static func newSessionParams(cwd: URL) -> JSONValue {
@@ -128,17 +175,28 @@ public enum ACPProtocol {
         ["sessionId": .string(sessionId), "cwd": .string(cwd.path), "mcpServers": []]
     }
 
+    /// The prompt's blocks in the order the user wrote them: each `PromptAttachment.marker` in `text` is replaced by
+    /// the next attachment. Attachments without a marker go after the text.
     public static func promptParams(sessionId: String, text: String, attachments: [PromptAttachment] = []) -> JSONValue {
-        var blocks: [JSONValue] = [["type": "text", "text": .string(text)]]
-        for attachment in attachments {
-            switch attachment {
-            case let .image(mimeType, base64):
-                blocks.append(["type": "image", "mimeType": .string(mimeType), "data": .string(base64)])
-            case let .file(url):
-                blocks.append(["type": "resource_link", "uri": .string(url.absoluteString), "name": .string(url.lastPathComponent)])
+        var blocks: [JSONValue] = []
+        var remaining = attachments[...]
+        for (index, part) in text.components(separatedBy: PromptAttachment.marker).enumerated() {
+            if index > 0, let attachment = remaining.popFirst() { blocks.append(block(for: attachment)) }
+            if !part.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (index == 0 && attachments.isEmpty) {
+                blocks.append(["type": "text", "text": .string(part)])
             }
         }
+        blocks.append(contentsOf: remaining.map(block(for:)))
         return ["sessionId": .string(sessionId), "prompt": .array(blocks)]
+    }
+
+    private static func block(for attachment: PromptAttachment) -> JSONValue {
+        switch attachment {
+        case let .image(mimeType, base64):
+            ["type": "image", "mimeType": .string(mimeType), "data": .string(base64)]
+        case let .file(url):
+            ["type": "resource_link", "uri": .string(url.absoluteString), "name": .string(url.lastPathComponent)]
+        }
     }
 
     public static func cancelParams(sessionId: String) -> JSONValue {
@@ -163,14 +221,44 @@ public enum ACPProtocol {
             return .toolCall(
                 id: update["toolCallId"]?.stringValue ?? "",
                 title: update["title"]?.stringValue ?? "Tool call",
-                status: update["status"]?.stringValue ?? "pending"
+                status: update["status"]?.stringValue ?? "pending",
+                kind: toolKind(of: update),
+                paths: paths(fromLocations: update["locations"]) ?? []
             )
         case "tool_call_update":
-            guard let status = update["status"]?.stringValue else { return .ignored(kind) }
-            return .toolCallUpdate(id: update["toolCallId"]?.stringValue ?? "", status: status)
+            let status = update["status"]?.stringValue
+            let title = update["title"]?.stringValue
+            let toolKind = update["kind"] == nil ? nil : toolKind(of: update)
+            let touched = paths(fromLocations: update["locations"])
+            guard status != nil || title != nil || toolKind != nil || touched != nil else { return .ignored(kind) }
+            return .toolCallUpdate(id: update["toolCallId"]?.stringValue ?? "", status: status, title: title, kind: toolKind, paths: touched)
+        case "config_option_update":
+            return .configOptions(configOptions(from: update))
+        case "current_mode_update":
+            guard let mode = update["currentModeId"]?.stringValue else { return .ignored(kind) }
+            return .currentMode(mode)
         default:
             return .ignored(kind)
         }
+    }
+
+    /// Kind `question` for Claude's AskUserQuestion, which ACP reports as `other`, so the conversation shows it as
+    /// the user's input; ACP's `kind` for every other tool.
+    public static let questionToolKind = "question"
+
+    static func toolKind(of update: JSONValue) -> String? {
+        if update["_meta"]?["claudeCode"]?["toolName"]?.stringValue == "AskUserQuestion" { return questionToolKind }
+        return update["kind"]?.stringValue
+    }
+
+    /// The files of a tool call's `locations`, each once; nil when the update has no `locations`.
+    static func paths(fromLocations locations: JSONValue?) -> [String]? {
+        guard let entries = locations?.arrayValue else { return nil }
+        var paths: [String] = []
+        for path in entries.compactMap({ $0["path"]?.stringValue }) where !paths.contains(path) {
+            paths.append(path)
+        }
+        return paths
     }
 
     public static func permissionRequest(from params: JSONValue) -> PermissionRequest {

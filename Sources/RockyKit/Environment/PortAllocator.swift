@@ -1,4 +1,4 @@
-/// Each workspace owns ten ports, `port` through `port + 9`, like Conductor's CONDUCTOR_PORT (spec Section 3).
+/// Each workspace owns ten ports, `port` through `port + 9`; `PORT` is the first (spec Section 3).
 /// Blocks start at 41000 and a freed block is reused. Rocky does not check whether another program listens there.
 public enum PortAllocator {
     public static let firstPort = 41000

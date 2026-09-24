@@ -35,6 +35,20 @@ struct PTYSessionTests {
         #expect(PTYState(waitStatus: SIGKILL) == .signaled(SIGKILL))
     }
 
+    /// SwiftUI built two views of one terminal and dismantled the second: the one on screen stayed blank.
+    @Test func dismantlingOneViewKeepsTheOtherFed() async throws {
+        let pty = session("sleep 0.3; printf 'late output'")
+        var first: [UInt8] = []
+        _ = pty.attach(UUID()) { first.append(contentsOf: $0) }
+        let second = UUID()
+        _ = pty.attach(second) { _ in }
+        pty.detach(second)
+        pty.start()
+        _ = await pty.waitForExit()
+        try await waitForOutput(pty, containing: "late output")
+        #expect(String(decoding: first, as: UTF8.self).contains("late output"))
+    }
+
     @Test func runsAScriptAndReportsItsExitCode() async throws {
         let pty = session("printf 'hi from pty'; exit 3")
         pty.start()

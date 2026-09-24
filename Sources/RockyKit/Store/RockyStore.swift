@@ -90,6 +90,18 @@ public final class RockyStore: Sendable {
                 t.add(column: "completedAt", .datetime)
             }
         }
+        migrator.registerMigration("v4") { db in
+            try db.alter(table: "chatSession") { t in
+                t.add(column: "title", .text)
+                t.add(column: "closedAt", .datetime)
+            }
+        }
+        migrator.registerMigration("v5") { db in
+            try db.alter(table: "chatMessage") { t in
+                t.add(column: "attachments", .text)
+                t.add(column: "toolKind", .text)
+            }
+        }
         return migrator
     }
 
@@ -185,13 +197,24 @@ public final class RockyStore: Sendable {
         }
     }
 
-    /// The workspace's most recent conversation with any agent.
-    public func latestSession(workspaceId: String) throws -> ChatSessionRecord? {
+    public func session(id: String) throws -> ChatSessionRecord? {
+        try db.read { try ChatSessionRecord.fetchOne($0, key: id) }
+    }
+
+    /// The workspace's conversations whose tab is open, oldest first.
+    public func openConversations(workspaceId: String) throws -> [ChatSessionRecord] {
         try db.read {
             try ChatSessionRecord
-                .filter(Column("workspaceId") == workspaceId)
-                .order(Column("createdAt").desc)
-                .fetchOne($0)
+                .filter(Column("workspaceId") == workspaceId && Column("closedAt") == nil)
+                .order(Column("createdAt"))
+                .fetchAll($0)
+        }
+    }
+
+    /// The text of the conversation's first user message, for titling conversations saved before titles existed.
+    public func firstUserMessage(sessionId: String) throws -> String? {
+        try db.read {
+            try String.fetchOne($0, sql: "SELECT text FROM chatMessage WHERE sessionId = ? AND kind = 'user' ORDER BY seq LIMIT 1", arguments: [sessionId])
         }
     }
 

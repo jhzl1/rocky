@@ -12,7 +12,7 @@ public enum RunScriptMode: String, CaseIterable, Identifiable, Sendable {
 
 public struct ScriptConfig: Equatable, Sendable {
     public enum Source: Equatable, Sendable {
-        case conductorJSON
+        case rockyJSON
         case repoSettings
     }
 
@@ -24,22 +24,26 @@ public struct ScriptConfig: Equatable, Sendable {
 }
 
 public enum ScriptConfigError: Error, Equatable, CustomStringConvertible {
-    case invalidConductorJSON(String)
+    case invalidRockyJSON(String)
 
     public var description: String {
         switch self {
-        case .invalidConductorJSON(let reason): "conductor.json is not valid: \(reason)"
+        case .invalidRockyJSON(let reason): "rocky.json is not valid: \(reason)"
         }
     }
 }
 
-/// Scripts come from `conductor.json` at the workspace root when it exists (Conductor's legacy format, which the
-/// spec names), else from the repo settings in Rocky. The file replaces all of the settings, even for keys it
-/// lacks. `.conductor/settings.toml`, Conductor's newer format, is not read.
+/// Scripts come from `rocky.json` at the workspace root when it exists, so a repo can keep them in git, else from the
+/// repo settings in Rocky. The file replaces all of the settings, even for keys it lacks:
+///
+///     { "scripts": { "setup": "pnpm install", "run": "pnpm dev --port $PORT", "archive": "…" },
+///       "runScriptMode": "concurrent" }
+///
+/// Same shape as Conductor's conductor.json, which Rocky no longer reads (user decision, 2026-09-23).
 public enum ScriptConfigResolver {
-    public static let fileName = "conductor.json"
+    public static let fileName = "rocky.json"
 
-    private struct ConductorFile: Decodable {
+    private struct RockyFile: Decodable {
         struct Scripts: Decodable {
             var setup: String?
             var run: String?
@@ -70,16 +74,16 @@ public enum ScriptConfigResolver {
     }
 
     static func parse(_ data: Data) throws -> ScriptConfig {
-        let file: ConductorFile
+        let file: RockyFile
         do {
-            file = try JSONDecoder().decode(ConductorFile.self, from: data)
+            file = try JSONDecoder().decode(RockyFile.self, from: data)
         } catch {
-            throw ScriptConfigError.invalidConductorJSON(describe(error))
+            throw ScriptConfigError.invalidRockyJSON(describe(error))
         }
         var runMode = RunScriptMode.concurrent
         if let raw = file.runScriptMode {
             guard let parsed = RunScriptMode(rawValue: raw) else {
-                throw ScriptConfigError.invalidConductorJSON(#"runScriptMode must be "concurrent" or "nonconcurrent", got "\#(raw)""#)
+                throw ScriptConfigError.invalidRockyJSON(#"runScriptMode must be "concurrent" or "nonconcurrent", got "\#(raw)""#)
             }
             runMode = parsed
         }
@@ -88,7 +92,7 @@ public enum ScriptConfigResolver {
             run: clean(file.scripts?.run),
             archive: clean(file.scripts?.archive),
             runMode: runMode,
-            source: .conductorJSON
+            source: .rockyJSON
         )
     }
 

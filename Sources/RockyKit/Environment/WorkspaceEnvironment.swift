@@ -1,7 +1,7 @@
 import Foundation
 
-/// What a workspace process knows about its workspace. Exported under ROCKY_* names and under Conductor's
-/// CONDUCTOR_* names, so an existing conductor.json (for example `pnpm dev --port $CONDUCTOR_PORT`) runs unchanged.
+/// What a workspace process knows about its workspace, exported as `PORT` and ROCKY_* variables. Rocky exported
+/// Conductor's CONDUCTOR_* names too until 2026-09-23, when it stopped reading conductor.json (user decision).
 public struct WorkspaceContext: Sendable, Equatable {
     public let name: String
     public let path: String
@@ -27,17 +27,12 @@ public struct WorkspaceContext: Sendable, Equatable {
             "ROCKY_WORKSPACE_NAME": name,
             "ROCKY_WORKSPACE_PATH": path,
             "ROCKY_ROOT_PATH": rootPath,
-            "CONDUCTOR_WORKSPACE_NAME": name,
-            "CONDUCTOR_WORKSPACE_PATH": path,
-            "CONDUCTOR_ROOT_PATH": rootPath,
-            "CONDUCTOR_IS_LOCAL": "1",
         ]
         if let defaultBranch {
             values["ROCKY_DEFAULT_BRANCH"] = defaultBranch
-            values["CONDUCTOR_DEFAULT_BRANCH"] = defaultBranch
         }
         if let port {
-            for key in ["PORT", "ROCKY_PORT", "CONDUCTOR_PORT"] { values[key] = String(port) }
+            for key in ["PORT", "ROCKY_PORT"] { values[key] = String(port) }
         }
         return values
     }

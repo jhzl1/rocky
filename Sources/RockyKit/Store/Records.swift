@@ -9,7 +9,7 @@ public struct Repo: Codable, Sendable, Equatable, Identifiable, FetchableRecord,
     public var path: String
     /// Claude Code instance for this repo's agents (for example `~/.claude-celes`); nil uses Claude's default.
     public var claudeConfigDir: String?
-    /// Scripts from Rocky's repo settings. A `conductor.json` at a workspace root replaces all of them there.
+    /// Scripts from Rocky's repo settings. A `rocky.json` at a workspace root replaces all of them there.
     public var setupScript: String?
     public var runScript: String?
     public var archiveScript: String?
@@ -48,7 +48,7 @@ public struct Workspace: Codable, Sendable, Equatable, Identifiable, FetchableRe
     public var name: String
     public var path: String
     public var branch: String
-    /// First of the ten ports this workspace owns (`PORT`, `CONDUCTOR_PORT`); see `PortAllocator`.
+    /// First of the ten ports this workspace owns (`PORT`, `ROCKY_PORT`); see `PortAllocator`.
     public var port: Int?
     /// Ref the worktree was created from, for example `origin/main`. Unknown for workspaces made by M1.
     public var baseRef: String?
@@ -105,14 +105,37 @@ public struct ChatSessionRecord: Codable, Sendable, Equatable, Identifiable, Fet
     public var agent: String
     /// ACP session id, used with `session/load` to resume; nil until the agent assigns one.
     public var acpSessionId: String?
+    /// The conversation's tab title, from its first message; nil until the user sends one.
+    public var title: String?
+    /// When its tab was closed. A closed conversation stays in the store.
+    public var closedAt: Date?
     public var createdAt: Date
 
-    public init(id: String = UUID().uuidString, workspaceId: String, agent: String, acpSessionId: String? = nil, createdAt: Date = Date()) {
+    public init(
+        id: String = UUID().uuidString,
+        workspaceId: String,
+        agent: String,
+        acpSessionId: String? = nil,
+        title: String? = nil,
+        closedAt: Date? = nil,
+        createdAt: Date = Date()
+    ) {
         self.id = id
         self.workspaceId = workspaceId
         self.agent = agent
         self.acpSessionId = acpSessionId
+        self.title = title
+        self.closedAt = closedAt
         self.createdAt = createdAt
+    }
+
+    /// A tab title from a message: its first line without the file markers, cut to 40 characters.
+    public static func title(from message: String) -> String {
+        let text = message.replacingOccurrences(of: PromptAttachment.marker, with: "")
+        let firstLine = text.split(separator: "\n", omittingEmptySubsequences: true).first.map(String.init) ?? text
+        // A removed marker leaves two spaces behind.
+        let trimmed = firstLine.split(separator: " ", omittingEmptySubsequences: true).joined(separator: " ")
+        return trimmed.count > 40 ? String(trimmed.prefix(40)) + "…" : trimmed
     }
 }
 
@@ -125,6 +148,9 @@ public struct ChatMessageRecord: Codable, Sendable, Equatable, Identifiable, Fet
     public var kind: String
     public var text: String
     public var status: String?
+    /// File paths, stored as a JSON array; see `ChatItem.attachments`. nil for messages saved before v5.
+    public var attachments: [String]?
+    public var toolKind: String?
     public var createdAt: Date
     /// A user message's turn end; see `ChatItem.completedAt`.
     public var completedAt: Date?
@@ -136,6 +162,8 @@ public struct ChatMessageRecord: Codable, Sendable, Equatable, Identifiable, Fet
         kind: String,
         text: String,
         status: String?,
+        attachments: [String]? = nil,
+        toolKind: String? = nil,
         createdAt: Date = Date(),
         completedAt: Date? = nil
     ) {
@@ -145,6 +173,8 @@ public struct ChatMessageRecord: Codable, Sendable, Equatable, Identifiable, Fet
         self.kind = kind
         self.text = text
         self.status = status
+        self.attachments = attachments
+        self.toolKind = toolKind
         self.createdAt = createdAt
         self.completedAt = completedAt
     }

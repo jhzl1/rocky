@@ -10,22 +10,17 @@ struct WorkspaceEnvironmentTests {
         port: 41010
     )
 
-    @Test func workspaceVariablesUseRockyAndConductorNames() {
+    /// Only Rocky's names: no CONDUCTOR_* variable since Rocky stopped reading conductor.json.
+    @Test func workspaceVariablesUseRockyNames() {
         let environment = WorkspaceEnvironment.make(login: ["PATH": "/usr/bin"], workspace: context, claudeConfigDir: nil)
         #expect(environment == [
             "PATH": "/usr/bin",
             "PORT": "41010",
             "ROCKY_PORT": "41010",
-            "CONDUCTOR_PORT": "41010",
             "ROCKY_WORKSPACE_NAME": "lisbon",
-            "CONDUCTOR_WORKSPACE_NAME": "lisbon",
             "ROCKY_WORKSPACE_PATH": "/r/app-worktrees/lisbon",
-            "CONDUCTOR_WORKSPACE_PATH": "/r/app-worktrees/lisbon",
             "ROCKY_ROOT_PATH": "/r/app",
-            "CONDUCTOR_ROOT_PATH": "/r/app",
             "ROCKY_DEFAULT_BRANCH": "main",
-            "CONDUCTOR_DEFAULT_BRANCH": "main",
-            "CONDUCTOR_IS_LOCAL": "1",
         ])
     }
 
@@ -38,7 +33,7 @@ struct WorkspaceEnvironmentTests {
         )
         #expect(environment["API_URL"] == "from-repo")
         #expect(environment["PORT"] == "5173")
-        #expect(environment["CONDUCTOR_PORT"] == "41010")
+        #expect(environment["ROCKY_PORT"] == "41010")
     }
 
     @Test func repoVariableCannotSetClaudeConfigDir() {

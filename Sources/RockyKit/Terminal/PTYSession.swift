@@ -67,7 +67,9 @@ public final class PTYSession: Identifiable {
     /// Kept after the exit: its read handlers hold it weakly, and output can still arrive after the exit event.
     @ObservationIgnored private var process: LocalProcess?
     @ObservationIgnored private var windowSize = winsize(ws_row: 24, ws_col: 80, ws_xpixel: 0, ws_ypixel: 0)
-    @ObservationIgnored private var viewer: (id: UUID, onOutput: (ArraySlice<UInt8>) -> Void)?
+    /// Every view showing this session. SwiftUI can build two views of one session and dismantle either, in any
+    /// order: with a single viewer, dismantling the second one left the view on screen without output.
+    @ObservationIgnored private var viewers: [UUID: (ArraySlice<UInt8>) -> Void] = [:]
     @ObservationIgnored private var exitWaiters: [CheckedContinuation<PTYState, Never>] = []
 
     public init(
@@ -110,15 +112,15 @@ public final class PTYSession: Identifiable {
         if process.shellPid == 0 { finish(.failedToStart) }
     }
 
-    /// Attaches the one view that shows this session and returns the output so far, for it to replay.
+    /// Attaches a view that shows this session and returns the output so far, for it to replay.
     public func attach(_ viewerId: UUID, onOutput: @escaping (ArraySlice<UInt8>) -> Void) -> [UInt8] {
-        viewer = (viewerId, onOutput)
+        viewers[viewerId] = onOutput
         return output
     }
 
-    /// Detaches `viewerId` only: SwiftUI can build the next view of this session before dismantling the old one.
+    /// Detaches `viewerId` only; the session's other views keep their output.
     public func detach(_ viewerId: UUID) {
-        if viewer?.id == viewerId { viewer = nil }
+        viewers[viewerId] = nil
     }
 
     public func send(_ bytes: ArraySlice<UInt8>) {
@@ -173,7 +175,7 @@ public final class PTYSession: Identifiable {
         if output.count > maxOutputBytes {
             output.removeFirst(output.count - maxOutputBytes)
         }
-        viewer?.onOutput(bytes)
+        for onOutput in viewers.values { onOutput(bytes) }
     }
 }
 
@@ -191,3 +193,4 @@ extension PTYSession: @preconcurrency LocalProcessDelegate {
         windowSize
     }
 }
+

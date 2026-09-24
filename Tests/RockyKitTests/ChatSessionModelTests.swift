@@ -111,14 +111,66 @@ struct ChatSessionModelTests {
         await model.stop()
     }
 
-    @Test func readsTheSessionModelsAndSwitchesThem() async {
+    @Test func readsTheSessionOptionsAndChangesThem() async {
         let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(), flushInterval: .zero)
         await model.start()
-        #expect(model.models?.options.map(\.name) == ["Default", "Opus"])
-        #expect(model.models?.current == "default")
+        #expect(model.configOptions.map(\.id) == ["model", "effort", "mode"])
+        #expect(model.option("model")?.choices.map(\.name) == ["Default", "Opus"])
+        #expect(model.option("model")?.current == "default")
 
-        await model.selectModel("opus")
-        #expect(model.models?.current == "opus")
+        await model.setOption("model", to: "opus")
+        #expect(model.option("model")?.current == "opus")
+        await model.setOption("effort", to: "low")
+        #expect(model.option("effort")?.currentName == "Low")
+        await model.stop()
+    }
+
+    @Test func showsTheAgentsQuestionAndSendsTheAnswer() async throws {
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(asks: true), flushInterval: .zero)
+        await model.start()
+        async let sending: Void = model.send("pick one")
+        for _ in 0..<500 where model.pendingQuestion == nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let request = try #require(model.pendingQuestion)
+        #expect(request.questions.map(\.text) == ["Which color?"])
+        #expect(request.questions.first?.options.map(\.label) == ["Blue", "Red"])
+        model.answerQuestion(.answered(picks: ["question_0": ["Blue"]], other: [:]))
+        await sending
+
+        #expect(model.pendingQuestion == nil)
+        #expect(model.items.last?.text == "answered Blue")
+        await model.stop()
+    }
+
+    @Test func planModeSwitchesTheModeAndBack() async {
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(), flushInterval: .zero)
+        await model.start()
+        #expect(model.canUsePlanMode)
+        #expect(!model.isPlanMode)
+
+        await model.setPlanMode(true)
+        #expect(model.isPlanMode)
+        await model.setPlanMode(false)
+        #expect(model.option("mode")?.current == "default")
+        await model.stop()
+    }
+
+    @Test func aMessageKeepsItsFilesApartFromItsTextAndTheToolItsKind() async throws {
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(), flushInterval: .zero)
+        await model.start()
+        let file = try Fixtures.temporaryDirectory("files").appendingPathComponent("notes.md")
+        try "notes".write(to: file, atomically: true, encoding: .utf8)
+
+        async let sending: Void = model.send("look", attachments: [file])
+        try await waitForPermission(model)
+        #expect(model.turnStartedAt == model.items.first?.createdAt)
+        model.answerPermission(optionId: "allow")
+        await sending
+
+        #expect(model.items.first?.text == "look")
+        #expect(model.items.first?.attachments == [file.path])
+        #expect(model.items.last?.toolKind == "execute")
         await model.stop()
     }
 

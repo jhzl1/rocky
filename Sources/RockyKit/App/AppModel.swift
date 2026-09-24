@@ -51,7 +51,6 @@ public final class WorkspaceProcesses {
     public internal(set) var run: PTYSession?
     public internal(set) var archive: PTYSession?
     public internal(set) var terminals: [PTYSession] = []
-    @ObservationIgnored var nextTerminalNumber = 1
 
     /// Scripts first, then terminals: the order of the panel's tabs.
     public var all: [PTYSession] {
@@ -84,12 +83,33 @@ public final class AppModel {
     @ObservationIgnored public let paths: RockyPaths
     @ObservationIgnored private let captureEnvironment: @Sendable () throws -> [String: String]
     @ObservationIgnored private let makeLaunch: @Sendable (AgentKind, URL, [String: String], RockyPaths) throws -> AgentLaunch
-    @ObservationIgnored private let installAdapter: @Sendable (RockyPaths, [String: String]) throws -> Void
+    @ObservationIgnored private let installAdapter: @Sendable (AgentKind, String?, RockyPaths, [String: String]) throws -> Void
+    @ObservationIgnored private let latestVersion: @Sendable (String) async throws -> String
+    @ObservationIgnored private let defaults: UserDefaults
+    /// Rocky's agents: installed, newest on npm, tested. See `checkAgentUpdates`.
+    public private(set) var agentVersions: [AgentKind: AgentVersion] = [:]
+    public private(set) var lastAgentCheck: Date?
+    public private(set) var isCheckingAgents = false
+    public private(set) var updatingAgent: AgentKind?
+    public var agentUpdateError: String?
+    private static let lastAgentCheckKey = "lastAgentUpdateCheck"
+    /// The automatic check runs at most once a day.
+    public static let agentCheckInterval: TimeInterval = 24 * 60 * 60
     @ObservationIgnored private let secrets: SecretStore
     @ObservationIgnored private let terminalShell: @Sendable ([String: String]) -> (executable: String, arguments: [String])
     @ObservationIgnored private let processStopGracePeriod: Duration
-    /// Observed: views show the chat from here, so stopping one in the model shows Start again.
+    /// One chat per open conversation, keyed by `ChatSessionRecord.id`. Observed: views show chats from here.
+    /// Several conversations of a workspace can run at once, one per tab.
     private var chats: [String: ChatSessionModel] = [:]
+    @ObservationIgnored private var chatWorkspaceIds: [String: String] = [:]
+    /// Each workspace's open conversations, oldest first: its tabs.
+    public private(set) var conversations: [String: [ChatSessionRecord]] = [:]
+    /// The conversation each workspace shows.
+    public private(set) var selectedConversationIds: [String: String] = [:]
+    /// Files opened in tabs next to the conversations (from a file badge), by workspace. Kept only while Rocky runs.
+    public private(set) var openFiles: [String: [String]] = [:]
+    /// The file tab each workspace shows instead of its conversation; none shows the selected conversation.
+    public private(set) var selectedFiles: [String: String] = [:]
     /// Observed for the same reason as `chats`. Created only in actions, never while a view reads it.
     private var processes: [String: WorkspaceProcesses] = [:]
 
@@ -100,9 +120,11 @@ public final class AppModel {
         makeLaunch: @escaping @Sendable (AgentKind, URL, [String: String], RockyPaths) throws -> AgentLaunch = { kind, cwd, environment, paths in
             try AgentLauncher.launch(kind, cwd: cwd, environment: environment, adapterPrefix: paths.adapterPrefix, logsDirectory: paths.logs)
         },
-        installAdapter: @escaping @Sendable (RockyPaths, [String: String]) throws -> Void = { paths, environment in
-            try AgentLauncher.installClaudeAdapter(prefix: paths.adapterPrefix, environment: environment)
+        installAdapter: @escaping @Sendable (AgentKind, String?, RockyPaths, [String: String]) throws -> Void = { kind, version, paths, environment in
+            try AgentLauncher.install(kind, version: version, prefix: paths.adapterPrefix, environment: environment)
         },
+        latestVersion: @escaping @Sendable (String) async throws -> String = { try await AgentLauncher.latestVersion(of: $0) },
+        defaults: UserDefaults = .standard,
         secrets: SecretStore = KeychainSecretStore(),
         terminalShell: @escaping @Sendable ([String: String]) -> (executable: String, arguments: [String]) = { environment in
             (environment["SHELL"] ?? "/bin/zsh", ["-l"])
@@ -114,6 +136,9 @@ public final class AppModel {
         self.captureEnvironment = captureEnvironment
         self.makeLaunch = makeLaunch
         self.installAdapter = installAdapter
+        self.latestVersion = latestVersion
+        self.defaults = defaults
+        self.lastAgentCheck = defaults.object(forKey: Self.lastAgentCheckKey) as? Date
         self.secrets = secrets
         self.terminalShell = terminalShell
         self.processStopGracePeriod = processStopGracePeriod
@@ -127,8 +152,18 @@ public final class AppModel {
         repos.first { $0.id == id }
     }
 
+    /// The chat of the conversation the workspace shows.
     public func existingChat(workspaceId: String) -> ChatSessionModel? {
-        chats[workspaceId]
+        selectedConversationIds[workspaceId].flatMap { chats[$0] }
+    }
+
+    public func chat(conversationId: String) -> ChatSessionModel? {
+        chats[conversationId]
+    }
+
+    /// Whether an agent is working in any of the workspace's conversations (the sidebar's progress arc).
+    public func isAgentWorking(workspaceId: String) -> Bool {
+        chats.contains { chatWorkspaceIds[$0.key] == workspaceId && $0.value.state == .running }
     }
 
     public func workspace(id: String) -> Workspace? {
@@ -144,6 +179,9 @@ public final class AppModel {
     public func bootstrap() async {
         reload()
         await refreshEnvironment()
+        refreshInstalledAgentVersions()
+        // Once a day at most: one HTTPS request per agent, no timer.
+        Task { await checkAgentUpdates() }
     }
 
     /// Captures the login shell environment again (menu "Refresh Shell Environment"). Running processes keep the
@@ -188,8 +226,10 @@ public final class AppModel {
             return
         }
         // A running Claude chat keeps the instance it was started with; the next Start picks up the new one.
-        for workspace in workspaces[repoId] ?? [] where chats[workspace.id]?.agent == .claude {
-            await chats.removeValue(forKey: workspace.id)?.stop()
+        let repoWorkspaceIds = Set((workspaces[repoId] ?? []).map(\.id))
+        for (conversationId, workspaceId) in chatWorkspaceIds
+        where repoWorkspaceIds.contains(workspaceId) && chats[conversationId]?.agent == .claude {
+            await stopChat(conversationId: conversationId)
         }
     }
 
@@ -254,7 +294,7 @@ public final class AppModel {
     /// Forgets the repo in Rocky and deletes its secrets. Its folder and worktrees stay on disk.
     public func removeRepo(id: String) async {
         for workspace in workspaces[id] ?? [] {
-            await chats.removeValue(forKey: workspace.id)?.stop()
+            await stopChats(workspaceId: workspace.id)
             await processes.removeValue(forKey: workspace.id)?.stopAll()
         }
         do {
@@ -314,7 +354,7 @@ public final class AppModel {
     public func removeWorkspace(id: String, skipArchive: Bool = false) async {
         guard let workspace = self.workspace(id: id), let repo = repo(id: workspace.repoId) else { return }
         archiveFailure = nil
-        await chats.removeValue(forKey: id)?.stop()
+        await stopChats(workspaceId: id)
         await processes[id]?.stopAll()
         if !skipArchive {
             let archive: String?
@@ -358,79 +398,178 @@ public final class AppModel {
         }
     }
 
-    /// Returns the workspace's chat for `agent`, starting it and resuming that agent's last session.
-    public func openChat(workspace: Workspace, agent: AgentKind) async -> ChatSessionModel? {
-        guard let chat = await prepareChat(workspace: workspace, agent: agent) else { return nil }
-        await chat.start()
-        return chat
-    }
+    // MARK: Conversations
 
-    /// Shows the workspace's last conversation with `agent` without starting the agent: it starts when the
-    /// user sends the first message (spec Section 1: agents start only on user action).
-    @discardableResult
-    public func prepareChat(workspace: Workspace, agent: AgentKind) async -> ChatSessionModel? {
-        if let chat = chats[workspace.id], chat.agent == agent { return chat }
-        await chats.removeValue(forKey: workspace.id)?.stop()
-        do {
-            let record = try store.latestSession(workspaceId: workspace.id, agent: agent.rawValue)
-                ?? newSessionRecord(workspaceId: workspace.id, agent: agent)
-            return try await makeChat(workspace: workspace, agent: agent, record: record)
-        } catch {
-            errorMessage = "Could not open the \(agent.displayName) chat: \(error)"
-            return nil
+    /// Loads the workspace's tabs and shows the selected conversation (else the newest, else a new one). Its
+    /// agent starts in the background, so the model list is there and the first message does not wait; the
+    /// other tabs' agents start when their tab is shown (user decision, 2026-09-23).
+    public func showConversations(workspace: Workspace) async {
+        reloadConversations(workspaceId: workspace.id)
+        let open = conversations[workspace.id] ?? []
+        if let id = selectedConversationIds[workspace.id], open.contains(where: { $0.id == id }) {
+            await showConversation(workspace: workspace, conversationId: id)
+        } else if let newest = open.last {
+            await showConversation(workspace: workspace, conversationId: newest.id)
+        } else {
+            await newConversation(workspace: workspace, agent: .claude)
         }
     }
 
-    /// Stops the workspace's chat and opens an empty conversation with `agent`. Earlier ones stay in the store.
+    /// Switches the workspace to one of its tabs. The agent of the tab left behind keeps running.
+    public func showConversation(workspace: Workspace, conversationId: String) async {
+        selectedConversationIds[workspace.id] = conversationId
+        selectedFiles[workspace.id] = nil
+        if chats[conversationId] == nil {
+            guard let record = try? store.session(id: conversationId), let agent = AgentKind(rawValue: record.agent) else { return }
+            do {
+                try await makeChat(workspace: workspace, record: record, agent: agent)
+            } catch {
+                errorMessage = "Could not open the \(agent.displayName) conversation: \(error)"
+                return
+            }
+        }
+        startInBackground(chats[conversationId])
+    }
+
+    /// Opens a new tab with an empty conversation. Earlier ones stay open and running.
     @discardableResult
     public func newConversation(workspace: Workspace, agent: AgentKind) async -> ChatSessionModel? {
-        await chats.removeValue(forKey: workspace.id)?.stop()
         do {
-            return try await makeChat(workspace: workspace, agent: agent, record: newSessionRecord(workspaceId: workspace.id, agent: agent))
+            let record = ChatSessionRecord(workspaceId: workspace.id, agent: agent.rawValue)
+            try store.add(record)
+            reloadConversations(workspaceId: workspace.id)
+            selectedConversationIds[workspace.id] = record.id
+            selectedFiles[workspace.id] = nil
+            let chat = try await makeChat(workspace: workspace, record: record, agent: agent)
+            startInBackground(chat)
+            return chat
         } catch {
             errorMessage = "Could not start a new conversation: \(error)"
             return nil
         }
     }
 
-    /// The agent of the workspace's most recent conversation, so reopening shows the same one.
-    public func lastAgent(workspaceId: String) -> AgentKind? {
-        (try? store.latestSession(workspaceId: workspaceId)).flatMap { AgentKind(rawValue: $0.agent) }
+    /// Closes a tab: stops its agent and hides it. The conversation stays in the store.
+    public func closeConversation(workspace: Workspace, conversationId: String) async {
+        await stopChat(conversationId: conversationId)
+        if var record = try? store.session(id: conversationId) {
+            record.closedAt = Date()
+            try? store.update(record)
+        }
+        reloadConversations(workspaceId: workspace.id)
+        if selectedConversationIds[workspace.id] == conversationId {
+            selectedConversationIds[workspace.id] = nil
+            await showConversations(workspace: workspace)
+        }
     }
 
-    private func newSessionRecord(workspaceId: String, agent: AgentKind) throws -> ChatSessionRecord {
-        let record = ChatSessionRecord(workspaceId: workspaceId, agent: agent.rawValue)
-        try store.add(record)
-        return record
+    /// Opens `path` in a tab of the workspace, or shows its tab if it is already open.
+    public func openFile(workspaceId: String, path: String) {
+        var files = openFiles[workspaceId] ?? []
+        if !files.contains(path) { files.append(path) }
+        openFiles[workspaceId] = files
+        selectedFiles[workspaceId] = path
     }
 
-    private func makeChat(workspace: Workspace, agent: AgentKind, record: ChatSessionRecord) async throws -> ChatSessionModel {
+    public func showFile(workspaceId: String, path: String) {
+        guard openFiles[workspaceId]?.contains(path) == true else { return }
+        selectedFiles[workspaceId] = path
+    }
+
+    /// Closes a file tab; if it was on screen, the selected conversation comes back.
+    public func closeFile(workspaceId: String, path: String) {
+        openFiles[workspaceId]?.removeAll { $0 == path }
+        if selectedFiles[workspaceId] == path { selectedFiles[workspaceId] = nil }
+    }
+
+    /// Returns the workspace's last open conversation with `agent` (or a new one), started.
+    public func openChat(workspace: Workspace, agent: AgentKind) async -> ChatSessionModel? {
+        guard let chat = await prepareChat(workspace: workspace, agent: agent) else { return nil }
+        await chat.start()
+        return chat
+    }
+
+    /// Shows the workspace's last open conversation with `agent`, or a new one, without waiting for its agent.
+    @discardableResult
+    public func prepareChat(workspace: Workspace, agent: AgentKind) async -> ChatSessionModel? {
+        if let chat = existingChat(workspaceId: workspace.id), chat.agent == agent { return chat }
+        reloadConversations(workspaceId: workspace.id)
+        if let record = (conversations[workspace.id] ?? []).last(where: { $0.agent == agent.rawValue }) {
+            await showConversation(workspace: workspace, conversationId: record.id)
+            return chats[record.id]
+        }
+        return await newConversation(workspace: workspace, agent: agent)
+    }
+
+    private func startInBackground(_ chat: ChatSessionModel?) {
+        guard let chat, chat.state == .idle else { return }
+        Task { await chat.start() }
+    }
+
+    @discardableResult
+    private func makeChat(workspace: Workspace, record: ChatSessionRecord, agent: AgentKind) async throws -> ChatSessionModel {
         let current = self.workspace(id: workspace.id) ?? workspace
         let environment = self.environment(for: current)
         let launch = try await resolveLaunch(agent, cwd: URL(fileURLWithPath: current.path), environment: environment)
         let history = try store.messages(sessionId: record.id).map(ChatItem.init(record:))
         let store = self.store
+        let conversationId = record.id
+        let workspaceId = workspace.id
         let chat = ChatSessionModel(
             agent: agent,
             launch: launch,
             history: history,
             resumeSessionId: record.acpSessionId,
-            onPersist: { item in try? store.upsert(ChatMessageRecord(item: item, sessionId: record.id)) },
+            onPersist: { [weak self] item in
+                try? store.upsert(ChatMessageRecord(item: item, sessionId: conversationId))
+                if item.kind == .user { self?.titleIfNeeded(conversationId: conversationId, workspaceId: workspaceId, from: item.text) }
+            },
             onSessionReady: { sessionId in
-                guard sessionId != record.acpSessionId else { return }
-                var updated = record
-                updated.acpSessionId = sessionId
-                try? store.update(updated)
+                // Re-read: the stored record may have gained a title since this chat was made.
+                guard var stored = try? store.session(id: conversationId), stored.acpSessionId != sessionId else { return }
+                stored.acpSessionId = sessionId
+                try? store.update(stored)
             }
         )
-        chats[workspace.id] = chat
+        chats[conversationId] = chat
+        chatWorkspaceIds[conversationId] = workspaceId
         return chat
+    }
+
+    private func titleIfNeeded(conversationId: String, workspaceId: String, from text: String) {
+        guard var record = try? store.session(id: conversationId), record.title == nil else { return }
+        record.title = ChatSessionRecord.title(from: text)
+        try? store.update(record)
+        reloadConversations(workspaceId: workspaceId)
+    }
+
+    private func reloadConversations(workspaceId: String) {
+        var open = (try? store.openConversations(workspaceId: workspaceId)) ?? []
+        // Conversations saved before titles existed get one from their first message.
+        for index in open.indices where open[index].title == nil {
+            guard let first = try? store.firstUserMessage(sessionId: open[index].id) else { continue }
+            open[index].title = ChatSessionRecord.title(from: first)
+            try? store.update(open[index])
+        }
+        conversations[workspaceId] = open
+    }
+
+    private func stopChat(conversationId: String) async {
+        chatWorkspaceIds[conversationId] = nil
+        await chats.removeValue(forKey: conversationId)?.stop()
+    }
+
+    private func stopChats(workspaceId: String) async {
+        for (conversationId, owner) in chatWorkspaceIds where owner == workspaceId {
+            await stopChat(conversationId: conversationId)
+        }
     }
 
     /// Stops every chat's agent process.
     public func stopAllAgents() async {
         for chat in chats.values { await chat.stop() }
         chats.removeAll()
+        chatWorkspaceIds.removeAll()
     }
 
     /// Called before quitting, so no agent, terminal or script outlives Rocky.
@@ -457,7 +596,7 @@ public final class AppModel {
             return
         }
         guard let script = config.run else {
-            errorMessage = "\(workspace.name) has no run script. Add one in the repo settings or in conductor.json."
+            errorMessage = "\(workspace.name) has no run script. Add one in the repo settings or in rocky.json."
             return
         }
         let own = processesCreatingIfNeeded(for: workspaceId)
@@ -482,7 +621,8 @@ public final class AppModel {
         let environment = self.environment(for: workspace)
         let shell = terminalShell(environment)
         let session = PTYSession(
-            title: "\(URL(fileURLWithPath: shell.executable).lastPathComponent) \(own.nextTerminalNumber)",
+            // The panel numbers terminals by position: "Terminal 1", "Terminal 2"…
+            title: "Terminal",
             command: PTYCommand(
                 executable: shell.executable,
                 arguments: shell.arguments,
@@ -493,7 +633,6 @@ public final class AppModel {
             stopSignal: SIGHUP,
             stopGracePeriod: processStopGracePeriod
         )
-        own.nextTerminalNumber += 1
         own.terminals.append(session)
         session.start()
         return session
@@ -572,13 +711,74 @@ public final class AppModel {
         let paths = self.paths
         do {
             return try makeLaunch(agent, cwd, environment, paths)
-        } catch AgentLauncherError.adapterNotInstalled {
-            busyMessage = "Installing the Claude adapter (one time)…"
+        } catch AgentLauncherError.adapterNotInstalled(let kind) {
+            busyMessage = kind == .claude ? "Installing the Claude adapter (one time)…" : "Installing OpenCode (one time)…"
             defer { busyMessage = nil }
             let install = installAdapter
-            try await Task.detached { try install(paths, environment) }.value
+            try await Task.detached { try install(kind, nil, paths, environment) }.value
+            refreshInstalledAgentVersions()
             return try makeLaunch(agent, cwd, environment, paths)
         }
+    }
+
+    // MARK: Agent updates
+
+    /// Reads which versions of the agents are installed (package.json files, no process).
+    public func refreshInstalledAgentVersions() {
+        let prefix = paths.adapterPrefix
+        for kind in AgentKind.allCases {
+            var version = agentVersions[kind] ?? AgentVersion(installed: nil, tested: AgentLauncher.testedVersion(for: kind))
+            version.installed = AgentLauncher.installedVersion(kind, prefix: prefix)
+            version.claudeCode = kind == .claude ? AgentLauncher.bundledClaudeCodeVersion(prefix: prefix) : nil
+            agentVersions[kind] = version
+        }
+    }
+
+    /// Asks npm for the newest version of each agent: on its own at most once a day (at launch), or now with
+    /// `force`. It only checks; updating is `updateAgent`.
+    public func checkAgentUpdates(force: Bool = false) async {
+        if !force, let lastAgentCheck, Date().timeIntervalSince(lastAgentCheck) < Self.agentCheckInterval { return }
+        guard !isCheckingAgents else { return }
+        isCheckingAgents = true
+        defer { isCheckingAgents = false }
+        refreshInstalledAgentVersions()
+        let fetch = latestVersion
+        var failures: [String] = []
+        for kind in AgentKind.allCases {
+            do {
+                agentVersions[kind]?.latest = try await fetch(AgentLauncher.package(for: kind))
+            } catch {
+                failures.append(kind.displayName)
+            }
+        }
+        if failures.isEmpty {
+            let now = Date()
+            lastAgentCheck = now
+            defaults.set(now, forKey: Self.lastAgentCheckKey)
+            agentUpdateError = nil
+        } else {
+            agentUpdateError = "Could not reach npm for \(failures.joined(separator: " and "))."
+        }
+    }
+
+    /// Installs the newest version of an agent, or with `toTested` the one this build was tested with. New
+    /// conversations use it; open ones keep the version they started with until restarted.
+    public func updateAgent(_ kind: AgentKind, toTested: Bool = false) async {
+        guard updatingAgent == nil else { return }
+        let version = toTested ? AgentLauncher.testedVersion(for: kind) : agentVersions[kind]?.latest
+        guard let version else { return }
+        updatingAgent = kind
+        defer { updatingAgent = nil }
+        let install = installAdapter
+        let paths = self.paths
+        let environment = loginEnvironment
+        do {
+            try await Task.detached { try install(kind, version, paths, environment) }.value
+            agentUpdateError = nil
+        } catch {
+            agentUpdateError = "Could not install \(kind.displayName) \(version): \(error)"
+        }
+        refreshInstalledAgentVersions()
     }
 
     private func reload() {
@@ -600,6 +800,8 @@ extension ChatItem {
             kind: Kind(rawValue: record.kind) ?? .agent,
             text: record.text,
             status: record.status,
+            attachments: record.attachments ?? [],
+            toolKind: record.toolKind,
             createdAt: record.createdAt,
             completedAt: record.completedAt
         )
@@ -615,6 +817,8 @@ extension ChatMessageRecord {
             kind: item.kind.rawValue,
             text: item.text,
             status: item.status,
+            attachments: item.attachments.isEmpty ? nil : item.attachments,
+            toolKind: item.toolKind,
             createdAt: item.createdAt,
             completedAt: item.completedAt
         )
