@@ -31,10 +31,10 @@ Without the certificate the script signs ad hoc, and macOS asks again for each s
 
 - Terminal tabs (`+` in the bottom panel) open your login shell in the worktree.
 - Scripts: setup runs once when a workspace is created, run starts from the Run button, archive runs before a
-  workspace is removed. They come from `conductor.json` at the workspace root when it exists (`scripts.setup`,
+  workspace is removed. They come from `rocky.json` at the workspace root when it exists (`scripts.setup`,
   `scripts.run`, `scripts.archive`, `runScriptMode`), else from the repo settings.
 - Every agent, terminal and script gets the repo variables, `PORT` (the first of ten ports the workspace owns),
-  and `ROCKY_*` / `CONDUCTOR_*` variables: `WORKSPACE_NAME`, `WORKSPACE_PATH`, `ROOT_PATH`, `DEFAULT_BRANCH`, `PORT`.
+  and `ROCKY_*` variables: `WORKSPACE_NAME`, `WORKSPACE_PATH`, `ROOT_PATH`, `DEFAULT_BRANCH`, `PORT`.
 - Rocky → Refresh Shell Environment re-reads your login shell after you edit `~/.zshrc`. Running processes keep
   the environment they started with.
 

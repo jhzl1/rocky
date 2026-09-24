@@ -20,7 +20,8 @@ Taken with the user on 2026-09-23:
 
 Taken in this plan. Change them here, not during implementation:
 
-- Scripts come from `conductor.json` only (Conductor's legacy format, which the spec names). Conductor now prefers `.conductor/settings.toml`; reading it needs a TOML parser, and no repo uses scripts today (spec Evidence: the Conductor database has none configured).
+- *(Superseded 2026-09-23: Rocky reads its own `rocky.json` and exports no CONDUCTOR_* variable; see Changes during
+  implementation.)* Scripts come from `conductor.json` only (Conductor's legacy format, which the spec names). Conductor now prefers `.conductor/settings.toml`; reading it needs a TOML parser, and no repo uses scripts today (spec Evidence: the Conductor database has none configured).
 - `conductor.json` is read from the workspace root (the worktree), because the branch may change it. Conductor's docs do not say which copy they read.
 - When `conductor.json` exists it replaces all three scripts and the run mode; repo settings are ignored for that workspace, even for keys the file lacks.
 - Scripts run as `/bin/zsh -c <script>` in a PTY with cwd = worktree. That matches Conductor's docs: zsh, non-interactive, workspace directory.
@@ -39,15 +40,166 @@ Taken in this plan. Change them here, not during implementation:
 - Run modes: `concurrent` (default) and `nonconcurrent`. In `nonconcurrent`, Run first stops every other workspace's run script, in any repo.
 - Each session keeps its last 2 MB of output and replays it when a view attaches. Tabs exist only while Rocky runs; they are not persisted.
 
+## Changes during implementation (2026-09-23)
+
+Everything below was added or changed while M2 was built, at the user's request, beyond Tasks 1–10. It is the
+record of what the code does now; where it contradicts a line above or in the M1 plan, this section wins.
+
+### Rules that changed
+
+- **macOS 15 minimum** (was 14). Textual, the Markdown renderer the user chose, needs it; `Package.swift` and
+  `Info.plist` (`LSMinimumSystemVersion` 15.0) say so.
+- **Dependencies:** Textual 0.5.0 (`exact:`) joins GRDB 7.11.1 and SwiftTerm 1.20.0. They bring transitive
+  packages: swift-argument-parser (SwiftTerm), swift-concurrency-extras and swiftui-math (Textual). SwiftTerm's
+  Metal shader needs Xcode's Metal Toolchain component, installed with the user's approval.
+- **Builds during the work:** the user asked for the app to be rebuilt and relaunched after every change
+  (`scripts/make-app.sh`, then `open build/Rocky.app`), even while agents run. Tests are still written with each
+  change and run once, at the end, before the merge into `development`.
+- **Commits only when the user asks.** The commits made before that rule (up to `799f100`) stay as they are.
+- **Energy: the agent of the conversation on screen starts in the background** when its tab is shown, so the
+  model menu is ready without pressing anything (user decision, 2026-09-23). Other tabs start nothing until shown.
+  This replaces "processes start only on user action" for agents; terminals and scripts still start only on user
+  action.
+- **Rocky runs its own OpenCode** (user decision, 2026-09-23): `opencode-ai@1.18.32` (the newest published version),
+  installed with npm into `~/Library/Application Support/Rocky/agents` like the Claude adapter, the first time an
+  OpenCode conversation opens. It runs with `XDG_DATA_HOME` set to `~/Library/Application Support/Rocky/opencode-data`,
+  so its database, sessions and login are its own; the user's `auth.json` is copied there once (user decision). The
+  `opencode` on the PATH is no longer used. Cost: the tools OpenCode runs see that `XDG_DATA_HOME` too (a `pnpm`
+  run through OpenCode, for example, keeps its store there), and OpenCode sessions started in a terminal do not
+  show in Rocky.
+- **No Conductor compatibility** (user decision, 2026-09-23): Rocky exports only `PORT` and `ROCKY_*` variables, and
+  reads scripts from its own `rocky.json` (same shape as conductor.json) instead of `conductor.json`. This replaces
+  the Decisions above about `conductor.json` and the `CONDUCTOR_*` variables. No repo used either (doculift,
+  its bergen worktree and rocky were checked).
+- **Rocky draws all its menus itself**, in the model menu's style: a dark rounded panel, hairline border, rows lit
+  on hover, icon and shortcut per row (user decision, 2026-09-23). No `Menu` or `.contextMenu` from SwiftUI.
+
+### Bugs fixed
+
+- **A second agent never answered while another sat idle** ("Starting Claude Code…" forever). Every
+  `FileHandle.AsyncBytes` reads on one serial queue, `com.apple.Foundation.AsyncBytesIOActorQueue`, so an idle
+  agent's blocked read stopped every other agent's reads. `ACPConnection.start()` (M1 Task 3) now reads with a
+  `readabilityHandler` per pipe. Test: `ACPConnectionTests.anIdleAgentDoesNotBlockAnotherAgentsReplies`.
+- **SwiftPM resource bundles were missing from `Rocky.app`**, a latent `fatalError` in `Bundle.module`.
+  `scripts/make-app.sh` copies every `*.bundle` into `Contents/Resources`.
+- **A pasted file showed as blank space, then as a white box, in the message box.** Badges were first TextKit 2
+  attachment views; inside SwiftUI, TextKit made the view late or never, and drew its generic attachment image (the
+  white box) meanwhile. A badge is now the attachment's image (`FileBadgeLook` rendered when it is inserted), and
+  `ComposerTextView` handles its hover (X and preview) and clicks itself.
+- **A new terminal tab stayed blank.** SwiftUI built two views of the session and dismantled the second one, and a
+  session fed a single view, so the one on screen got nothing. `PTYSession` now feeds every attached view. Test:
+  `PTYSessionTests.dismantlingOneViewKeepsTheOtherFed`.
+- **Claude said the session was not interactive and could not ask questions.** `claude-agent-acp` removes
+  AskUserQuestion (`--disallowedTools AskUserQuestion`) unless the client declares
+  `clientCapabilities.elicitation.form` (`acp-agent.js:6013`). Rocky now declares it and answers
+  `elicitation/create` (see Chat below).
+- **Menus opened about 28 points away from their button** while the terminal panel was folded. Anchors were
+  measured in a named coordinate space on `RootView`, which sits under the title bar's safe area; views inside the
+  terminal split could not reach it and fell back to window coordinates, which is why that layout looked right.
+  Menus now measure in window coordinates (`.global`) everywhere.
+- **Blurry borders on a 1x screen:** borders use `strokeBorder` (inside the shape) instead of `stroke`, which
+  straddles the edge by half a point.
+
+### Chat and ACP (RockyKit)
+
+- Conversation tabs per workspace: `ChatSessionRecord.title` (from the first message) and `closedAt`; the model
+  keeps `chats` by conversation id, `conversations`, `selectedConversationIds`, `showConversation`,
+  `newConversation` and `closeConversation`. A closed tab stops its agent and keeps the conversation in the store.
+- Session settings: `configOptions` from `session/new` and `session/load` (model, effort, fast, mode), changed
+  with `session/set_config_option`; the older `models` field with `session/set_model`. `config_option_update` and
+  `current_mode_update` keep them in step when the agent changes them itself.
+- Plan mode: the `mode` option's `plan` choice, from the + menu or ⇧Tab; switching it off returns to the mode it
+  came from.
+- Attachments: images go inside the prompt (`image` block, up to 5 MB) when the agent accepts them, other files as
+  `resource_link`. A message marks where each file sits with U+FFFC (`PromptAttachment.marker`), and the prompt keeps
+  that order.
+- Tool calls keep ACP's `kind`, the files in `locations`, and later updates of title, kind and files. Claude's
+  AskUserQuestion gets kind `question`.
+- Agent questions: `elicitation/create` forms become `AgentQuestionRequest` (`question_<n>` fields, options,
+  multi-select, "Other" text); the answer goes back as `accept`, `decline` (Skip) or `cancel` (turn stopped).
+- The time each turn ends (`ChatItem.completedAt`) and when it started (`turnStartedAt`).
+- Store migrations: v3 `chatMessage.completedAt`; v4 `chatSession.title`, `closedAt`; v5 `chatMessage.attachments`
+  (JSON array of paths), `toolKind`.
+- File tabs: `AppModel.openFiles`, `selectedFiles`, `openFile`, `showFile`, `closeFile`. Kept only while Rocky runs.
+
+### Interface (RockyUI), interim until M2.5
+
+- Window: hidden title bar, full-height sidebar panel with the window buttons, hairline divider, background
+  #23272E and sidebar #1E2127, dark only.
+- App icon and empty state: the beagle logo with rounded corners (`scripts/make-icon.swift` → `Rocky.icns`,
+  `Icons/rocky.png`). Claude and OpenCode logos on tabs, menus and reply footers.
+- Loading: a Material-style arc (`CircularProgress`, white). While a turn runs the conversation shows only the arc
+  and the elapsed time ("1m 5s"); the sidebar row shows the arc.
+- Replies: Markdown through Textual, styled like Conductor (headings, lists, code blocks with language and Copy,
+  tables), inline code as a bordered badge (`InlineCodeAttachment`), a footer per turn (agent, duration, time,
+  Copy).
+- Activity rows like Conductor's: an icon per tool kind, a short label ("Read image", "Edit", "Run", "Load
+  skill", "User input") and badges for files, commands, thoughts and status (FAILED, ANSWERED). Consecutive tool
+  calls fold into "N tool calls"; thinking shows its first line and opens on click.
+- Message box: floats over the conversation (opaque, shadow), text with files inside it as badges
+  (`ComposerTextView`; each file is a `FileAttachment` drawn as an image of `FileBadgeLook`). Return sends, Shift-Return starts a line, ⇧Tab
+  switches plan mode, ⌘U attaches, paste and drop add files where the text is.
+- Model menu (models with detail, effort chips, fast switch) and the + menu (Add attachment, Plan mode); the tabs'
+  + (new Claude Code or OpenCode conversation); the repo menu and the workspace's right-click menu. All drawn by
+  `MenuPresenter` and `MenuHost`.
+- File badges: icon colored by file type, name; hover shows a preview (`FilePreviewPanel`: the image, the first
+  lines of a text file, or icon and size); click opens the file in a tab of the workspace (`FileTabView`: image,
+  rendered Markdown, monospaced text, or Quick Look). The badges of tool calls (files the agent read or edited) open
+  the same way, which is where a later "see what the agent changed" belongs.
+- The agent's questions show in a card above the message box, one question at a time: a step per question (its
+  header) at the top, options (radio or checkboxes), an "Other" box, Skip, Back, Next and Submit on the last. Picking
+  a single-choice option moves on.
+- Zoom, like a browser's: View ▸ Zoom In (⌘+, also ⌘=), Zoom Out (⌘-), Actual Size (⌘0), with the current
+  percentage in the menu; steps from 80% to 180%, remembered (`zoom`). `Zoom` scales every font (`Font.rocky`) and
+  the sizes that hold text: badges, inline code, menus, the reading column, icons, the message box and the terminal
+  font. It does not scale the rendered window: a scaled AppKit view stopped receiving clicks near its edges
+  (`hitTest` returned the hosting view in a test).
+- Rocky ▸ Settings… (⌘,), a settings window for what applies to the whole app: zoom, folding the terminal panel,
+  the terminal font, refreshing the login shell environment, the Claude adapter and OpenCode paths, and where the
+  database and logs are (each path opens in Finder).
+- Scroll bars are the overlay kind everywhere (knob only, while scrolling), whatever System Settings says: Rocky
+  sets `AppleShowScrollBars` to `WhenScrolling` in its own defaults at launch.
+- Agent updates: Settings ▸ Agents shows each agent's installed, newest and tested version (and the Claude Code
+  version the adapter bundles), with Update and "Use <tested>" buttons and Check Now. Rocky asks the npm registry
+  over HTTPS once a day on its own, at launch or when Settings opens (`lastAgentUpdateCheck`), and never updates
+  without a click. A copy older than the tested version is reinstalled at launch, so raising
+  `claudeAdapterVersion` or `openCodeVersion` reaches an existing install. On 2026-09-23 npm had the adapter
+  0.81.1 (Rocky tests 0.81.0, which bundles Claude Code 2.1.280) and OpenCode 1.18.32.
+- The model menu searches when an agent has more than eight models (OpenCode lists every provider's): a search
+  field focused on open, models grouped by provider (`ModelGroup`), a list that scrolls, Return picks the first
+  match.
+- Message history in the message box, like a shell's (`MessageHistory`): with the box empty, ↑ brings back the
+  conversation's last message (its files as badges where they were), ↑ again the one before, ↓ forward to an empty
+  box. It browses only while the box shows a message untouched and the cursor is on the first line (↑) or the last
+  (↓); otherwise the arrows move the cursor.
+- The message box and the question card reach 14 points past the conversation's column on each side, so their
+  text lines up with the conversation's.
+- Terminal tabs are named "Terminal 1", "Terminal 2"… by position, so the numbers run from 1 to the number of
+  terminals; scripts keep Setup, Run and Archive.
+- The terminal panel folds to its bar and back (chevron in the bar, ⌘J) without stopping its terminals or scripts;
+  choosing a tab, opening a terminal or Run unfolds it. The choice is remembered (`terminalPanelCollapsed`).
+
+### Known issues
+
+- **Fixed: OpenCode failed in repos that Conductor opened** (`Agent exited (1). no such column: project_id`).
+  Conductor ships its own OpenCode (2.0.5, unreleased on npm) and migrated the shared database
+  `~/.local/share/opencode/opencode.db`: its `workspace` table became `(id, provider, binding, created_at,
+  last_used_at)`, while 1.18.x expects `project_id` and five more columns. Rocky's own OpenCode with its own data
+  folder (see Rules that changed) starts in the `bergen` worktree; checked by hand with 1.18.32.
+- **The chat's scroll bar grew and shrank while scrolling:** a `LazyVStack` guesses the height of rows it has not
+  drawn. The conversation is now a plain `VStack`, and unchanged rows skip their body (`ChatItemRow` is
+  `Equatable`).
+- The manual checklist of Task 10 and the energy measurement have not run yet.
+
 ## Global constraints
 
-- macOS 14.0 minimum, Swift 6 language mode, Xcode 27.0 active.
-- Dependencies: GRDB 7.11.1 and SwiftTerm 1.20.0, both `exact:`. Nothing else.
+- macOS 14.0 minimum, Swift 6 language mode, Xcode 27.0 active. *(Now macOS 15: see Changes during implementation.)*
+- Dependencies: GRDB 7.11.1 and SwiftTerm 1.20.0, both `exact:`. Nothing else. *(Textual 0.5.0 added: see Changes during implementation.)*
 - Branch: create `feat/m2-terminal-scripts-env` from `development` after this plan is merged into it. Never commit on `development`. There is no remote: never add one, never push. The work lands by merging into `development` at the end of Task 10, only with the user's approval.
-- No `swift build` and no `swift test` before Task 10. `swift package resolve` in Task 1 is allowed: it resolves without compiling.
+- No `swift build` and no `swift test` before Task 10. `swift package resolve` in Task 1 is allowed: it resolves without compiling. *(The user later asked for a rebuild after every change; tests still run once at the end.)*
 - Commits: Conventional Commits, lowercase imperative, no `Co-Authored-By` or AI attribution line. Never `--no-verify`.
 - Shell: use `bat`, `eza`, `rg`, `fd`, `sd` (this machine blocks `cat`, `ls`, `grep`, `find`, `sed` in agent shells).
-- Energy (spec Section 1): no timers that poll. Processes start only on user action; creating a workspace counts for its setup script. PTY output is event-driven (DispatchIO).
+- Energy (spec Section 1): no timers that poll. Processes start only on user action; creating a workspace counts for its setup script. PTY output is event-driven (DispatchIO). *(Exception since 2026-09-23: the agent of the conversation on screen starts in the background.)*
 - All code, comments, identifiers and UI copy in English.
 - Manual tests use personal repos only (`~/Documents/dev/personal/rocky`). M1 was tested against `~/Documents/dev/rentek/doculift`; do not repeat that.
 
@@ -436,7 +588,7 @@ The only task that compiles or runs tests. It runs once all code from Tasks 1–
 
      Then Save.
   2. New Workspace → the Setup tab shows `setup on 41xxx` and `Exited 0`.
-  3. Open a terminal with `+`. `pwd` → the worktree path. `echo $ROCKY_DEMO $ROCKY_SECRET $CONDUCTOR_PORT` → `hello s3cret 41xxx`.
+  3. Open a terminal with `+`. `pwd` → the worktree path. `echo $ROCKY_DEMO $ROCKY_SECRET $ROCKY_PORT` → `hello s3cret 41xxx`. *(Was `$CONDUCTOR_PORT` before Rocky dropped Conductor's names.)*
   4. Run → the Run tab shows `Serving HTTP on … port 41xxx`. In the terminal, `curl -sI localhost:$PORT | head -1` → `HTTP/1.0 200 OK`. Stop → `Stopped by signal 15`.
   5. `sqlite3 -readonly ~/Library/Application\ Support/Rocky/rocky.sqlite "SELECT name, value, isSecret FROM repoVar"` → `ROCKY_SECRET` has an empty value. Searching `Rocky:` in Keychain Access shows it.
   6. Run again, open a terminal, and quit with ⌘Q. Then `pgrep -fl http.server` → no output.
@@ -445,6 +597,9 @@ The only task that compiles or runs tests. It runs once all code from Tasks 1–
   9. Energy at rest: leave Rocky idle for 30 min, then `scripts/energy-report.sh 30` → `processes_per_min` below 5.
 - [ ] **Step 5:** Write `docs/superpowers/m2-verification.md` with:
   - The date and the `swift test` summary line.
+  - A pointer to "Changes during implementation", and a manual check of what it added: conversation tabs, the model
+    and + menus, plan mode, a pasted image inside the message box and in the sent message, a file badge's hover
+    preview and file tab, an agent question answered in its card.
   - Each item as pass, fail or not run, with the literal output for items 3, 5 and 6.
   - The energy report output.
   - Known issues, with the exact error text.

@@ -29,6 +29,11 @@ Per-repo env var override is included; low priority.
 - v1 scope: chat + worktrees, diff + comments + PR, integrated terminal, setup/run/archive scripts.
 - Toolchain: full Xcode 27.0 (build 27A266a), chosen for SwiftUI previews, XCTest/swift-testing and Instruments; active via `xcode-select`.
 - Codex is deferred to after M1: M1 ships OpenCode and Claude Code only. Codex requires a login (API key or ChatGPT) and its env propagation is still unverified.
+- macOS 15 minimum (2026-09-23): agent replies render with Textual 0.5.0, which needs it.
+- Rocky draws its own menus, all in one style, instead of the system's (2026-09-23).
+- Rocky tells the agent it can show forms (`clientCapabilities.elicitation.form`), so Claude keeps AskUserQuestion and asks in a card in the conversation (2026-09-23).
+- Rocky installs and runs its own copy of each agent (2026-09-23): the Claude adapter and OpenCode (`opencode-ai@1.18.32`), in `~/Library/Application Support/Rocky/agents`. OpenCode keeps its own data in `~/Library/Application Support/Rocky/opencode-data`, because Conductor's unreleased OpenCode 2.0.5 migrated the shared `~/.local/share/opencode` database beyond what published versions read.
+- What M2 added beyond its plan is recorded in `docs/superpowers/plans/2026-09-23-m2-terminal-scripts-env.md`, section "Changes during implementation".
 
 ## Section 1 — Architecture and energy rules
 One app process. Child processes only for: one ACP agent per active session, one PTY per terminal tab.
@@ -43,6 +48,9 @@ One app process. Child processes only for: one ACP agent per active session, one
 Success criterion: at rest, fewer than 5 app-spawned processes per minute (excluding agent tool calls),
 measured from `CurrentPowerlog.PLSQL`.
 
+Exception (user decision, 2026-09-23): the agent of the conversation on screen starts in the background when its
+tab is shown, so its settings are ready without a click. Hidden tabs start nothing until they are shown.
+
 ## Section 2 — GitHub account per repo
 1. Accounts come from `gh`: `gh auth token --user <login>` once per account at launch, kept in memory.
    Account = `ghLogin`, `gitName`, `gitEmail`, optional `sshKey`, `claudeConfigDir`.
@@ -56,7 +64,8 @@ measured from `CurrentPowerlog.PLSQL`.
 1. Create: `git fetch`, then `git worktree add <repo>/../<repo>-worktrees/<name> -b <branch> origin/<default>`.
    Auto-generated name, renamable.
 2. Scripts: setup once on create; run button (concurrent mode); archive before removal.
-   Read from `conductor.json` in the repo if present, else repo settings in Rocky.
+   Read from `rocky.json` at the workspace root if present, else repo settings in Rocky. (It was `conductor.json`
+   until 2026-09-23, when Rocky dropped Conductor compatibility: no `conductor.json`, no `CONDUCTOR_*` variables.)
 3. Env layers (later wins): cached login env < repo vars (secrets in Keychain) < account vars.
 4. Each workspace gets its own base `PORT`.
 5. Terminal: SwiftTerm, one per tab, `cwd` = worktree, same env.

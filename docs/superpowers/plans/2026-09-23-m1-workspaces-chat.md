@@ -14,6 +14,14 @@
 
 **Tests and builds run once, in Task 12.** Tasks 1–11 write code and tests and commit them without compiling or running anything. Task 12 builds the package, runs the whole suite, and fixes what breaks, right before the branch is merged into `development`. If a build error appears there, fix it in the smallest way that keeps the task's interfaces and tests, and note it in the task report.
 
+## Changed after M1
+
+M2 changed parts of this plan's code: the ACP reader (Task 3) no longer uses `FileHandle.bytes`, which stalled
+every agent behind an idle one; chats became conversation tabs that start in the background; the protocol gained
+session settings, attachments, tool kinds and agent questions; the store gained migrations v3 to v5; the minimum
+is macOS 15. The full list, with the decisions behind it, is in
+`docs/superpowers/plans/2026-09-23-m2-terminal-scripts-env.md`, section "Changes during implementation".
+
 ## Global Constraints
 
 - macOS 14.0 minimum; Swift tools 6.0, Swift 6 language mode; Xcode 27.0 is the active developer dir (`xcode-select -p` → `/Applications/Xcode.app/Contents/Developer`).
