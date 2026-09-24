@@ -1,0 +1,63 @@
+{
+  "data": {
+    "repository": {
+      "id": "R_kgDOrepo",
+      "squashMergeAllowed": true,
+      "rebaseMergeAllowed": true,
+      "mergeCommitAllowed": false,
+      "viewerDefaultMergeMethod": "SQUASH",
+      "defaultBranchRef": { "name": "development" },
+      "pullRequests": {
+        "nodes": [
+          {
+            "id": "PR_kwDOpr4512",
+            "number": 4512,
+            "url": "https://github.com/jhzl1/rocky/pull/4512",
+            "title": "Queue messages while the agent works",
+            "body": "Adds the message queue.",
+            "isDraft": false,
+            "state": "MERGED",
+            "mergedAt": "2026-09-22T18:30:00Z",
+            "baseRefName": "development",
+            "headRefName": "rocky/lisbon",
+            "headRefOid": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c",
+            "mergeable": "UNKNOWN",
+            "mergeStateStatus": "UNKNOWN",
+            "reviewDecision": "APPROVED",
+            "canBeRebased": false,
+            "reviewRequests": { "totalCount": 0 },
+            "autoMergeRequest": null,
+            "mergeQueueEntry": null,
+            "commits": {
+              "nodes": [
+                {
+                  "commit": {
+                    "statusCheckRollup": {
+                      "contexts": {
+                        "nodes": [
+                          {
+                            "__typename": "CheckRun",
+                            "name": "build",
+                            "status": "COMPLETED",
+                            "conclusion": "SUCCESS",
+                            "startedAt": "2026-09-22T18:00:00Z",
+                            "completedAt": "2026-09-22T18:00:45Z",
+                            "detailsUrl": "https://github.com/jhzl1/rocky/actions/runs/880/job/6901",
+                            "databaseId": 6901,
+                            "checkSuite": { "workflowRun": { "databaseId": 880 } }
+                          }
+                        ]
+                      }
+                    },
+                    "deployments": { "nodes": [] }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "ref": { "compare": { "aheadBy": 0, "behindBy": 4 } }
+    }
+  }
+}

@@ -5,13 +5,20 @@ import Testing
 
 @MainActor
 struct AppModelProcessTests {
-    private func makeModel(secrets: InMemorySecretStore = InMemorySecretStore(), launches: LaunchBox = LaunchBox()) throws -> AppModel {
+    /// Tests never run the real `gh`: by default it has no account and no repository is on GitHub.
+    private func makeModel(
+        secrets: InMemorySecretStore = InMemorySecretStore(),
+        launches: LaunchBox = LaunchBox(),
+        capture: @escaping @Sendable () throws -> [String: String] = { GitFixture.environment },
+        gh: FakeGH = FakeGH(status: #"{"hosts":{}}"#),
+        remotes: FakeRemotes = FakeRemotes()
+    ) throws -> AppModel {
         let root = try Fixtures.temporaryDirectory("app")
         let paths = RockyPaths(database: root.appendingPathComponent("rocky.sqlite"), adapterPrefix: root.appendingPathComponent("agents"), logs: root)
         return AppModel(
             store: try RockyStore.inMemory(),
             paths: paths,
-            captureEnvironment: { GitFixture.environment },
+            captureEnvironment: capture,
             makeLaunch: { _, cwd, environment, _ in
                 launches.record(environment)
                 let fake = Fixtures.fakeACPLaunch()
@@ -23,19 +30,22 @@ struct AppModelProcessTests {
             secrets: secrets,
             // `-f` skips the rc files, so the tests do not depend on this machine's shell setup.
             terminalShell: { _ in ("/bin/zsh", ["-f"]) },
-            processStopGracePeriod: .milliseconds(500)
+            processStopGracePeriod: .milliseconds(500),
+            runGH: { arguments, environment in try gh.run(arguments, environment: environment) },
+            lookUpGitHubRepository: { clone, environment in remotes.lookUp(clone, environment) },
+            githubSession: OfflineURLProtocol.session()
         )
     }
 
     /// Adds a fixture repo (optionally committing extra files) and returns its id.
     private func addRepo(_ model: AppModel, committing files: [String: String] = [:]) async throws -> String {
         await model.bootstrap()
-        let repo = try GitFixture.localRepo(in: try Fixtures.temporaryDirectory("repos"))
+        let repo = try await GitFixture.localRepoOffMain(in: try Fixtures.temporaryDirectory("repos"))
         for (name, content) in files {
             try Data(content.utf8).write(to: repo.appendingPathComponent(name))
-            try GitFixture.git(["add", name], in: repo)
+            try await GitFixture.gitOffMain(["add", name], in: repo)
         }
-        if !files.isEmpty { try GitFixture.git(["commit", "-q", "-m", "add files"], in: repo) }
+        if !files.isEmpty { try await GitFixture.gitOffMain(["commit", "-q", "-m", "add files"], in: repo) }
         await model.addRepo(at: repo)
         return try #require(model.repos.first?.id)
     }
@@ -154,7 +164,7 @@ struct AppModelProcessTests {
         #expect(try model.store.repoVars(repoId: repoId).first { $0.name == "API_TOKEN" }?.value == nil)
         #expect(try secrets.read(account: "\(repoId)/API_TOKEN") == "s3cret")
 
-        let terminal = try #require(model.openTerminal(workspaceId: workspace.id))
+        let terminal = try #require(await model.openTerminal(workspaceId: workspace.id))
         terminal.send(#"printf '<%s>' "$API_TOKEN"; exit"# + "\n")
         #expect(await terminal.waitForExit() == .exited(0))
         try await waitUntil { terminal.outputText.contains("<s3cret>") }
@@ -170,12 +180,62 @@ struct AppModelProcessTests {
         await model.createWorkspace(repoId: repoId)
         let workspace = try #require(model.workspaces[repoId]?.first)
         await model.startRun(workspaceId: workspace.id)
-        let terminal = try #require(model.openTerminal(workspaceId: workspace.id))
+        let terminal = try #require(await model.openTerminal(workspaceId: workspace.id))
         let run = try #require(model.existingProcesses(for: workspace.id)?.run)
 
         await model.stopAllProcesses()
         #expect(!run.state.isRunning)
         #expect(!terminal.state.isRunning)
+    }
+
+    /// ENV-01: two repositories bound to two accounts of gh; an agent, a script and a terminal each get their
+    /// repository's token as GH_TOKEN over the login shell's. gh itself never sees the shell's token, each token is
+    /// fetched once, and none reaches the store.
+    @Test func terminalsScriptsAndAgentsGetTheRepoAccountToken() async throws {
+        let gh = FakeGH(tokens: ["jhzl1": "gho_personal", "ocampos-biai": "gho_work"])
+        let launches = LaunchBox()
+        let remotes = FakeRemotes([
+            "alpha": GitHubRepository(owner: "jhzl1", name: "alpha"),
+            "beta": GitHubRepository(owner: "ocampos-biai", name: "beta"),
+        ])
+        let model = try makeModel(
+            launches: launches,
+            capture: { GitFixture.environment.merging(["GH_TOKEN": "gho_shell", "GITHUB_TOKEN": "ghp_shell"]) { _, new in new } },
+            gh: gh,
+            remotes: remotes
+        )
+        await model.bootstrap()
+        let parent = try Fixtures.temporaryDirectory("repos")
+        await model.addRepo(at: try await GitFixture.localRepoOffMain(in: parent, name: "alpha"))
+        await model.addRepo(at: try await GitFixture.localRepoOffMain(in: parent, name: "beta"))
+        let alphaId = try #require(model.repos.first { $0.name == "alpha" }?.id)
+        let betaId = try #require(model.repos.first { $0.name == "beta" }?.id)
+        model.setScripts(repoId: betaId, setup: "", run: #"printf '%s' "$GH_TOKEN" > run-token.txt"#, archive: "", runMode: .concurrent)
+        await model.createWorkspace(repoId: alphaId)
+        await model.createWorkspace(repoId: betaId)
+        let alpha = try #require(model.workspaces[alphaId]?.first)
+        let beta = try #require(model.workspaces[betaId]?.first)
+
+        _ = await model.openChat(workspace: alpha, agent: .opencode)
+        #expect(launches.last?["GH_TOKEN"] == "gho_personal")
+
+        await model.startRun(workspaceId: beta.id)
+        let run = try #require(model.existingProcesses(for: beta.id)?.run)
+        #expect(await run.waitForExit() == .exited(0))
+        #expect(try String(contentsOfFile: beta.path + "/run-token.txt", encoding: .utf8) == "gho_work")
+
+        let terminal = try #require(await model.openTerminal(workspaceId: alpha.id))
+        terminal.send(#"printf '<%s>' "$GH_TOKEN"; exit"# + "\n")
+        #expect(await terminal.waitForExit() == .exited(0))
+        try await waitUntil { terminal.outputText.contains("<gho_personal>") }
+
+        #expect(!gh.environments.isEmpty)
+        #expect(gh.environments.allSatisfy { $0["GH_TOKEN"] == nil && $0["GITHUB_TOKEN"] == nil && $0["PATH"] != nil })
+        #expect(gh.tokenCalls(for: "jhzl1") == 1)
+        #expect(gh.tokenCalls(for: "ocampos-biai") == 1)
+        let stored = "\(try model.store.repos())\(try model.store.workspaces(repoId: alphaId))\(try model.store.workspaces(repoId: betaId))"
+        #expect(!stored.contains("gho_"))
+        await model.stopAllProcesses()
     }
 
     @Test func rejectsInvalidVariableNames() async throws {

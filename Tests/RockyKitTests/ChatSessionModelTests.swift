@@ -218,7 +218,32 @@ struct ChatSessionModelTests {
         #expect(model.state == .ready)
         #expect(model.queue.map(\.text) == ["second"])
         #expect(model.isQueueHeld)
+        #expect(model.items.last?.kind == .interrupted)
         #expect(model.items.filter { $0.kind == .user }.map(\.text) == ["first"])
+        await model.stop()
+    }
+
+    @Test func stoppingATurnEndsItWithInterruptedByUser() async throws {
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(), flushInterval: .zero)
+        await model.start()
+        async let sending: Void = model.send("hi")
+        try await waitForPermission(model)
+        await model.cancel()
+        await sending
+        #expect(model.items.last?.kind == .interrupted)
+        #expect(model.items.last?.text == "Interrupted by user")
+        #expect(model.items.filter { $0.kind == .error }.isEmpty)
+        await model.stop()
+    }
+
+    @Test func aTurnNobodyStoppedHasNoInterruptedMark() async throws {
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(), flushInterval: .zero)
+        await model.start()
+        async let sending: Void = model.send("hi")
+        try await waitForPermission(model)
+        model.answerPermission(optionId: "allow")
+        await sending
+        #expect(!model.items.contains { $0.kind == .interrupted })
         await model.stop()
     }
 

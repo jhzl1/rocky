@@ -59,6 +59,16 @@ struct ScriptConfigTests {
         #expect(withoutFile.links == [".venv", ".vscode/*"])
     }
 
+    /// A default turned off ("!<pattern>") in either place reaches the linker, merged like any other link.
+    @Test func negationsFromTheRepoSettingAndTheFileAddUp() throws {
+        let repo = Repo(name: "app", path: "/r/app", linkedPaths: "!.env\n.venv")
+        let config = try ScriptConfigResolver.resolve(
+            workspace: try workspace(rockyJSON: #"{"links":[" !.envrc ", "!.env"]}"#),
+            repo: repo
+        )
+        #expect(config.links == ["!.env", ".venv", "!.envrc"])
+    }
+
     @Test func rejectsInvalidJSON() throws {
         let url = try workspace(rockyJSON: "{ not json")
         #expect(throws: ScriptConfigError.self) {

@@ -44,6 +44,8 @@ public actor ACPConnection {
     private var pending: [Int: CheckedContinuation<JSONValue, Error>] = [:]
     private var nextID = 1
     private var exitError: ACPConnectionError?
+    /// Finishes when the agent has exited; see `finish()`.
+    private let exited: AsyncStream<Void>
 
     public init(executable: URL, arguments: [String], environment: [String: String], cwd: URL, stderrLog: URL) throws {
         _ = Self.ignoreSIGPIPE
@@ -59,6 +61,10 @@ public actor ACPConnection {
         process.standardOutput = stdoutPipe
         // stderr goes to a file: an unread pipe fills at 64 KB and blocks the agent.
         process.standardError = try FileHandle(forWritingTo: stderrLog)
+        // Set before `run()`, so an agent that exits at once is still reported.
+        let (exited, exitContinuation) = AsyncStream<Void>.makeStream()
+        process.terminationHandler = { _ in exitContinuation.finish() }
+        self.exited = exited
         self.process = process
         self.stdin = stdinPipe.fileHandleForWriting
         self.stdout = stdoutPipe.fileHandleForReading
@@ -155,7 +161,10 @@ public actor ACPConnection {
 
     private func finish() async {
         if process.isRunning { process.terminate() }
-        process.waitUntilExit()
+        // Not `waitUntilExit()`: called here, after the agent had closed its stdout, it sometimes never returned
+        // although `isRunning` was already false. It held this actor and a cooperative thread for good, and
+        // `swift test --no-parallel` hung behind it (2026-09-24).
+        for await _ in exited {}
         let log = (try? String(contentsOf: stderrLog, encoding: .utf8)) ?? ""
         let error = ACPConnectionError.agentExited(status: process.terminationStatus, stderrTail: String(log.suffix(2000)))
         exitError = error

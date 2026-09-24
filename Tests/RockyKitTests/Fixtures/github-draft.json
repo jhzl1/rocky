@@ -1,0 +1,42 @@
+{
+  "data": {
+    "repository": {
+      "id": "R_kgDOrepo",
+      "squashMergeAllowed": true,
+      "rebaseMergeAllowed": true,
+      "mergeCommitAllowed": true,
+      "viewerDefaultMergeMethod": "MERGE",
+      "defaultBranchRef": { "name": "development" },
+      "pullRequests": {
+        "nodes": [
+          {
+            "id": "PR_kwDOpr4526",
+            "number": 4526,
+            "url": "https://github.com/jhzl1/rocky/pull/4526",
+            "title": "WIP: sidebar glyphs",
+            "body": "",
+            "isDraft": true,
+            "state": "OPEN",
+            "mergedAt": null,
+            "baseRefName": "development",
+            "headRefName": "rocky/oslo",
+            "headRefOid": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+            "mergeable": "UNKNOWN",
+            "mergeStateStatus": "CLEAN",
+            "reviewDecision": null,
+            "canBeRebased": false,
+            "reviewRequests": { "totalCount": 0 },
+            "autoMergeRequest": null,
+            "mergeQueueEntry": null,
+            "commits": {
+              "nodes": [
+                { "commit": { "statusCheckRollup": null, "deployments": { "nodes": [] } } }
+              ]
+            }
+          }
+        ]
+      },
+      "ref": { "compare": { "aheadBy": 1, "behindBy": 0 } }
+    }
+  }
+}

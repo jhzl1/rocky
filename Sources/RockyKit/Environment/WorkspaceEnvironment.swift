@@ -43,17 +43,22 @@ public enum WorkspaceEnvironment {
     /// load another Claude instance's hooks (M0 finding); the repo setting decides it instead.
     public static let strippedKeys: Set<String> = ["CLAUDE_CONFIG_DIR", "PWD", "OLDPWD", "SHLVL", "_"]
 
-    /// Layers, later wins (spec Section 3): login shell < workspace variables < repo variables.
+    /// Layers, later wins (spec Section 3): login shell < workspace variables < repo variables < the GitHub
+    /// account's `GH_TOKEN` (`ENV-01`). Without a token, a `GH_TOKEN` of the shell or of a repo variable stays.
     /// CLAUDE_CONFIG_DIR comes only from the repo setting, never from the shell or a repo variable.
     public static func make(
         login: [String: String],
         workspace: WorkspaceContext? = nil,
+        githubToken: String? = nil,
         repoVariables: [String: String] = [:],
         claudeConfigDir: String?
     ) -> [String: String] {
         var environment = login.filter { !strippedKeys.contains($0.key) }
         environment.merge(workspace?.variables ?? [:]) { _, new in new }
         environment.merge(repoVariables.filter { $0.key != "CLAUDE_CONFIG_DIR" }) { _, new in new }
+        if let githubToken, !githubToken.isEmpty {
+            environment["GH_TOKEN"] = githubToken
+        }
         if let claudeConfigDir, !claudeConfigDir.isEmpty {
             environment["CLAUDE_CONFIG_DIR"] = claudeConfigDir
         }

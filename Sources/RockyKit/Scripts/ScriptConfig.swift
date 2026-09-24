@@ -21,7 +21,8 @@ public struct ScriptConfig: Equatable, Sendable {
     public var archive: String?
     public var runMode: RunScriptMode
     public var source: Source
-    /// Extra paths or globs `WorktreeLinker` links into a new workspace: the repo setting's, then rocky.json's.
+    /// Extra paths or globs `WorktreeLinker` links into a new workspace, and `!<pattern>` entries turning one of its
+    /// defaults off (`LinkedPaths`): the repo setting's, then rocky.json's.
     public var links: [String] = []
 }
 
@@ -41,7 +42,8 @@ public enum ScriptConfigError: Error, Equatable, CustomStringConvertible {
 ///     { "scripts": { "setup": "pnpm install", "run": "pnpm dev --port $PORT", "archive": "…" },
 ///       "runScriptMode": "concurrent", "links": [".venv", ".vscode/*"] }
 ///
-/// Links are the exception: each entry only adds a file to link, so the repo setting's and the file's add up.
+/// Links are the exception: each entry only adds a file to link, or as `!<pattern>` turns one of the linker's defaults
+/// off, so the repo setting's and the file's add up: a default either one turns off stays off.
 ///
 /// Same shape as Conductor's conductor.json, which Rocky no longer reads (user decision, 2026-09-23).
 public enum ScriptConfigResolver {
@@ -77,7 +79,7 @@ public enum ScriptConfigResolver {
         )
     }
 
-    /// The entries of `Repo.linkedPaths`: one per line, trimmed, blank lines dropped.
+    /// The entries of `Repo.linkedPaths`: one per line, trimmed, blank lines dropped. Negations stay in.
     public static func linkEntries(_ text: String?) -> [String] {
         (text ?? "").split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }

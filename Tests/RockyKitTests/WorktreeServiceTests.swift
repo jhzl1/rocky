@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import RockyKit
 
+@Suite(.blockingWork)
 struct WorktreeServiceTests {
     private let service = WorktreeService(environment: GitFixture.environment)
 
@@ -71,6 +72,62 @@ struct WorktreeServiceTests {
         try Data("wip\n".utf8).write(to: dirty.path.appendingPathComponent("README.md"))
         #expect(throws: ProcessFailure.self) { try service.remove(repo: repo, worktree: dirty.path) }
         #expect(FileManager.default.fileExists(atPath: dirty.path.path))
+    }
+
+    /// User report, 2026-09-23: a fixed `ssh -o BatchMode=yes` overrode the repository's `core.sshCommand`. The ssh
+    /// command of a run that reaches the remote is the one git would pick, in batch mode.
+    @Test func batchSSHCommandKeepsTheCommandGitWouldRun() {
+        let celes = "ssh -o IdentitiesOnly=yes -o IdentityFile=/Users/me/.ssh/id_rsa_celes"
+        #expect(WorktreeService.batchSSHCommand(inherited: nil, configured: nil) == "ssh -o BatchMode=yes")
+        #expect(WorktreeService.batchSSHCommand(inherited: nil, configured: celes) == celes + " -o BatchMode=yes")
+        #expect(WorktreeService.batchSSHCommand(inherited: "", configured: " \(celes)\n") == celes + " -o BatchMode=yes")
+        // git's own order: GIT_SSH_COMMAND from the login shell wins over core.sshCommand.
+        #expect(WorktreeService.batchSSHCommand(inherited: "ssh -i /k", configured: celes) == "ssh -i /k -o BatchMode=yes")
+    }
+
+    @Test func onlyRunsThatReachTheRemoteGetAnSSHCommand() throws {
+        var environment = GitFixture.environment
+        environment["GIT_SSH_COMMAND"] = nil
+        let repo = try GitFixture.localRepo(in: try Fixtures.temporaryDirectory("git"))
+        let local = WorktreeService(environment: environment).environment
+        #expect(local["GIT_SSH_COMMAND"] == nil)
+        #expect(local["GIT_TERMINAL_PROMPT"] == "0")
+
+        #expect(WorktreeService.configuredSSHCommand(in: repo, environment: local) == nil)
+        #expect(WorktreeService.remoteEnvironment(local, in: repo)["GIT_SSH_COMMAND"] == "ssh -o BatchMode=yes")
+
+        try GitFixture.git(["config", "core.sshCommand", "ssh -o IdentityFile=/Users/me/.ssh/id_rsa_celes"], in: repo)
+        #expect(WorktreeService.configuredSSHCommand(in: repo, environment: local) == "ssh -o IdentityFile=/Users/me/.ssh/id_rsa_celes")
+        let remote = WorktreeService.remoteEnvironment(local, in: repo)
+        #expect(remote["GIT_SSH_COMMAND"] == "ssh -o IdentityFile=/Users/me/.ssh/id_rsa_celes -o BatchMode=yes")
+        #expect(remote["GIT_TERMINAL_PROMPT"] == "0")
+    }
+
+    /// The fetch before a new worktree goes out through the repository's `core.sshCommand`, in batch mode.
+    @Test func fetchUsesTheRepositorysSSHCommand() throws {
+        let parent = try Fixtures.temporaryDirectory("git")
+        let repo = try GitFixture.clonedRepo(in: parent)
+        let (script, record) = try Self.recordingSSH(in: parent)
+        try GitFixture.git(["remote", "set-url", "origin", "ssh://git@example.invalid/celes-app/celes-platform.git"], in: repo)
+        try GitFixture.git(["config", "core.sshCommand", "\(script.path) -o IdentitiesOnly=yes"], in: repo)
+        var environment = GitFixture.environment
+        environment["GIT_SSH_COMMAND"] = nil
+
+        let created = try WorktreeService(environment: environment).create(repo: repo, name: "taipei")
+        #expect(created.fetchFailed)
+        #expect(created.baseRef == "origin/trunk")
+        let arguments = try String(contentsOf: record, encoding: .utf8)
+        #expect(arguments.hasPrefix("-o IdentitiesOnly=yes -o BatchMode=yes"))
+        #expect(arguments.contains("example.invalid"))
+    }
+
+    /// A stand-in for ssh that writes its arguments to `record` and fails, as a host without access would.
+    static func recordingSSH(in folder: URL) throws -> (script: URL, record: URL) {
+        let script = folder.appendingPathComponent("fake-ssh")
+        let record = folder.appendingPathComponent("ssh-arguments.txt")
+        try Data("#!/bin/sh\necho \"$@\" > '\(record.path)'\nexit 255\n".utf8).write(to: script)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        return (script, record)
     }
 
     @Test func namerSkipsTakenNamesAndFallsBackToSuffix() {

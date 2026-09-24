@@ -1,0 +1,62 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "reviewThreads": {
+          "nodes": [
+            {
+              "id": "PRRT_retry",
+              "isResolved": false,
+              "isOutdated": false,
+              "path": "src/ocr/retry.ts",
+              "line": 42,
+              "comments": {
+                "nodes": [
+                  { "author": { "login": "ana" }, "body": "Use exponential backoff instead of a fixed delay." },
+                  { "author": { "login": "jhzl" }, "body": "Would a jitter help too?" },
+                  { "author": { "login": "ana" }, "body": "Yes, add full jitter." }
+                ]
+              }
+            },
+            {
+              "id": "PRRT_resolved",
+              "isResolved": true,
+              "isOutdated": false,
+              "path": "src/ocr/client.ts",
+              "line": 10,
+              "comments": { "nodes": [{ "author": { "login": "ana" }, "body": "Done already." }] }
+            },
+            {
+              "id": "PRRT_outdated",
+              "isResolved": false,
+              "isOutdated": true,
+              "path": "src/ocr/client.ts",
+              "line": null,
+              "comments": { "nodes": [{ "author": { "login": "ana" }, "body": "On a line that moved." }] }
+            },
+            {
+              "id": "PRRT_file",
+              "isResolved": false,
+              "isOutdated": false,
+              "path": "README.md",
+              "line": null,
+              "comments": { "nodes": [{ "author": null, "body": "Mention the retry policy." }] }
+            }
+          ]
+        },
+        "comments": {
+          "nodes": [
+            { "id": "IC_timeout", "author": { "login": "ana" }, "body": "Please add a test for the timeout path." }
+          ]
+        },
+        "latestReviews": {
+          "nodes": [
+            { "id": "PRR_split", "author": { "login": "ana" }, "state": "CHANGES_REQUESTED", "body": "Split the retry policy out of the OCR client." },
+            { "id": "PRR_empty", "author": { "login": "bo" }, "state": "CHANGES_REQUESTED", "body": "  " },
+            { "id": "PRR_ok", "author": { "login": "cy" }, "state": "APPROVED", "body": "Looks good." }
+          ]
+        }
+      }
+    }
+  }
+}

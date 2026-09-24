@@ -17,11 +17,48 @@ public struct WorktreeService: Sendable {
     public let environment: [String: String]
 
     public init(environment: [String: String]) {
-        // Never block on a credential or host-key prompt: there is no terminal to answer it.
-        self.environment = environment.merging([
-            "GIT_TERMINAL_PROMPT": "0",
-            "GIT_SSH_COMMAND": "ssh -o BatchMode=yes",
-        ]) { _, new in new }
+        self.environment = Self.nonInteractive(environment)
+    }
+
+    /// The environment of Rocky's own git runs: never block on a credential prompt, since there is no terminal to
+    /// answer it. `GitBranchService` uses it too. It sets no ssh command: local runs need none, and a run that reaches
+    /// the remote gets its own (`remoteEnvironment(_:in:)`).
+    static func nonInteractive(_ environment: [String: String]) -> [String: String] {
+        environment.merging(["GIT_TERMINAL_PROMPT": "0"]) { _, new in new }
+    }
+
+    /// `environment` for a git run that reaches the remote (fetch, pull, push) in `directory`: ssh in batch mode, so a
+    /// passphrase or host-key question fails instead of waiting for a terminal, on the command git itself would run
+    /// (`batchSSHCommand`). A fixed `GIT_SSH_COMMAND=ssh -o BatchMode=yes` overrode the repository's
+    /// `core.sshCommand`: a celes clone's key, set by an `includeIf "gitdir:…"`, was skipped, and the fetch went out
+    /// with the personal key, which has no access (user report, 2026-09-23).
+    static func remoteEnvironment(_ environment: [String: String], in directory: URL) -> [String: String] {
+        var remote = environment
+        remote["GIT_SSH_COMMAND"] = batchSSHCommand(
+            inherited: environment["GIT_SSH_COMMAND"],
+            configured: configuredSSHCommand(in: directory, environment: environment)
+        )
+        return remote
+    }
+
+    /// The ssh command git would run, with ` -o BatchMode=yes` after it: `GIT_SSH_COMMAND` from the login shell, else
+    /// the repository's `core.sshCommand`, else `ssh`, which is git's own order. ssh keeps the first value it gets for
+    /// an option, so the command's own options still win.
+    static func batchSSHCommand(inherited: String?, configured: String?) -> String {
+        let command = [inherited, configured]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty } ?? "ssh"
+        return command + " -o BatchMode=yes"
+    }
+
+    /// `git config --get core.sshCommand` in `directory`, which follows `~/.gitconfig`'s `includeIf "gitdir:…"`; nil
+    /// when it is unset (git exits 1) or git fails. Read without `GIT_SSH_COMMAND`, so nothing of Rocky's is in the way.
+    static func configuredSSHCommand(in directory: URL, environment: [String: String]) -> String? {
+        var plain = environment
+        plain["GIT_SSH_COMMAND"] = nil
+        guard let value = try? ProcessRunner.run(git, ["config", "--get", "core.sshCommand"], in: directory, environment: plain),
+              !value.isEmpty else { return nil }
+        return value
     }
 
     /// Worktrees live next to the repo, so `~/.gitconfig` `includeIf "gitdir:..."` rules still match.
@@ -40,7 +77,7 @@ public struct WorktreeService: Sendable {
         guard remotes.contains("origin") else {
             return (try run(["rev-parse", "--abbrev-ref", "HEAD"], in: repo), false)
         }
-        let fetchFailed = (try? run(["fetch", "--quiet", "origin"], in: repo)) == nil
+        let fetchFailed = (try? run(["fetch", "--quiet", "origin"], in: repo, reachesRemote: true)) == nil
         if let ref = try? run(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], in: repo) {
             return (ref, fetchFailed)
         }
@@ -70,8 +107,9 @@ public struct WorktreeService: Sendable {
     }
 
     @discardableResult
-    private func run(_ arguments: [String], in directory: URL) throws -> String {
-        try ProcessRunner.run(Self.git, arguments, in: directory, environment: environment)
+    private func run(_ arguments: [String], in directory: URL, reachesRemote: Bool = false) throws -> String {
+        let environment = reachesRemote ? Self.remoteEnvironment(environment, in: directory) : environment
+        return try ProcessRunner.run(Self.git, arguments, in: directory, environment: environment)
     }
 }
 

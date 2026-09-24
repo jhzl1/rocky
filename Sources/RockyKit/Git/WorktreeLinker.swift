@@ -15,7 +15,8 @@ public struct WorktreeLinkResult: Sendable, Equatable {
 
 /// Symlinks the main clone's untracked environment files into a new worktree, which git leaves without them: secrets,
 /// direnv and Wrangler files, Claude Code's local settings, plus the repo's extra entries (`Repo.linkedPaths` and the
-/// `links` of rocky.json). Replaces the per-repo `setup-worktree.sh` scripts that did this from a post-checkout hook.
+/// `links` of rocky.json), where `!<pattern>` turns one of those defaults off (`LinkedPaths`). Replaces the per-repo
+/// `setup-worktree.sh` scripts that did this from a post-checkout hook.
 ///
 /// Symlinks, not copies: each file keeps a single owner in the main clone, so rotating a secret there reaches every
 /// worktree. Each link is absolute. A destination that exists in any form, even a dangling symlink, is left alone,
@@ -41,16 +42,16 @@ public struct WorktreeLinker: Sendable {
     }
 
     /// Links the automatic candidates, then `extraEntries`: repo-relative paths (a directory links as a whole) or
-    /// globs (each match links on its own). An entry that is absolute or climbs out of the main clone is rejected.
+    /// globs (each match links on its own). An entry that is absolute or climbs out of the main clone is rejected. An
+    /// entry `!<pattern>` links nothing: naming one of `LinkedPaths.defaults`, it turns that default off, and naming
+    /// anything else, it is ignored.
     public func link(mainClone: URL, into worktree: URL, extraEntries: [String]) throws -> WorktreeLinkResult {
         let root = mainClone.path
-        var paths = try automaticCandidates(mainClone: mainClone)
+        var paths = try automaticCandidates(mainClone: mainClone, disabled: LinkedPaths.disabledDefaults(in: extraEntries))
         var rejected: [String] = []
-        for entry in extraEntries {
-            let trimmed = entry.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty else { continue }
-            guard let relative = Self.relativePath(trimmed) else {
-                rejected.append(trimmed)
+        for entry in LinkedPaths.linkedEntries(in: extraEntries) {
+            guard let relative = Self.relativePath(entry) else {
+                rejected.append(entry)
                 continue
             }
             if relative.contains(where: Self.globCharacters.contains) {
@@ -68,25 +69,29 @@ public struct WorktreeLinker: Sendable {
     }
 
     /// Whether a path git lists as ignored is linked without being asked for: an environment file that is not a
-    /// template, or one of `alwaysLinkedPaths`.
-    public static func isLinkedAutomatically(_ path: String) -> Bool {
-        if alwaysLinkedPaths.contains(path) { return true }
+    /// template, or one of `alwaysLinkedPaths`. The patterns and paths in `disabled` pick nothing, so a name only they
+    /// match is not linked.
+    public static func isLinkedAutomatically(_ path: String, disabled: Set<String> = []) -> Bool {
+        if alwaysLinkedPaths.contains(path) { return !disabled.contains(path) }
         let name = path.split(separator: "/").last.map(String.init) ?? path
         if templateSuffixes.contains(where: name.hasSuffix) { return false }
-        return environmentFilePatterns.contains { fnmatch($0, name, 0) == 0 }
+        return environmentFilePatterns.contains { !disabled.contains($0) && fnmatch($0, name, 0) == 0 }
     }
 
     /// The ignored files of the main clone that `isLinkedAutomatically` picks. `--directory` collapses an ignored
     /// directory such as `node_modules/` into one entry ending in "/", so its contents are never listed, and those
-    /// entries are dropped: a directory is linked only when asked for.
-    private func automaticCandidates(mainClone: URL) throws -> [String] {
+    /// entries are dropped: a directory is linked only when asked for. With every default turned off, git does not run.
+    private func automaticCandidates(mainClone: URL, disabled: Set<String>) throws -> [String] {
+        guard !disabled.isSuperset(of: LinkedPaths.defaults) else { return [] }
         let listing = try ProcessRunner.run(
             Self.git,
             ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
             in: mainClone,
             environment: environment
         )
-        return listing.split(separator: "\0").map(String.init).filter { !$0.hasSuffix("/") && Self.isLinkedAutomatically($0) }
+        return listing.split(separator: "\0").map(String.init).filter {
+            !$0.hasSuffix("/") && Self.isLinkedAutomatically($0, disabled: disabled)
+        }
     }
 
     /// `entry` as a clean repo-relative path, or nil when it is absolute, names the repo itself or climbs out of it.

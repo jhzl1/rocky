@@ -36,6 +36,28 @@ struct WorkspaceEnvironmentTests {
         #expect(environment["ROCKY_PORT"] == "41010")
     }
 
+    /// ENV-01 and spec Section 3 (login shell < repo variables < account variables): the account's token replaces
+    /// the login shell's GH_TOKEN and a repo variable's; without a token, theirs stays.
+    @Test func githubTokenWinsOverTheLoginShellAndRepoVariables() {
+        let fromShell = WorkspaceEnvironment.make(login: ["GH_TOKEN": "gho_shell"], workspace: context, githubToken: "gho_account", claudeConfigDir: nil)
+        #expect(fromShell["GH_TOKEN"] == "gho_account")
+
+        let fromRepo = WorkspaceEnvironment.make(
+            login: ["GH_TOKEN": "gho_shell"],
+            workspace: context,
+            githubToken: "gho_account",
+            repoVariables: ["GH_TOKEN": "gho_repo"],
+            claudeConfigDir: nil
+        )
+        #expect(fromRepo["GH_TOKEN"] == "gho_account")
+
+        let withoutToken = WorkspaceEnvironment.make(login: ["GH_TOKEN": "gho_shell"], workspace: context, githubToken: nil, claudeConfigDir: nil)
+        #expect(withoutToken["GH_TOKEN"] == "gho_shell")
+        let repoWithoutToken = WorkspaceEnvironment.make(login: ["GH_TOKEN": "gho_shell"], repoVariables: ["GH_TOKEN": "gho_repo"], claudeConfigDir: nil)
+        #expect(repoWithoutToken["GH_TOKEN"] == "gho_repo")
+        #expect(WorkspaceEnvironment.make(login: [:], claudeConfigDir: nil)["GH_TOKEN"] == nil)
+    }
+
     @Test func repoVariableCannotSetClaudeConfigDir() {
         let withoutSetting = WorkspaceEnvironment.make(login: [:], repoVariables: ["CLAUDE_CONFIG_DIR": "/var"], claudeConfigDir: nil)
         #expect(withoutSetting["CLAUDE_CONFIG_DIR"] == nil)

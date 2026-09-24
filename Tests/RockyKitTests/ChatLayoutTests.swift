@@ -26,6 +26,15 @@ struct ChatLayoutTests {
         #expect(kinds(ChatLayout.rows(items)) == ["user", "tools(2)", "agent", "tool"])
     }
 
+    @Test func anInterruptedTurnShowsItsMarkThenItsFooter() {
+        let items = [
+            ChatItem(kind: .user, text: "hi", createdAt: start, completedAt: start.addingTimeInterval(2)),
+            ChatItem(kind: .agent, text: "Hel"),
+            ChatItem(kind: .interrupted, text: "Interrupted by user"),
+        ]
+        #expect(kinds(ChatLayout.rows(items)) == ["user", "agent", "interrupted", "footer"])
+    }
+
     @Test func endsEachFinishedTurnWithAFooter() {
         let first = ChatItem(kind: .user, text: "one", createdAt: start, completedAt: start.addingTimeInterval(328))
         let second = ChatItem(kind: .user, text: "two", createdAt: start.addingTimeInterval(400))

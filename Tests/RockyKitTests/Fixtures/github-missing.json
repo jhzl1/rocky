@@ -1,0 +1,22 @@
+{
+  "data": {
+    "repository": {
+      "id": "R_kgDOrepo",
+      "squashMergeAllowed": true,
+      "rebaseMergeAllowed": true,
+      "mergeCommitAllowed": true,
+      "viewerDefaultMergeMethod": "MERGE",
+      "defaultBranchRef": { "name": "development" },
+      "pullRequests": { "nodes": [] },
+      "ref": { "compare": null }
+    }
+  },
+  "errors": [
+    {
+      "type": "NOT_FOUND",
+      "path": ["repository", "ref", "compare"],
+      "locations": [{ "line": 36, "column": 33 }],
+      "message": "Could not resolve head ref 'rocky/kyoto'."
+    }
+  ]
+}

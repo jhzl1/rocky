@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import RockyKit
 
+@Suite(.blockingWork)
 struct WorktreeLinkerTests {
     private let linker = WorktreeLinker(environment: GitFixture.environment)
 
@@ -111,6 +112,61 @@ struct WorktreeLinkerTests {
         #expect(!result.linked.contains { $0.contains("outside") || $0.contains("hosts") })
         let escaped = checkout.worktree.deletingLastPathComponent().appendingPathComponent("outside").path
         #expect(!FileManager.default.fileExists(atPath: escaped))
+    }
+
+    /// Repository settings store a default switched off as "!<pattern>" (user request, 2026-09-23).
+    @Test func aTurnedOffDefaultIsNotLinkedAndTheOthersStillAre() throws {
+        let checkout = try makeCheckout()
+        let result = try linker.link(
+            mainClone: checkout.main,
+            into: checkout.worktree,
+            extraEntries: ["!.env.*", " ! .claude/settings.local.json ", ".venv"]
+        )
+
+        #expect(result.linked.sorted() == [".env", ".envrc", ".venv", "apps/api/.dev.vars"])
+        #expect(result.rejected.isEmpty)
+        for path in [".env.local", ".env.production", ".claude/settings.local.json"] {
+            #expect(!FileManager.default.fileExists(atPath: checkout.worktree.appendingPathComponent(path).path), "\(path)")
+        }
+        #expect(symlinkDestination(".env", in: checkout.worktree) == checkout.main.appendingPathComponent(".env").path)
+    }
+
+    /// rocky.json's links turn defaults off as the repo setting does, and the two add up.
+    @Test func aRockyJSONNegationTurnsADefaultOff() throws {
+        let checkout = try makeCheckout()
+        try write(#"{"links":["!.envrc", ".venv"]}"#, to: ScriptConfigResolver.fileName, in: checkout.worktree)
+        let repo = Repo(name: "app", path: checkout.main.path, linkedPaths: "!.dev.vars")
+        let config = try ScriptConfigResolver.resolve(workspace: checkout.worktree, repo: repo)
+
+        let result = try linker.link(mainClone: checkout.main, into: checkout.worktree, extraEntries: config.links)
+
+        let expected = [".claude/settings.local.json", ".env", ".env.local", ".env.production", ".venv"]
+        #expect(result.linked.sorted() == expected)
+        #expect(symlinkDestination(".envrc", in: checkout.worktree) == nil)
+        #expect(symlinkDestination("apps/api/.dev.vars", in: checkout.worktree) == nil)
+    }
+
+    /// A negation turns off only a default: one naming anything else links nothing and turns nothing off.
+    @Test func aNegationOfAnUnknownPatternChangesNothing() throws {
+        let checkout = try makeCheckout()
+        let result = try linker.link(
+            mainClone: checkout.main,
+            into: checkout.worktree,
+            extraEntries: ["!.venv", "!.env.local", "!*", "!/etc/hosts"]
+        )
+
+        let expected = [".env", ".env.local", ".env.production", ".envrc", "apps/api/.dev.vars", ".claude/settings.local.json"]
+        #expect(result.linked.sorted() == expected.sorted())
+        #expect(result.rejected.isEmpty)
+        #expect(symlinkDestination(".venv", in: checkout.worktree) == nil)
+    }
+
+    @Test func aTurnedOffPatternPicksNothingAndTheOthersStillPick() {
+        #expect(!WorktreeLinker.isLinkedAutomatically(".env.local", disabled: [".env.*"]))
+        #expect(WorktreeLinker.isLinkedAutomatically(".env", disabled: [".env.*"]))
+        #expect(!WorktreeLinker.isLinkedAutomatically("apps/api/.dev.vars", disabled: [".dev.vars"]))
+        #expect(WorktreeLinker.isLinkedAutomatically(".dev.vars.staging", disabled: [".dev.vars"]))
+        #expect(!WorktreeLinker.isLinkedAutomatically(".claude/settings.local.json", disabled: [".claude/settings.local.json"]))
     }
 
     @Test func picksEnvironmentFilesByNameAndSkipsTemplates() {

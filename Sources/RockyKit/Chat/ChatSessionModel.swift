@@ -4,6 +4,8 @@ import Observation
 public struct ChatItem: Identifiable, Equatable, Sendable {
     public enum Kind: String, Sendable {
         case user, agent, thought, tool, error
+        /// The user stopped the turn (Esc, Stop or Send Now); shown as "Interrupted by user", like Conductor.
+        case interrupted
     }
 
     public let id: UUID
@@ -93,6 +95,8 @@ public final class ChatSessionModel {
     @ObservationIgnored private var holdsQueue = false
     /// …unless it was stopped to send a queued message now (`sendQueuedNow`).
     @ObservationIgnored private var steers = false
+    /// The user stopped this turn, so it ends with an `.interrupted` item whatever the agent answers.
+    @ObservationIgnored private var interrupted = false
     /// Called when a turn ends or fails and when the agent starts waiting for the user: the sidebar's unread state
     /// (ROW-04), the alert sound and the Dock's number.
     @ObservationIgnored public var onAttention: (@MainActor (ChatAttention) -> Void)?
@@ -275,6 +279,7 @@ public final class ChatSessionModel {
         state = .running
         failure = nil
         isQueueHeld = false
+        interrupted = false
         turnStartedAt = userItem.createdAt
         openTextItem = nil
         turnItems = []
@@ -284,10 +289,12 @@ public final class ChatSessionModel {
                 ACPProtocol.promptParams(sessionId: sessionId, text: text, attachments: promptAttachments)
             )
             flush()
+            if interrupted { appendTurnItem(Self.interruptedItem()) }
             endTurn()
         } catch ACPConnectionError.rpc(_, let message) {
             flush()
-            appendTurnItem(ChatItem(kind: .error, text: message))
+            // An agent may answer a cancelled prompt with an error; the user asked for it, so it is no error.
+            appendTurnItem(interrupted ? Self.interruptedItem() : ChatItem(kind: .error, text: message))
             holdsQueue = true
             endTurn()
         } catch {
@@ -305,11 +312,18 @@ public final class ChatSessionModel {
     }
 
     public func cancel() async {
-        if state == .running { holdsQueue = true }
+        if state == .running {
+            holdsQueue = true
+            interrupted = true
+        }
         answerPermission(optionId: nil)
         answerQuestion(.cancelled)
         guard let connection, let sessionId else { return }
         try? await connection.notify("session/cancel", ACPProtocol.cancelParams(sessionId: sessionId))
+    }
+
+    private static func interruptedItem() -> ChatItem {
+        ChatItem(kind: .interrupted, text: "Interrupted by user")
     }
 
     /// Keeps a message for when the agent's turn ends.

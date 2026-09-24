@@ -1,0 +1,143 @@
+{
+  "data": {
+    "repository": {
+      "id": "R_kgDOrepo",
+      "squashMergeAllowed": true,
+      "rebaseMergeAllowed": false,
+      "mergeCommitAllowed": true,
+      "viewerDefaultMergeMethod": "SQUASH",
+      "defaultBranchRef": { "name": "development" },
+      "pullRequests": {
+        "nodes": [
+          {
+            "id": "PR_kwDOpr4525",
+            "number": 4525,
+            "url": "https://github.com/jhzl1/rocky/pull/4525",
+            "title": "Retry OCR uploads",
+            "body": "Retries failed uploads with backoff.",
+            "isDraft": false,
+            "state": "OPEN",
+            "mergedAt": null,
+            "baseRefName": "development",
+            "headRefName": "rocky/tokyo",
+            "headRefOid": "3f2a9c1d0e8b7a6f5e4d3c2b1a09f8e7d6c5b4a3",
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "BLOCKED",
+            "reviewDecision": "REVIEW_REQUIRED",
+            "canBeRebased": true,
+            "reviewRequests": { "totalCount": 2 },
+            "autoMergeRequest": { "enabledAt": "2026-09-23T10:00:00Z" },
+            "mergeQueueEntry": null,
+            "commits": {
+              "nodes": [
+                {
+                  "commit": {
+                    "statusCheckRollup": {
+                      "contexts": {
+                        "nodes": [
+                          {
+                            "__typename": "CheckRun",
+                            "name": "build",
+                            "status": "COMPLETED",
+                            "conclusion": "SUCCESS",
+                            "startedAt": "2026-09-23T10:00:00Z",
+                            "completedAt": "2026-09-23T10:03:20Z",
+                            "detailsUrl": "https://github.com/jhzl1/rocky/actions/runs/901/job/7001",
+                            "databaseId": 7001,
+                            "checkSuite": { "workflowRun": { "databaseId": 901 } }
+                          },
+                          {
+                            "__typename": "CheckRun",
+                            "name": "e2e / chromium",
+                            "status": "COMPLETED",
+                            "conclusion": "FAILURE",
+                            "startedAt": "2026-09-23T10:00:00Z",
+                            "completedAt": "2026-09-23T11:04:00Z",
+                            "detailsUrl": "https://github.com/jhzl1/rocky/actions/runs/901/job/7002",
+                            "databaseId": 7002,
+                            "checkSuite": { "workflowRun": { "databaseId": 901 } }
+                          },
+                          {
+                            "__typename": "CheckRun",
+                            "name": "lint",
+                            "status": "IN_PROGRESS",
+                            "conclusion": null,
+                            "startedAt": "2026-09-23T10:05:00Z",
+                            "completedAt": null,
+                            "detailsUrl": "https://github.com/jhzl1/rocky/actions/runs/902/job/7003",
+                            "databaseId": 7003,
+                            "checkSuite": { "workflowRun": { "databaseId": 902 } }
+                          },
+                          {
+                            "__typename": "CheckRun",
+                            "name": "deploy-docs",
+                            "status": "QUEUED",
+                            "conclusion": null,
+                            "startedAt": null,
+                            "completedAt": null,
+                            "detailsUrl": null,
+                            "databaseId": 7004,
+                            "checkSuite": { "workflowRun": { "databaseId": 902 } }
+                          },
+                          {
+                            "__typename": "CheckRun",
+                            "name": "codecov/patch",
+                            "status": "COMPLETED",
+                            "conclusion": "NEUTRAL",
+                            "startedAt": "2026-09-23T10:01:00Z",
+                            "completedAt": "2026-09-23T10:01:45Z",
+                            "detailsUrl": "https://codecov.io/gh/jhzl1/rocky/pull/4525",
+                            "databaseId": 7005,
+                            "checkSuite": { "workflowRun": null }
+                          },
+                          {
+                            "__typename": "StatusContext",
+                            "context": "Vercel",
+                            "state": "PENDING",
+                            "targetUrl": "https://vercel.com/jhzl1/rocky/abc"
+                          },
+                          {
+                            "__typename": "StatusContext",
+                            "context": "ci/circleci: test",
+                            "state": "ERROR",
+                            "targetUrl": "https://circleci.com/gh/jhzl1/rocky/12"
+                          },
+                          null
+                        ]
+                      }
+                    },
+                    "deployments": {
+                      "nodes": [
+                        {
+                          "environment": "Preview",
+                          "state": "IN_PROGRESS",
+                          "latestStatus": { "state": "IN_PROGRESS", "environmentUrl": null }
+                        },
+                        {
+                          "environment": "Production",
+                          "state": "ACTIVE",
+                          "latestStatus": { "state": "SUCCESS", "environmentUrl": "https://rocky.example.com" }
+                        },
+                        {
+                          "environment": "Preview",
+                          "state": "INACTIVE",
+                          "latestStatus": { "state": "SUCCESS", "environmentUrl": "https://rocky-git-tokyo-jhzl1.vercel.app" }
+                        },
+                        {
+                          "environment": "Staging",
+                          "state": "QUEUED",
+                          "latestStatus": null
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "ref": { "compare": { "aheadBy": 3, "behindBy": 2 } }
+    }
+  }
+}

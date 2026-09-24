@@ -8,9 +8,43 @@ public struct ProcessFailure: Error, Equatable, CustomStringConvertible {
     public var description: String { "\(command) exited \(status): \(stderr)" }
 }
 
-/// A pipe read to its end on a thread of its own; `wait` blocks until it is. Not a Dispatch queue: callers block
-/// Swift's cooperative threads while they wait, and with enough of them waiting (tests running git in parallel), a
-/// read queued on `DispatchQueue.global()` never got a thread and every caller waited forever.
+/// Runs each job of a task that waits on blocking work (git, gh, npm, the login shell, a folder removal) on a thread
+/// of its own, off Swift's cooperative pool. That pool has one thread per CPU core, and `Task.detached` runs on it.
+/// Once every one of its threads waits in a syscall, macOS starts no thread for default-QoS Dispatch work: a
+/// `DispatchQueue.global()` read never ran, and `DispatchIO`, which reads every terminal (SwiftTerm's `LocalProcess`),
+/// stopped. A script whose shell exited meanwhile lost its output, because the kernel drops what a pseudo-terminal
+/// still holds 0.6 s after its shell exits (2026-09-24).
+public final class BlockingWorkExecutor: TaskExecutor {
+    public static let shared = BlockingWorkExecutor()
+
+    private init() {}
+
+    public func enqueue(_ job: consuming ExecutorJob) {
+        let job = UnownedJob(job)
+        let executor = asUnownedTaskExecutor()
+        let thread = Thread { job.runSynchronously(on: executor) }
+        thread.name = "rocky.blocking-work"
+        thread.start()
+    }
+}
+
+extension Task where Failure == Never {
+    /// Runs `work` on `BlockingWorkExecutor`, not on the cooperative pool as `Task.detached` would.
+    @discardableResult
+    public static func blocking(_ work: @escaping @Sendable () -> Success) -> Task<Success, Never> {
+        Task.detached(executorPreference: BlockingWorkExecutor.shared) { work() }
+    }
+}
+
+extension Task where Failure == any Error {
+    /// Runs `work` on `BlockingWorkExecutor`, not on the cooperative pool as `Task.detached` would.
+    @discardableResult
+    public static func blocking(_ work: @escaping @Sendable () throws -> Success) -> Task<Success, any Error> {
+        Task.detached(executorPreference: BlockingWorkExecutor.shared) { try work() }
+    }
+}
+
+/// A pipe read to its end on a thread of its own; `wait` blocks until it is.
 final class PipeDrain: @unchecked Sendable {
     /// Read only after `wait` returned.
     private(set) var data = Data()
@@ -34,7 +68,7 @@ final class PipeDrain: @unchecked Sendable {
 
 public enum ProcessRunner {
     /// Runs a command to completion and returns stdout without trailing whitespace.
-    /// Blocking: call it off the main actor.
+    /// Blocking: call it from `Task.blocking`, never on the main actor or the cooperative pool.
     @discardableResult
     public static func run(
         _ executable: URL,
@@ -52,13 +86,16 @@ public enum ProcessRunner {
         process.standardOutput = stdout
         process.standardError = stderr
         process.standardInput = FileHandle.nullDevice
+        // Not `waitUntilExit()`: it can miss the exit and wait forever (see `ACPConnection.finish()`).
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
         try process.run()
 
         // Drain stderr while stdout is read: a full pipe would block the child forever.
         let errorOutput = PipeDrain(stderr.fileHandleForReading)
         let output = stdout.fileHandleForReading.readDataToEndOfFile()
         errorOutput.wait()
-        process.waitUntilExit()
+        exited.wait()
 
         guard process.terminationStatus == 0 else {
             throw ProcessFailure(

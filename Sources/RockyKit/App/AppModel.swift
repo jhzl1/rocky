@@ -5,14 +5,19 @@ public struct RockyPaths: Sendable {
     public let database: URL
     public let adapterPrefix: URL
     public let logs: URL
+    /// `AGT-03`'s failure logs, one folder per workspace, outside every worktree.
+    public let ciLogs: URL
 
-    public init(database: URL, adapterPrefix: URL, logs: URL) {
+    /// `ciLogs` defaults to a `ci-logs` folder next to the database.
+    public init(database: URL, adapterPrefix: URL, logs: URL, ciLogs: URL? = nil) {
         self.database = database
         self.adapterPrefix = adapterPrefix
         self.logs = logs
+        self.ciLogs = ciLogs ?? database.deletingLastPathComponent().appendingPathComponent("ci-logs", isDirectory: true)
     }
 
-    /// `~/Library/Application Support/Rocky` for data and the Claude adapter, `~/Library/Logs/Rocky` for agent stderr.
+    /// `~/Library/Application Support/Rocky` for data, the Claude adapter and the CI logs (`ci-logs`),
+    /// `~/Library/Logs/Rocky` for agent stderr.
     public static func standard() throws -> RockyPaths {
         let fileManager = FileManager.default
         let support = try fileManager.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
@@ -30,6 +35,30 @@ public struct RockyPaths: Sendable {
     }
 }
 
+/// The login shell's environment, readable off the main actor by Rocky's own `gh` runs.
+final class LoginEnvironmentBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var environment: [String: String] = [:]
+
+    var value: [String: String] {
+        get { lock.withLock { environment } }
+        set { lock.withLock { environment = newValue } }
+    }
+}
+
+/// Lets the pull request monitor, made in `AppModel.init` before `self` can be captured, call the model's loader.
+@MainActor
+final class PullRequestLoaderBox {
+    weak var model: AppModel?
+}
+
+/// ACC-01's probe of one repository (`AppModel.githubReaders`): each asked login's answer, and whether they settle
+/// the default. An account that did not answer leaves it open: it might have been the one to pick.
+struct GitHubReadProbe: Sendable {
+    var canRead: [String: Bool] = [:]
+    var isSettled = true
+}
+
 /// Why removing a workspace stopped before deleting anything; the UI offers "Remove Anyway".
 public struct ArchiveFailure: Equatable, Sendable {
     public let workspaceId: String
@@ -41,6 +70,13 @@ public struct ArchiveFailure: Equatable, Sendable {
         self.workspaceName = workspaceName
         self.message = message
     }
+}
+
+/// What `GST-02`'s Pull does once its git steps ran: send the agent to commit first, report a fast-forward, or send the
+/// agent to merge or rebase a diverged branch.
+enum BaseSyncStep: Equatable, Sendable {
+    case commitFirst, fastForwarded
+    case diverged(rebase: Bool)
 }
 
 /// The setup, run and archive scripts and the terminal tabs of one workspace. Kept only while Rocky runs.
@@ -79,16 +115,30 @@ public final class AppModel {
             if let selectedWorkspaceId, isWindowActive { unreadWorkspaceIds.remove(selectedWorkspaceId) }
             // Opened again at the next launch (user decision, 2026-09-23).
             defaults.set(selectedWorkspaceId, forKey: Self.lastWorkspaceKey)
+            // The repository account's token, so the workspace's first process does not wait for gh (ENV-01).
+            if let workspace = selectedWorkspace {
+                Task { await prepareEnvironment(for: workspace) }
+            }
+            // PR-07: the selected workspace's pull request refreshes at once, then on the schedule.
+            pullRequests.select(selectedWorkspaceId)
         }
     }
     /// Workspaces where a turn ended or failed while the user was not watching them: another workspace was selected,
     /// or Rocky's window was in the background (ROW-04). In memory only (user decision).
     public private(set) var unreadWorkspaceIds: Set<String> = []
-    /// Whether Rocky's window is active; set by the window. Coming back to it reads the selected workspace.
+    /// Whether Rocky's window is active, i.e. the user is looking at Rocky; set by the window. Coming back to it reads
+    /// the selected workspace.
     public var isWindowActive = true {
         didSet {
             if isWindowActive, let selectedWorkspaceId { unreadWorkspaceIds.remove(selectedWorkspaceId) }
+            // PR-07: a refresh on return; polling itself follows `isWindowVisible`.
+            pullRequests.windowKeyChanged(isWindowActive)
         }
+    }
+    /// Whether any of Rocky's window can be seen (not minimized, hidden, fully covered or on another Space); set by
+    /// the window. PR-07 polls while it can, even with another app in front (user decision, 2026-09-24).
+    public var isWindowVisible = true {
+        didSet { pullRequests.windowVisibilityChanged(isWindowVisible) }
     }
     /// Plays the alert sound; set by the app. Called only for what the user is not watching (user decision,
     /// 2026-09-23: a sound and the Dock's number, no system notification).
@@ -98,7 +148,51 @@ public final class AppModel {
     public var errorMessage: String?
     public var archiveFailure: ArchiveFailure?
     public private(set) var busyMessage: String?
-    public private(set) var loginEnvironment: [String: String] = [:]
+    public private(set) var loginEnvironment: [String: String] = [:] {
+        didSet { loginBox.value = loginEnvironment }
+    }
+    /// The GitHub accounts of `gh` and their tokens (ACC-01), in memory only.
+    @ObservationIgnored public let githubAccounts: GitHubAccounts
+    /// The login environment for Rocky's own `gh` runs, which happen off the main actor.
+    @ObservationIgnored private let loginBox: LoginEnvironmentBox
+    @ObservationIgnored private let lookUpGitHubRepository: @Sendable (URL, [String: String]) -> GitHubRepository?
+    /// Each repository's GitHub remote, looked up once per launch (`git remote get-url origin`, `ssh -G`).
+    @ObservationIgnored private var githubRepositoryLookups: [String: Task<GitHubRepository?, Never>] = [:]
+    /// Each repository's default account as last resolved, for `environment(for:)`, which cannot wait for gh.
+    @ObservationIgnored private var defaultGitHubLogins: [String: String] = [:]
+    /// ACC-01's probe of each repository whose owner is no login: which accounts can read it, asked once per launch
+    /// for the order of logins it was asked with, so a new `gh auth login` (read again by the settings) asks again.
+    @ObservationIgnored private var githubReadProbes: [String: (order: [String], probe: Task<GitHubReadProbe, Never>)] = [:]
+    /// Each workspace's pull request panel and its refresh schedule (PR-07). Views observe it directly.
+    @ObservationIgnored public let pullRequests: PullRequestMonitor
+    /// Rocky's one GitHub session (ephemeral: nothing reaches the disk); tests pass a stub.
+    @ObservationIgnored private let githubSession: URLSession
+    /// One client per login, each reading that login's token from `githubAccounts`.
+    @ObservationIgnored private var githubClients: [String: GitHubClient] = [:]
+    /// The pull request head each workspace last fetched its branch for (GST-01's upstream fetch), so a head is
+    /// fetched once, even when the fetch failed.
+    @ObservationIgnored private var fetchedPullRequestHeads: [String: String] = [:]
+    /// Each repository's GitHub remote once looked up, for what cannot wait for the lookup (the compare URL).
+    @ObservationIgnored private var knownGitHubRepositories: [String: GitHubRepository] = [:]
+    /// Shows a line in the window's toast (`GST-02`, `GST-03`, `ERR-01`); set by the app.
+    @ObservationIgnored public var onToast: (@MainActor (String) -> Void)?
+    /// The tab each workspace's right panel shows (`PNL-03`), in memory; none is Checks.
+    public var rightPanelTabs: [String: RightPanelTab] = [:]
+    /// The pull request actions running in each workspace, so their buttons spin and ignore a second click.
+    public private(set) var runningPullRequestActions: [String: Set<PullRequestAction>] = [:]
+    /// `PR-05`: the merge method each workspace picked from the menu, until Rocky quits (user decision: never stored).
+    private var mergeMethodPicks: [String: MergeMethod] = [:]
+    /// `PR-05`'s first click: the workspaces whose merge button says "Confirm …", each with the token of its window, so
+    /// an older window's end does not cancel a newer one.
+    private var mergeConfirmations: [String: UUID] = [:]
+    /// `PR-05`'s errors, shown under the header until the next merge, another method or their ×.
+    public private(set) var mergeErrors: [String: String] = [:]
+    /// `SET-01`: archive a workspace when Rocky sees its pull request merge. Off by default (Conductor's
+    /// `archive_on_merge`).
+    public var archiveOnMerge = false {
+        didSet { defaults.set(archiveOnMerge, forKey: Self.archiveOnMergeKey) }
+    }
+    static let archiveOnMergeKey = "archiveOnMerge"
 
     @ObservationIgnored public let store: RockyStore
     @ObservationIgnored public let paths: RockyPaths
@@ -158,8 +252,29 @@ public final class AppModel {
         terminalShell: @escaping @Sendable ([String: String]) -> (executable: String, arguments: [String]) = { environment in
             (environment["SHELL"] ?? "/bin/zsh", ["-l"])
         },
-        processStopGracePeriod: Duration = .seconds(5)
+        processStopGracePeriod: Duration = .seconds(5),
+        runGH: @escaping @Sendable (_ arguments: [String], _ environment: [String: String]) throws -> String = { arguments, environment in
+            try GitHubCLI.run(arguments, environment: environment)
+        },
+        lookUpGitHubRepository: @escaping @Sendable (_ clone: URL, _ environment: [String: String]) -> GitHubRepository? = { clone, environment in
+            GitHubRemote.repository(ofClone: clone, environment: environment)
+        },
+        githubSession: URLSession = GitHubClient.makeSession()
     ) {
+        let loaderBox = PullRequestLoaderBox()
+        self.pullRequests = PullRequestMonitor(store: store, load: { workspaceId, includeLocal, comments in
+            guard let model = loaderBox.model else { throw CancellationError() }
+            return try await model.loadPullRequest(workspaceId: workspaceId, includeLocal: includeLocal, comments: comments)
+        })
+        self.githubSession = githubSession
+        let loginBox = LoginEnvironmentBox()
+        self.loginBox = loginBox
+        // Rocky's own gh runs get the login environment without GH_TOKEN and GITHUB_TOKEN, or gh would report the
+        // variable's account instead of the keyring's.
+        self.githubAccounts = GitHubAccounts(runGH: { arguments in
+            try runGH(arguments, GitHubCLI.environment(from: loginBox.value))
+        })
+        self.lookUpGitHubRepository = lookUpGitHubRepository
         self.store = store
         self.paths = paths
         self.captureEnvironment = captureEnvironment
@@ -169,9 +284,13 @@ public final class AppModel {
         self.defaults = defaults
         self.lastAgentCheck = defaults.object(forKey: Self.lastAgentCheckKey) as? Date
         self.selectedConversationIds = defaults.dictionary(forKey: Self.lastConversationsKey) as? [String: String] ?? [:]
+        self.archiveOnMerge = defaults.bool(forKey: Self.archiveOnMergeKey)
         self.secrets = secrets
         self.terminalShell = terminalShell
         self.processStopGracePeriod = processStopGracePeriod
+        loaderBox.model = self
+        // SET-01: a merge the monitor sees may archive its workspace.
+        pullRequests.onMerged = { [weak self] workspaceId in self?.pullRequestMerged(workspaceId: workspaceId) }
     }
 
     public var selectedWorkspace: Workspace? {
@@ -196,14 +315,16 @@ public final class AppModel {
         chats.contains { chatWorkspaceIds[$0.key] == workspaceId && $0.value.state == .running }
     }
 
-    /// The workspace's sidebar state (ROW-03): needs you › error › working › unread › idle.
+    /// The workspace's sidebar state (ROW-03, ROW-07): needs you › error › working › unread › pull request › merged ›
+    /// idle. The pull request comes from its stored state (PR-07), so every workspace shows one, also after a relaunch.
     public func status(workspaceId: String) -> WorkspaceStatus {
         let own = chats.filter { chatWorkspaceIds[$0.key] == workspaceId }.map(\.value)
         return WorkspaceStatus.resolve(
             needsYou: own.contains { $0.pendingPermission != nil || $0.pendingQuestion != nil },
             failure: own.lazy.compactMap(\.failure).first ?? setupFailure(workspaceId: workspaceId),
             working: own.contains { $0.state == .running },
-            unread: unreadWorkspaceIds.contains(workspaceId)
+            unread: unreadWorkspaceIds.contains(workspaceId),
+            pullRequest: pullRequests.panels[workspaceId]?.stored
         )
     }
 
@@ -235,6 +356,10 @@ public final class AppModel {
     /// A conversation's news reaches the user only when they are not watching its workspace: another one is
     /// selected, or the window is in the background. A turn that ended or failed also marks it unread (ROW-04).
     private func attention(_ kind: ChatAttention, workspaceId: String) {
+        // AGT-00, PR-07: a turn that ends refreshes its workspace's pull request, watched or not.
+        if kind == .finished || kind == .failed {
+            Task { await pullRequests.refresh(workspaceId: workspaceId, reason: .turnEnded) }
+        }
         let isWatching = isWindowActive && selectedWorkspaceId == workspaceId
         guard !isWatching else { return }
         if kind != .needsYou { unreadWorkspaceIds.insert(workspaceId) }
@@ -274,7 +399,7 @@ public final class AppModel {
     public func refreshEnvironment() async {
         let capture = captureEnvironment
         do {
-            loginEnvironment = try await Task.detached { try capture() }.value
+            loginEnvironment = try await Task.blocking { try capture() }.value
         } catch {
             loginEnvironment = ProcessInfo.processInfo.environment
             errorMessage = "Could not read your login shell environment (\(error)). Agents use Rocky's own environment."
@@ -283,13 +408,14 @@ public final class AppModel {
 
     public func addRepo(at url: URL) async {
         let service = WorktreeService(environment: loginEnvironment)
-        let isRoot = await Task.detached { service.isRepositoryRoot(url) }.value
+        let isRoot = await Task.blocking { service.isRepositoryRoot(url) }.value
         guard isRoot else {
             errorMessage = "\(url.path) is not the root of a git repository."
             return
         }
         do {
-            try store.add(Repo(name: url.lastPathComponent, path: url.path))
+            let color = RepoMonogram.pickColor(used: repos.compactMap(\.colorIndex))
+            try store.add(Repo(name: url.lastPathComponent, path: url.path, colorIndex: color))
             reload()
         } catch RockyStoreError.duplicateRepo {
             errorMessage = "\(url.lastPathComponent) is already in Rocky."
@@ -316,6 +442,13 @@ public final class AppModel {
         where repoWorkspaceIds.contains(workspaceId) && chats[conversationId]?.agent == .claude {
             await stopChat(conversationId: conversationId)
         }
+        // The conversation on screen reopens at once with the new instance: its view only opens a conversation when
+        // the workspace appears, so it waited on "Opening the conversation…" until the user left and came back (user
+        // report, 2026-09-24). Other workspaces reopen theirs when selected, so no agent starts unseen.
+        if let selected = selectedWorkspace, selected.repoId == repoId,
+           let conversationId = selectedConversationIds[selected.id], chats[conversationId] == nil {
+            await showConversation(workspace: selected, conversationId: conversationId)
+        }
     }
 
     public func setScripts(repoId: String, setup: String, run: String, archive: String, runMode: RunScriptMode) {
@@ -333,7 +466,8 @@ public final class AppModel {
     }
 
     /// Saves the paths or globs, one per line, that new workspaces of the repo get linked from the main clone on top
-    /// of the environment files `WorktreeLinker` finds on its own. Stored one clean entry per line; blank is none.
+    /// of the environment files `WorktreeLinker` finds on its own, and the `!<pattern>` lines turning those defaults
+    /// off (`LinkedPaths.Setting.text`). Stored one clean entry per line; blank is none.
     public func setLinkedPaths(repoId: String, _ text: String) {
         guard var repo = repo(id: repoId) else { return }
         let entries = ScriptConfigResolver.linkEntries(text)
@@ -414,7 +548,7 @@ public final class AppModel {
         busyMessage = "Creating workspace…"
         defer { busyMessage = nil }
         do {
-            let created = try await Task.detached {
+            let created = try await Task.blocking {
                 let name = WorkspaceNamer.pick(isTaken: { service.isTaken(repo: repoURL, name: $0) })
                 return try service.create(repo: repoURL, name: name)
             }.value
@@ -450,6 +584,7 @@ public final class AppModel {
             // Setup runs once, right after the worktree exists (spec Section 3). A failure shows in its tab and
             // leaves the workspace usable.
             if let setup = config?.setup {
+                await prepareEnvironment(for: workspace)
                 processesCreatingIfNeeded(for: workspace.id).setup = startScript(setup, title: "Setup", in: workspace)
             }
         } catch {
@@ -469,7 +604,7 @@ public final class AppModel {
         let worktree = URL(fileURLWithPath: workspace.path)
         let problem: String?
         do {
-            let result = try await Task.detached {
+            let result = try await Task.blocking {
                 try linker.link(mainClone: mainClone, into: worktree, extraEntries: extraEntries)
             }.value
             problem = result.rejected.isEmpty ? nil : Self.rejectedLinksMessage(result.rejected, workspaceName: workspace.name)
@@ -488,8 +623,9 @@ public final class AppModel {
 
     /// Stops the workspace's agent, scripts and terminals, runs its archive script, then removes the worktree
     /// folder and keeps its branch. A failing archive script deletes nothing and sets `archiveFailure`;
-    /// `skipArchive` is the user's "Remove Anyway". Git still refuses while there are uncommitted changes.
-    public func removeWorkspace(id: String, skipArchive: Bool = false) async {
+    /// `skipArchive` is the user's "Remove Anyway". Git still refuses while there are uncommitted changes, unless
+    /// `stashingChanges` (PR-06's "Archive anyway") puts them in a git stash of the repository first.
+    public func removeWorkspace(id: String, skipArchive: Bool = false, stashingChanges: Bool = false) async {
         guard let workspace = self.workspace(id: id), let repo = repo(id: workspace.repoId) else { return }
         archiveFailure = nil
         await stopChats(workspaceId: id)
@@ -503,6 +639,7 @@ public final class AppModel {
                 return
             }
             if let archive {
+                await prepareEnvironment(for: workspace)
                 busyMessage = "Running the archive script of \(workspace.name)…"
                 let session = startScript(archive, title: "Archive", in: workspace)
                 processesCreatingIfNeeded(for: id).archive = session
@@ -515,14 +652,27 @@ public final class AppModel {
             }
         }
         let service = WorktreeService(environment: loginEnvironment)
+        let branchService = GitBranchService(environment: loginEnvironment)
         let repoURL = URL(fileURLWithPath: repo.path)
         let worktreeURL = URL(fileURLWithPath: workspace.path)
+        let stashMessage = stashingChanges ? "Rocky archived \(workspace.name)" : nil
         do {
-            try await Task.detached { try service.remove(repo: repoURL, worktree: worktreeURL) }.value
+            try await Task.blocking {
+                if let stashMessage { try branchService.stashAll(worktree: worktreeURL, message: stashMessage) }
+                try service.remove(repo: repoURL, worktree: worktreeURL)
+            }.value
             try store.deleteWorkspace(id: id)
             processes.removeValue(forKey: id)
+            fetchedPullRequestHeads[id] = nil
+            rightPanelTabs[id] = nil
+            mergeMethodPicks[id] = nil
+            mergeConfirmations[id] = nil
+            mergeErrors[id] = nil
             if selectedWorkspaceId == id { selectedWorkspaceId = nil }
             reload()
+            // AGT-03's logs live outside the worktree, so they go with the workspace.
+            let ciLogs = CILogs.folder(for: id, in: paths.ciLogs)
+            await Task.blocking { _ = try? FileManager.default.removeItem(at: ciLogs) }.value
         } catch {
             errorMessage = "Could not remove \(workspace.name): \(error)"
         }
@@ -647,6 +797,7 @@ public final class AppModel {
     @discardableResult
     private func makeChat(workspace: Workspace, record: ChatSessionRecord, agent: AgentKind) async throws -> ChatSessionModel {
         await launchEnvironment?.value
+        await prepareEnvironment(for: workspace)
         let current = self.workspace(id: workspace.id) ?? workspace
         let environment = self.environment(for: current)
         let launch = try await resolveLaunch(agent, cwd: URL(fileURLWithPath: current.path), environment: environment)
@@ -740,6 +891,7 @@ public final class AppModel {
             errorMessage = "\(workspace.name) has no run script. Add one in the repo settings or in rocky.json."
             return
         }
+        await prepareEnvironment(for: workspace)
         let own = processesCreatingIfNeeded(for: workspaceId)
         if own.run?.state.isRunning == true { return }
         if config.runMode == .nonconcurrent {
@@ -754,9 +906,13 @@ public final class AppModel {
         await processes[workspaceId]?.run?.stop()
     }
 
-    /// Opens a terminal tab: the login shell, in the worktree, with the workspace environment.
+    /// Opens a terminal tab: the login shell, in the worktree, with the workspace environment. It waits for the
+    /// repository account's token the first time (ENV-01).
     @discardableResult
-    public func openTerminal(workspaceId: String) -> PTYSession? {
+    public func openTerminal(workspaceId: String) async -> PTYSession? {
+        guard let found = self.workspace(id: workspaceId) else { return nil }
+        await prepareEnvironment(for: found)
+        // Re-read: the workspace may have been removed or renamed meanwhile.
         guard let workspace = self.workspace(id: workspaceId) else { return nil }
         let own = processesCreatingIfNeeded(for: workspaceId)
         let environment = self.environment(for: workspace)
@@ -800,9 +956,657 @@ public final class AppModel {
         return WorkspaceEnvironment.make(
             login: loginEnvironment,
             workspace: context,
+            githubToken: githubToken(for: repo),
             repoVariables: repoVariableValues(repoId: repo.id),
             claudeConfigDir: repo.claudeConfigDir
         )
+    }
+
+    // MARK: GitHub account (ACC-01, ENV-01)
+
+    /// The repository's GitHub remote, from `git remote get-url origin` (and `ssh -G` for an SSH alias), looked up
+    /// once per launch. nil when origin is missing or not on github.com.
+    public func githubRepository(for repo: Repo) async -> GitHubRepository? {
+        await launchEnvironment?.value
+        let lookup: Task<GitHubRepository?, Never>
+        if let running = githubRepositoryLookups[repo.id] {
+            lookup = running
+        } else {
+            let lookUp = lookUpGitHubRepository
+            let clone = URL(fileURLWithPath: repo.path)
+            let environment = loginEnvironment
+            lookup = Task.blocking { lookUp(clone, environment) }
+            githubRepositoryLookups[repo.id] = lookup
+        }
+        let repository = await lookup.value
+        knownGitHubRepositories[repo.id] = repository
+        return repository
+    }
+
+    /// The repository's account: its setting, else the default (`defaultGitHubLogin(for:)`).
+    public func githubLogin(for repo: Repo) async -> String? {
+        let current = self.repo(id: repo.id) ?? repo
+        if let login = current.githubLogin { return login }
+        return await defaultGitHubLogin(for: current)
+    }
+
+    /// ACC-01's default: the gh login equal to the remote's owner; else, for a repository whose owner is no login (an
+    /// organization's), the first account, the active one first, whose token can read it (`githubReaders`); else gh's
+    /// active account. nil for a repository without a GitHub remote, and when gh is missing or has no account.
+    public func defaultGitHubLogin(for repo: Repo) async -> String? {
+        var login: String?
+        if let repository = await githubRepository(for: repo) {
+            do {
+                let logins = try await githubAccounts.logins()
+                let active = try await githubAccounts.activeLogin()
+                let order = GitHubAccounts.readProbeOrder(owner: repository.owner, logins: logins, active: active)
+                let canRead = order.isEmpty ? [:] : await githubReaders(of: repository, repoId: repo.id, order: order)
+                login = GitHubAccounts.defaultLogin(owner: repository.owner, logins: logins, active: active, canRead: canRead)
+            } catch {
+                // No gh or no account: the panel says "GitHub access required" (ERR-01).
+            }
+        }
+        defaultGitHubLogins[repo.id] = login
+        return login
+    }
+
+    /// ACC-01's probe: asks the logins of `order` in turn whether their token can read the repository, one request
+    /// each (`GitHubClient.canRead`), and stops at the first that can. Asked once per launch for each repository and
+    /// order, never on a timer, and shared by concurrent callers. A probe that an account left unanswered (offline,
+    /// rate limited) is asked again by the next caller, since that account might have come first.
+    private func githubReaders(of repository: GitHubRepository, repoId: String, order: [String]) async -> [String: Bool] {
+        let probe: Task<GitHubReadProbe, Never>
+        if let known = githubReadProbes[repoId], known.order == order {
+            probe = known.probe
+        } else {
+            let clients = order.map { (login: $0, client: githubClient(login: $0)) }
+            probe = Task { await Self.probeReaders(of: repository, clients: clients) }
+            githubReadProbes[repoId] = (order, probe)
+        }
+        let result = await probe.value
+        if !result.isSettled, githubReadProbes[repoId]?.probe == probe {
+            githubReadProbes[repoId] = nil
+        }
+        return result.canRead
+    }
+
+    /// A login gh has no token for cannot read; any other failure leaves the login unanswered.
+    private static func probeReaders(of repository: GitHubRepository, clients: [(login: String, client: GitHubClient)]) async -> GitHubReadProbe {
+        var result = GitHubReadProbe()
+        for (login, client) in clients {
+            do {
+                let readable = try await client.canRead(repository: repository)
+                result.canRead[login] = readable
+                if readable { return result }
+            } catch is GitHubAccountError {
+                result.canRead[login] = false
+            } catch {
+                result.isSettled = false
+            }
+        }
+        return result
+    }
+
+    /// Stores the repository's account; nil goes back to the default. Running agents, terminals and scripts keep the
+    /// token they started with; the next process of the repository gets the new account's (ENV-01).
+    public func setGitHubLogin(repoId: String, _ login: String?) {
+        guard var repo = repo(id: repoId) else { return }
+        let chosen = (login?.isEmpty ?? true) ? nil : login
+        guard chosen != repo.githubLogin else { return }
+        repo.githubLogin = chosen
+        do {
+            try store.update(repo)
+            reload()
+        } catch {
+            errorMessage = "\(error)"
+        }
+    }
+
+    /// Fetches the repository account's token once per launch, so `environment(for:)` can give it to a process as
+    /// `GH_TOKEN`. Every place that starts a workspace process awaits it first. A failure does not stop the process:
+    /// it starts without the token, and the panel says "GitHub access required" (ERR-01).
+    public func prepareEnvironment(for workspace: Workspace) async {
+        await launchEnvironment?.value
+        guard let repo = repo(id: workspace.repoId), let login = await githubLogin(for: repo) else { return }
+        _ = try? await githubAccounts.token(for: login)
+    }
+
+    /// The token fetched for the repository's account in this launch, if any. Never runs gh.
+    private func githubToken(for repo: Repo) -> String? {
+        guard let login = repo.githubLogin ?? defaultGitHubLogins[repo.id] else { return nil }
+        return githubAccounts.cachedToken(for: login)
+    }
+
+    // MARK: Pull request (PR-07)
+
+    /// What the workspace's panel header shows (HDR-02, ERR-01): "Working…" while its selected conversation's turn
+    /// runs (AGT-00).
+    public func pullRequestHeader(workspaceId: String) -> HeaderPresentation {
+        let working = existingChat(workspaceId: workspaceId)?.state == .running
+        return (pullRequests.panels[workspaceId] ?? PullRequestPanelState()).header(agentWorking: working)
+    }
+
+    /// The GitHub client of a login: every request carries that login's token, fetched once per launch (ACC-01).
+    func githubClient(login: String) -> GitHubClient {
+        if let client = githubClients[login] { return client }
+        let accounts = githubAccounts
+        let client = GitHubClient(session: githubSession, token: { try await accounts.token(for: login) })
+        githubClients[login] = client
+        return client
+    }
+
+    /// The monitor's loader: the repository and its account (ACC-01), the branch's local status on event triggers
+    /// only (GST-01), the snapshot against the base (Decisions), and the pending comments while they are visible
+    /// (REV-01). A tick runs no git and no gh.
+    func loadPullRequest(workspaceId: String, includeLocal: Bool, comments: Bool) async throws -> (PullRequestSnapshot, LocalGitStatus?, [PendingComment]?) {
+        await launchEnvironment?.value
+        guard let workspace = self.workspace(id: workspaceId), let repo = self.repo(id: workspace.repoId) else {
+            throw CancellationError()
+        }
+        guard let repository = await githubRepository(for: repo) else { throw PullRequestLoadError.noGitHubRemote }
+        let login = await githubLogin(for: repo)
+        pullRequests.setLogin(login, workspaceId: workspaceId)
+        guard let login else { throw GitHubAccountError.notLoggedIn(nil) }
+        let client = githubClient(login: login)
+        let previous = pullRequests.panels[workspaceId]
+        let known = previous?.snapshot?.pullRequest
+
+        var local: LocalGitStatus?
+        if includeLocal {
+            let gitBase = known.map { "origin/\($0.baseRefName)" } ?? workspace.baseRef
+            local = await localStatus(of: workspace, base: gitBase)
+        }
+        // The live branch, so a branch the agent renamed keeps its pull request (Decisions).
+        let branch = local?.branch ?? previous?.local?.branch ?? workspace.branch
+        // The pull request's base once known, else the workspace's; nil compares with the default branch.
+        let base = known?.baseRefName ?? workspace.baseRef.map(WorkspaceContext.branchName(fromBaseRef:))
+        var snapshot = try await client.snapshot(repository: repository, branch: branch, base: base)
+        if let pr = snapshot.pullRequest, pr.baseRefName != (base ?? snapshot.repository.defaultBranchName) {
+            // The first sight of a pull request whose base is another branch: its base names every label and compare.
+            snapshot = try await client.snapshot(repository: repository, branch: branch, base: pr.baseRefName)
+        }
+        if includeLocal, let pr = snapshot.pullRequest, !pr.isMerged, let current = local {
+            local = await fetchPullRequestHead(pr, workspace: workspace) ?? current
+        }
+        var pending: [PendingComment]?
+        if comments, let pr = snapshot.pullRequest, !pr.isMerged {
+            // Comments failing leave the last ones on screen; the snapshot still counts.
+            pending = try? await client.pendingComments(repository: repository, number: pr.number)
+        }
+        return (snapshot, local, pending)
+    }
+
+    /// GST-01's local status, off the main actor; nil when git fails (the worktree is gone, for example).
+    private func localStatus(of workspace: Workspace, base: String?) async -> LocalGitStatus? {
+        let service = GitBranchService(environment: environment(for: workspace))
+        let worktree = URL(fileURLWithPath: workspace.path)
+        return await Task.blocking { try? service.status(worktree: worktree, base: base) }.value
+    }
+
+    /// GST-01's upstream: when GitHub's head differs from `refs/remotes/origin/<branch>`, fetch the branch once, so
+    /// ahead and behind the upstream are current. Returns the status after the fetch; nil when nothing was fetched.
+    private func fetchPullRequestHead(_ pr: PullRequestInfo, workspace: Workspace) async -> LocalGitStatus? {
+        guard fetchedPullRequestHeads[workspace.id] != pr.headRefOid, !pr.headRefOid.isEmpty else { return nil }
+        fetchedPullRequestHeads[workspace.id] = pr.headRefOid
+        let service = GitBranchService(environment: environment(for: workspace))
+        let worktree = URL(fileURLWithPath: workspace.path)
+        let branch = pr.headRefName
+        let head = pr.headRefOid
+        let base = "origin/\(pr.baseRefName)"
+        return await Task.blocking { () -> LocalGitStatus? in
+            guard service.remoteBranchOid(worktree: worktree, branch: branch) != head else { return nil }
+            guard (try? service.fetch(worktree: worktree, branch: branch)) != nil else { return nil }
+            return try? service.status(worktree: worktree, base: base)
+        }.value
+    }
+
+    // MARK: Pull request actions (GST-03, CHK-02)
+
+    /// The base every label, prompt and compare names (Decisions): the pull request's once there is one, else the
+    /// workspace's `baseRef` as a branch name, else the repository's default branch (Open question 9).
+    public func pullRequestBase(workspaceId: String) -> String? {
+        let snapshot = pullRequests.panels[workspaceId]?.snapshot
+        if let base = snapshot?.pullRequest?.baseRefName { return base }
+        if let baseRef = workspace(id: workspaceId)?.baseRef { return WorkspaceContext.branchName(fromBaseRef: baseRef) }
+        return snapshot?.repository.defaultBranchName
+    }
+
+    public func isRunning(_ action: PullRequestAction, workspaceId: String) -> Bool {
+        runningPullRequestActions[workspaceId]?.contains(action) == true
+    }
+
+    /// `GST-03`'s Pull, `git pull --ff-only`. Not with uncommitted changes, whose button says "Commit or discard the
+    /// changes first".
+    public func pullBranch(workspaceId: String) async {
+        guard let workspace = workspace(id: workspaceId),
+              (pullRequests.panels[workspaceId]?.local?.uncommitted ?? 0) == 0 else { return }
+        await runBranchStep(.pull, workspace: workspace) { service, worktree in
+            try service.pull(worktree: worktree)
+        }
+    }
+
+    /// `GST-03`'s Push: `git push`, or `git push -u origin HEAD` for a branch without an upstream. A push the remote
+    /// refuses says "The remote has new commits. Pull first."
+    public func pushBranch(workspaceId: String) async {
+        guard let workspace = workspace(id: workspaceId) else { return }
+        let hasUpstream = pullRequests.panels[workspaceId]?.local?.upstream != nil
+        await runBranchStep(.push, workspace: workspace) { service, worktree in
+            try service.push(worktree: worktree, hasUpstream: hasUpstream)
+        }
+    }
+
+    /// `CHK-02`: GitHub's re-run of the failed jobs, once per distinct workflow run of the failed check runs (status
+    /// contexts of other CI systems cannot be re-run), then a refresh, which shows them running again.
+    public func rerunFailedChecks(workspaceId: String) async {
+        guard let pr = pullRequests.panels[workspaceId]?.snapshot?.pullRequest,
+              let workspace = workspace(id: workspaceId), let repo = repo(id: workspace.repoId) else { return }
+        let runIds = pr.failedWorkflowRunIds
+        guard !runIds.isEmpty else { return }
+        let ran = await perform(.rerun, workspaceId: workspaceId) {
+            do {
+                guard let repository = await self.githubRepository(for: repo) else { throw PullRequestLoadError.noGitHubRemote }
+                let client = try await self.githubClient(for: repo)
+                for runId in runIds {
+                    try await client.rerunFailedJobs(repository: repository, runId: runId)
+                }
+            } catch {
+                self.onToast?("Couldn’t re-run the failed jobs: \(Self.gitHubFailureText(error))")
+            }
+        }
+        guard ran else { return }
+        await pullRequests.refresh(workspaceId: workspaceId, reason: .action)
+    }
+
+    /// Runs one of `GST-03`'s git steps off the main actor. The token comes first, so an HTTPS remote signs with the
+    /// repository's account (`ENV-01`); a failure's text goes to the toast (`ERR-01`); then a refresh (`PR-07`).
+    private func runBranchStep(
+        _ action: PullRequestAction,
+        workspace: Workspace,
+        _ step: @escaping @Sendable (GitBranchService, URL) throws -> Void
+    ) async {
+        let ran = await perform(action, workspaceId: workspace.id) {
+            await self.prepareEnvironment(for: workspace)
+            let current = self.workspace(id: workspace.id) ?? workspace
+            let service = GitBranchService(environment: self.environment(for: current))
+            let worktree = URL(fileURLWithPath: current.path)
+            let failure = await Task.blocking { () -> GitBranchError? in
+                do {
+                    try step(service, worktree)
+                    return nil
+                } catch {
+                    return GitBranchService.branchError(error)
+                }
+            }.value
+            if let failure { self.onToast?(failure.description) }
+        }
+        guard ran else { return }
+        await pullRequests.refresh(workspaceId: workspace.id, reason: .action)
+    }
+
+    /// Marks `action` running in the workspace while `body` runs. Returns false, without running it, when that action
+    /// already runs there.
+    @discardableResult
+    private func perform(_ action: PullRequestAction, workspaceId: String, _ body: @MainActor () async -> Void) async -> Bool {
+        guard !isRunning(action, workspaceId: workspaceId) else { return false }
+        runningPullRequestActions[workspaceId, default: []].insert(action)
+        await body()
+        runningPullRequestActions[workspaceId]?.remove(action)
+        if runningPullRequestActions[workspaceId]?.isEmpty == true { runningPullRequestActions[workspaceId] = nil }
+        return true
+    }
+
+    /// The client of the repository's account. Without an account: "GitHub access required" (`ERR-01`).
+    private func githubClient(for repo: Repo) async throws -> GitHubClient {
+        guard let login = await githubLogin(for: repo) else { throw GitHubAccountError.notLoggedIn(nil) }
+        return githubClient(login: login)
+    }
+
+    /// What a failed GitHub action says in the toast: GitHub's own message, else `ERR-01`'s label. Neither carries a
+    /// token.
+    static func gitHubFailureText(_ error: Error) -> String {
+        let panelError = PanelError(error)
+        return panelError.detail ?? panelError.label
+    }
+
+    // MARK: Actions through the agent (AGT-00…AGT-06, GST-02)
+
+    /// `AGT-00`: whether the panel's agent buttons can send now. They cannot while the selected conversation's turn
+    /// runs, or while its agent is stopped.
+    public func agentActionAvailability(workspaceId: String) -> AgentActionAvailability {
+        guard let chat = existingChat(workspaceId: workspaceId) else { return .available }
+        switch chat.state {
+        case .running: return .working
+        case .stopped: return .stopped
+        case .idle, .starting, .ready: return .available
+        }
+    }
+
+    /// `AGT-00`: `text` goes, as if typed, to the workspace's selected conversation, whose agent starts if needed, and
+    /// the workspace shows that conversation instead of a file tab. Never queued (user decision): while its turn runs,
+    /// or with its agent stopped, nothing is sent, also when the turn started while this one waited. Returns when the
+    /// turn ends, whose end refreshes the pull request (`PR-07`).
+    public func sendAgentAction(workspaceId: String, text: String, attachments: [URL]) async {
+        guard agentActionAvailability(workspaceId: workspaceId) == .available, let workspace = workspace(id: workspaceId) else { return }
+        if existingChat(workspaceId: workspaceId) == nil {
+            await showConversations(workspace: workspace)
+        }
+        guard let chat = existingChat(workspaceId: workspaceId) else { return }
+        selectedFiles[workspaceId] = nil
+        guard agentActionAvailability(workspaceId: workspaceId) == .available else { return }
+        await chat.send(text, attachments: attachments)
+    }
+
+    /// `AGT-01`: the agent commits, pushes and runs `gh pr create` against the base; `draft` adds `--draft`.
+    public func createPullRequest(workspaceId: String, draft: Bool) async {
+        guard let base = pullRequestBase(workspaceId: workspaceId) else { return }
+        await sendAgentAction(workspaceId: workspaceId, text: AgentPrompts.createPullRequest(base: base, draft: draft), attachments: [])
+    }
+
+    /// `AGT-02`.
+    public func commitAndPush(workspaceId: String) async {
+        await sendAgentAction(workspaceId: workspaceId, text: AgentPrompts.commitAndPush(), attachments: [])
+    }
+
+    /// `AGT-06`.
+    public func resolveIncompatibility(workspaceId: String) async {
+        await sendAgentAction(workspaceId: workspaceId, text: AgentPrompts.resolveIncompatibility(), attachments: [])
+    }
+
+    /// `AGT-04`, rebasing or merging by the worktree's `git config pull.rebase`.
+    public func resolveConflicts(workspaceId: String) async {
+        guard agentActionAvailability(workspaceId: workspaceId) == .available,
+              let workspace = workspace(id: workspaceId), let base = pullRequestBase(workspaceId: workspaceId) else { return }
+        let rebase = await prefersRebase(workspace)
+        await sendAgentAction(workspaceId: workspaceId, text: AgentPrompts.resolveConflicts(base: base, rebase: rebase), attachments: [])
+    }
+
+    /// `AGT-01`'s "Create PR manually": GitHub's compare page of the base with the live branch. nil until the
+    /// repository's GitHub remote has been looked up (the panel's first refresh does it).
+    public func compareURL(workspaceId: String) -> URL? {
+        guard let workspace = workspace(id: workspaceId), let repository = knownGitHubRepositories[workspace.repoId],
+              let base = pullRequestBase(workspaceId: workspaceId) else { return nil }
+        let branch = pullRequests.panels[workspaceId]?.local?.branch ?? workspace.branch
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = GitHubRemote.host
+        components.path = "/\(repository.owner)/\(repository.name)/compare/\(base)...\(branch)"
+        components.queryItems = [URLQueryItem(name: "expand", value: "1")]
+        return components.url
+    }
+
+    /// `AGT-03`: the failure logs of the failed checks, saved and attached, and a line for each check without one,
+    /// then the prompt.
+    public func fixFailingChecks(workspaceId: String) async {
+        guard agentActionAvailability(workspaceId: workspaceId) == .available,
+              let workspace = workspace(id: workspaceId), let repo = repo(id: workspace.repoId),
+              let pr = pullRequests.panels[workspaceId]?.snapshot?.pullRequest else { return }
+        var prepared: (notes: [String], logs: [URL])?
+        await perform(.fixErrors, workspaceId: workspaceId) {
+            prepared = await self.prepareCILogs(for: pr, workspace: workspace, repo: repo)
+        }
+        guard let prepared else { return }
+        await sendAgentAction(workspaceId: workspaceId, text: AgentPrompts.fixFailingChecks(notes: prepared.notes), attachments: prepared.logs)
+    }
+
+    /// `GST-02`, Conductor's order: uncommitted changes go to the agent; else `git fetch origin <base>`; a branch with
+    /// no commits of its own fast-forwards (`git merge --ff-only`, "Pulled latest changes. You're up to date!"); a
+    /// diverged one goes to the agent, to merge or rebase by `git config pull.rebase`. Rocky itself never creates a
+    /// merge commit and never force-pushes.
+    public func pullFromBase(workspaceId: String) async {
+        guard agentActionAvailability(workspaceId: workspaceId) == .available,
+              let workspace = workspace(id: workspaceId), let base = pullRequestBase(workspaceId: workspaceId) else { return }
+        var outcome: Result<BaseSyncStep, GitBranchError>?
+        await perform(.pullFromBase, workspaceId: workspaceId) {
+            await self.prepareEnvironment(for: workspace)
+            let current = self.workspace(id: workspace.id) ?? workspace
+            let service = GitBranchService(environment: self.environment(for: current))
+            let worktree = URL(fileURLWithPath: current.path)
+            outcome = await Task.blocking { () -> Result<BaseSyncStep, GitBranchError> in
+                do {
+                    return .success(try AppModel.syncWithBase(base, service: service, worktree: worktree))
+                } catch {
+                    return .failure(GitBranchService.branchError(error))
+                }
+            }.value
+        }
+        switch outcome {
+        case .success(.commitFirst):
+            await sendAgentAction(workspaceId: workspaceId, text: AgentPrompts.commitThenBringInBase(base: base), attachments: [])
+        case .success(.diverged(let rebase)):
+            await sendAgentAction(workspaceId: workspaceId, text: AgentPrompts.bringInBase(base: base, rebase: rebase), attachments: [])
+        case .success(.fastForwarded):
+            onToast?("Pulled latest changes. You're up to date!")
+            await pullRequests.refresh(workspaceId: workspaceId, reason: .action)
+        case .failure(let failure):
+            onToast?(failure.description)
+            await pullRequests.refresh(workspaceId: workspaceId, reason: .action)
+        case nil:
+            return
+        }
+    }
+
+    /// `GST-02`'s git steps, blocking: what the worktree's own status and `origin/<base>` say comes next.
+    nonisolated static func syncWithBase(_ base: String, service: GitBranchService, worktree: URL) throws -> BaseSyncStep {
+        let remoteBase = "origin/\(base)"
+        if try service.status(worktree: worktree, base: remoteBase).uncommitted > 0 { return .commitFirst }
+        try service.fetch(worktree: worktree, branch: base)
+        guard try service.ownCommits(worktree: worktree, since: remoteBase) == 0 else {
+            return .diverged(rebase: service.prefersRebase(worktree: worktree))
+        }
+        try service.fastForward(worktree: worktree, to: remoteBase)
+        return .fastForwarded
+    }
+
+    private func prefersRebase(_ workspace: Workspace) async -> Bool {
+        let service = GitBranchService(environment: environment(for: workspace))
+        let worktree = URL(fileURLWithPath: workspace.path)
+        return await Task.blocking { service.prefersRebase(worktree: worktree) }.value
+    }
+
+    /// `AGT-03`'s attachments and notes. The workspace's old logs are deleted first. Each failed GitHub Actions check
+    /// run gets the last 1000 lines of its job's log saved and attached; a job that never started, or whose log cannot
+    /// be read, gives its annotations; any other check a line with its URL.
+    private func prepareCILogs(for pr: PullRequestInfo, workspace: Workspace, repo: Repo) async -> (notes: [String], logs: [URL])? {
+        let root = paths.ciLogs
+        let workspaceId = workspace.id
+        let folder: URL
+        do {
+            folder = try await Task.blocking { try CILogs.freshFolder(for: workspaceId, in: root) }.value
+        } catch {
+            onToast?("Couldn’t prepare the CI logs: \(error.localizedDescription)")
+            return nil
+        }
+        let repository = await githubRepository(for: repo)
+        let client = try? await githubClient(for: repo)
+        var notes: [String] = []
+        var logs: [URL] = []
+        for check in pr.checks where check.state == .failed {
+            if let repository, let client, let jobId = check.checkRunId, check.workflowRunId != nil {
+                if check.startedAt != nil,
+                   let log = await saveCILog(client: client, repository: repository, jobId: jobId, checkName: check.name, folder: folder) {
+                    logs.append(log)
+                    continue
+                }
+                let messages = (try? await client.annotations(repository: repository, checkRunId: jobId)) ?? []
+                if !messages.isEmpty {
+                    notes += messages.map { AgentPrompts.checkNote(name: check.name, detail: $0) }
+                    continue
+                }
+            }
+            notes.append(AgentPrompts.checkNote(name: check.name, detail: check.url?.absoluteString ?? "failed"))
+        }
+        return (notes, logs)
+    }
+
+    /// Downloads a job's log to a temporary file (never into memory), keeps its last lines in `folder` and deletes the
+    /// download. nil when GitHub has no log for it.
+    private func saveCILog(client: GitHubClient, repository: GitHubRepository, jobId: Int, checkName: String, folder: URL) async -> URL? {
+        guard let download = try? await client.jobLog(repository: repository, jobId: jobId) else { return nil }
+        return await Task.blocking { () -> URL? in
+            defer { try? FileManager.default.removeItem(at: download) }
+            return try? CILogs.save(tailOf: download, checkName: checkName, in: folder)
+        }.value
+    }
+
+    // MARK: Comments (REV-01, AGT-05)
+
+    /// `AGT-05`: the pending comments with these `ids` (nil: every one, "Add all to chat"), in the panel's order, go
+    /// to the agent as one prompt (`AGT-00`), and their rows show the check. Nothing goes while the conversation cannot
+    /// take a prompt, nor without a comment to send.
+    public func sendComments(workspaceId: String, ids: [String]?) async {
+        guard agentActionAvailability(workspaceId: workspaceId) == .available,
+              let panel = pullRequests.panels[workspaceId], let pr = panel.snapshot?.pullRequest else { return }
+        let chosen = ids.map { Set($0) }
+        let comments = panel.comments.filter { chosen?.contains($0.id) ?? true }
+        guard !comments.isEmpty else { return }
+        pullRequests.markCommentsAdded(comments.map(\.id), workspaceId: workspaceId)
+        let prompt = AgentPrompts.reviewComments(number: pr.number, comments: comments)
+        await sendAgentAction(workspaceId: workspaceId, text: prompt, attachments: [])
+    }
+
+    /// `REV-01`'s Hide: the comment leaves the list for this pull request, also after a relaunch.
+    public func hideComment(workspaceId: String, id: String) {
+        pullRequests.hideComment(id, workspaceId: workspaceId)
+    }
+
+    // MARK: Merge, ready for review and archive (PR-05, PR-06, PR-08, SET-01)
+
+    /// How long `PR-05`'s "Confirm …" waits for the second click.
+    public static let mergeConfirmationTime: Duration = .seconds(4)
+
+    /// The methods the merge button offers (`PR-05`): the repository's, in the order squash, rebase, merge; none
+    /// before the first refresh.
+    public func mergeMethods(workspaceId: String) -> [MergeMethod] {
+        guard let snapshot = pullRequests.panels[workspaceId]?.snapshot else { return [] }
+        return MergeMethods.available(repository: snapshot.repository)
+    }
+
+    /// The method the merge button uses: the menu's pick until Rocky quits (never stored), else
+    /// `MergeMethods.initial`. Rebase does not count while GitHub cannot rebase the branch cleanly, unless it is the
+    /// repository's only method. nil before the first refresh.
+    public func mergeMethod(workspaceId: String) -> MergeMethod? {
+        guard let snapshot = pullRequests.panels[workspaceId]?.snapshot else { return nil }
+        var usable = MergeMethods.available(repository: snapshot.repository)
+        if snapshot.pullRequest?.canBeRebased == false, usable.count > 1 {
+            usable.removeAll { $0 == .rebase }
+        }
+        if let pick = mergeMethodPicks[workspaceId], usable.contains(pick) { return pick }
+        return MergeMethods.initial(available: usable, viewerDefault: snapshot.repository.viewerDefaultMergeMethod)
+    }
+
+    /// The menu's pick, kept for the workspace until Rocky quits. It cancels a confirmation (`PR-05`).
+    public func setMergeMethod(workspaceId: String, _ method: MergeMethod) {
+        mergeMethodPicks[workspaceId] = method
+        mergeConfirmations[workspaceId] = nil
+        mergeErrors[workspaceId] = nil
+    }
+
+    /// Whether the merge button says "Confirm …" (`PR-05`). The header's button and the Git status row's share it.
+    public func isConfirmingMerge(workspaceId: String) -> Bool {
+        mergeConfirmations[workspaceId] != nil
+    }
+
+    /// `PR-05`'s two clicks: the first turns the merge button into "Confirm …" for `mergeConfirmationTime`, the second
+    /// within that time merges.
+    public func confirmOrMerge(workspaceId: String) async {
+        guard !isRunning(.merge, workspaceId: workspaceId) else { return }
+        guard mergeConfirmations[workspaceId] != nil else {
+            let token = UUID()
+            mergeConfirmations[workspaceId] = token
+            mergeErrors[workspaceId] = nil
+            Task { [weak self] in
+                try? await Task.sleep(for: Self.mergeConfirmationTime)
+                guard let self, self.mergeConfirmations[workspaceId] == token else { return }
+                self.mergeConfirmations[workspaceId] = nil
+            }
+            return
+        }
+        await merge(workspaceId: workspaceId)
+    }
+
+    /// `PR-05`: GitHub's `mergePullRequest` with the workspace's method, then a refresh. A refusal shows under the
+    /// header (`mergeErrors`). Rocky never deletes the branch, here or on GitHub.
+    public func merge(workspaceId: String) async {
+        mergeConfirmations[workspaceId] = nil
+        guard let pr = pullRequests.panels[workspaceId]?.snapshot?.pullRequest, !pr.isMerged,
+              let method = mergeMethod(workspaceId: workspaceId),
+              let workspace = workspace(id: workspaceId), let repo = repo(id: workspace.repoId) else { return }
+        mergeErrors[workspaceId] = nil
+        let ran = await perform(.merge, workspaceId: workspaceId) {
+            do {
+                let client = try await self.githubClient(for: repo)
+                try await client.merge(id: pr.id, method: method)
+            } catch {
+                self.mergeErrors[workspaceId] = "Couldn’t merge: \(Self.gitHubFailureText(error))"
+            }
+        }
+        guard ran else { return }
+        await pullRequests.refresh(workspaceId: workspaceId, reason: .action)
+    }
+
+    /// Hides `PR-05`'s error line.
+    public func dismissMergeError(workspaceId: String) {
+        mergeErrors[workspaceId] = nil
+    }
+
+    /// `PR-08`: GitHub's `markPullRequestReadyForReview`, with no confirmation, then a refresh. A failure goes to the
+    /// toast, like CHK-02's re-run.
+    public func markReadyForReview(workspaceId: String) async {
+        guard let pr = pullRequests.panels[workspaceId]?.snapshot?.pullRequest, pr.isDraft,
+              let workspace = workspace(id: workspaceId), let repo = repo(id: workspace.repoId) else { return }
+        let ran = await perform(.readyForReview, workspaceId: workspaceId) {
+            do {
+                let client = try await self.githubClient(for: repo)
+                try await client.markReadyForReview(id: pr.id)
+            } catch {
+                self.onToast?("Couldn’t mark the pull request ready for review: \(Self.gitHubFailureText(error))")
+            }
+        }
+        guard ran else { return }
+        await pullRequests.refresh(workspaceId: workspaceId, reason: .action)
+    }
+
+    /// The worktree's uncommitted changes and untracked files right now, for `PR-06`'s question and `SET-01`'s check;
+    /// nil when git cannot tell (the worktree is gone, for example).
+    public func uncommittedChangeCount(workspaceId: String) async -> Int? {
+        guard let workspace = workspace(id: workspaceId) else { return nil }
+        let service = GitBranchService(environment: loginEnvironment)
+        let worktree = URL(fileURLWithPath: workspace.path)
+        return await Task.blocking { try? service.status(worktree: worktree, base: nil).uncommitted }.value
+    }
+
+    /// `PR-06`'s question before archiving a worktree with changes: "tokyo has 3 uncommitted changes. Archive anyway?"
+    public static func archiveQuestion(workspaceName: String, uncommitted: Int) -> String {
+        "\(workspaceName) has \(uncommitted) uncommitted \(uncommitted == 1 ? "change" : "changes"). Archive anyway?"
+    }
+
+    /// `PR-06`: today's remove flow (the archive script, then the worktree's removal; the branch and the remote branch
+    /// stay). `stashingChanges` is the answer Archive to `archiveQuestion`: the changes go to a git stash of the
+    /// repository first, so git can remove the worktree and nothing is lost.
+    public func archiveMergedWorkspace(workspaceId: String, stashingChanges: Bool = false) async {
+        await perform(.archive, workspaceId: workspaceId) {
+            await self.removeWorkspace(id: workspaceId, stashingChanges: stashingChanges)
+        }
+    }
+
+    /// `SET-01`: with Archive on merge on, a merge the monitor sees archives the workspace (`PR-06`).
+    private func pullRequestMerged(workspaceId: String) {
+        guard archiveOnMerge, let workspace = workspace(id: workspaceId) else { return }
+        Task { await archiveAfterMerge(workspace) }
+    }
+
+    /// `SET-01` never asks: a worktree with uncommitted changes is left as it is, and the toast says so; one git
+    /// cannot read is left alone too. "Archived tokyo" once the workspace is gone.
+    private func archiveAfterMerge(_ workspace: Workspace) async {
+        guard let uncommitted = await uncommittedChangeCount(workspaceId: workspace.id) else { return }
+        guard uncommitted == 0 else {
+            onToast?("\(workspace.name) merged but has uncommitted changes; not archived")
+            return
+        }
+        await archiveMergedWorkspace(workspaceId: workspace.id)
+        if self.workspace(id: workspace.id) == nil {
+            onToast?("Archived \(workspace.name)")
+        }
     }
 
     private func repoVariableValues(repoId: String) -> [String: String] {
@@ -856,7 +1660,7 @@ public final class AppModel {
             busyMessage = kind == .claude ? "Installing the Claude adapter (one time)…" : "Installing OpenCode (one time)…"
             defer { busyMessage = nil }
             let install = installAdapter
-            try await Task.detached { try install(kind, nil, paths, environment) }.value
+            try await Task.blocking { try install(kind, nil, paths, environment) }.value
             refreshInstalledAgentVersions()
             return try makeLaunch(agent, cwd, environment, paths)
         }
@@ -935,7 +1739,7 @@ public final class AppModel {
         let paths = self.paths
         let environment = loginEnvironment
         do {
-            try await Task.detached { try install(kind, version, paths, environment) }.value
+            try await Task.blocking { try install(kind, version, paths, environment) }.value
             agentUpdateError = nil
         } catch {
             agentUpdateError = "Could not install \(kind.displayName) \(version): \(error)"
@@ -945,14 +1749,30 @@ public final class AppModel {
 
     private func reload() {
         do {
-            repos = try store.repos()
+            var repos = try store.repos()
+            if repos.contains(where: { $0.colorIndex == nil }) { repos = try assignMissingRepoColors(repos) }
+            self.repos = repos
             var byRepo: [String: [Workspace]] = [:]
             for repo in repos { byRepo[repo.id] = try store.workspaces(repoId: repo.id) }
             workspaces = byRepo
+            pullRequests.seed(byRepo.values.flatMap { $0 })
             refreshWorkspaceTitles()
         } catch {
             errorMessage = "\(error)"
         }
+    }
+
+    /// Repositories added before colors were stored get one each, oldest first, the way a new repository does.
+    private func assignMissingRepoColors(_ repos: [Repo]) throws -> [Repo] {
+        var used = repos.compactMap(\.colorIndex)
+        var result = repos
+        for index in result.indices.sorted(by: { result[$0].createdAt < result[$1].createdAt }) where result[index].colorIndex == nil {
+            let color = RepoMonogram.pickColor(used: used)
+            result[index].colorIndex = color
+            try store.update(result[index])
+            used.append(color)
+        }
+        return result
     }
 }
 

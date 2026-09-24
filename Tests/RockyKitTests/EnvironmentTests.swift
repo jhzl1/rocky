@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import RockyKit
 
+@Suite(.blockingWork)
 struct EnvironmentTests {
     @Test func parseIgnoresShellNoiseBeforeTheMarker() {
         var output = Data("Last login: Tue\nwelcome to oh-my-zsh\n".utf8)

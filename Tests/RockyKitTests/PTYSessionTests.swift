@@ -21,9 +21,12 @@ struct PTYSessionTests {
         )
     }
 
-    /// Output can arrive after the exit event: LocalProcess has no end-of-output callback.
+    /// Output can arrive after the exit event: LocalProcess has no end-of-output callback. Up to 3 s by the clock; it
+    /// returns as soon as the text is there. Output that never came in a full run was not late but lost: see
+    /// `BlockingWorkExecutor` (2026-09-24).
     private func waitForOutput(_ session: PTYSession, containing text: String) async throws {
-        for _ in 0..<300 where !session.outputText.contains(text) {
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !session.outputText.contains(text), ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(session.outputText.contains(text))
@@ -106,6 +109,14 @@ struct PTYSessionTests {
             if alive { try await Task.sleep(for: .milliseconds(10)) }
         }
         #expect(!alive)
+    }
+
+    /// Right after `start()` the child has not made its process group yet; the Stop still sends SIGTERM.
+    @Test func stopRightAfterStartSendsTERM() async {
+        let pty = session("sleep 30")
+        pty.start()
+        await pty.stop()
+        #expect(pty.state == .signaled(SIGTERM))
     }
 
     @Test func stopEscalatesToSIGKILLWhenTERMIsIgnored() async throws {

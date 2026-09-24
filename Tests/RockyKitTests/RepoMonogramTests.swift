@@ -13,6 +13,17 @@ struct RepoMonogramTests {
 
     /// Computed by hand: FNV-1a("3F2504E0-4F89-11D3-9A0C-0305E82C3301") = 0xDA1B48A0 = 3659221152, and
     /// 3659221152 % 6 = 0; FNV-1a("rocky") = 0x45F6C0B7 = 1173799095, and 1173799095 % 6 = 3.
+    @Test func pickColorAvoidsTheColorsInUse() {
+        #expect(RepoMonogram.pickColor(used: [0, 1, 2, 3, 4], paletteCount: 6) == 5)
+        #expect(RepoMonogram.pickColor(used: [4, 4], paletteCount: 6, pick: { $0 == [0, 1, 2, 3, 5] ? 3 : nil }) == 3)
+    }
+
+    @Test func pickColorRepeatsOnlyOnceEveryColorIsTaken() {
+        var candidates: [Int] = []
+        _ = RepoMonogram.pickColor(used: [0, 1, 2, 3, 4, 5, 0, 2], paletteCount: 6) { candidates = $0; return $0.first }
+        #expect(candidates == [1, 3, 4, 5])
+    }
+
     @Test func paletteIndexIsStable() {
         #expect(RepoMonogram.paletteIndex(repoId: "3F2504E0-4F89-11D3-9A0C-0305E82C3301", paletteCount: 6) == 0)
         #expect(RepoMonogram.paletteIndex(repoId: "rocky", paletteCount: 6) == 3)

@@ -15,9 +15,17 @@ public struct Repo: Codable, Sendable, Equatable, Identifiable, FetchableRecord,
     public var archiveScript: String?
     /// `RunScriptMode` raw value; nil means concurrent.
     public var runScriptMode: String?
-    /// Extra paths or globs `WorktreeLinker` links from the main clone into every new workspace, one per line. Added
-    /// to the `links` of a `rocky.json`, not replaced by them.
+    /// Extra paths or globs `WorktreeLinker` links from the main clone into every new workspace, one per line, and
+    /// `!<pattern>` lines turning one of its defaults off (`LinkedPaths`). Added to the `links` of a `rocky.json`, not
+    /// replaced by them.
     public var linkedPaths: String?
+    /// The repository's GitHub account (`ACC-01`); nil is the default: the login equal to the remote's owner, else
+    /// gh's active account.
+    public var githubLogin: String?
+    /// The monogram's color in `Theme.repoPalette` (SB-03), picked at random among the colors the other repositories
+    /// use least when the repository is added (`RepoMonogram.pickColor`); nil for a repository from before colors
+    /// were stored, which gets one on the next launch.
+    public var colorIndex: Int?
     public var createdAt: Date
 
     public init(
@@ -30,6 +38,8 @@ public struct Repo: Codable, Sendable, Equatable, Identifiable, FetchableRecord,
         archiveScript: String? = nil,
         runScriptMode: String? = nil,
         linkedPaths: String? = nil,
+        githubLogin: String? = nil,
+        colorIndex: Int? = nil,
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -41,6 +51,8 @@ public struct Repo: Codable, Sendable, Equatable, Identifiable, FetchableRecord,
         self.archiveScript = archiveScript
         self.runScriptMode = runScriptMode
         self.linkedPaths = linkedPaths
+        self.githubLogin = githubLogin
+        self.colorIndex = colorIndex
         self.createdAt = createdAt
     }
 }
@@ -58,6 +70,19 @@ public struct Workspace: Codable, Sendable, Equatable, Identifiable, FetchableRe
     /// Ref the worktree was created from, for example `origin/main`. Unknown for workspaces made by M1.
     public var baseRef: String?
     public var createdAt: Date
+    /// The last pull request state Rocky saw (`PR-07`), for other workspaces and the next launch. Written only by
+    /// `RockyStore.savePullRequest`; read through `storedPullRequest`.
+    public var prNumber: Int?
+    public var prUrl: String?
+    /// "OPEN", "DRAFT" or "MERGED".
+    public var prState: String?
+    /// A `HeaderState` raw value.
+    public var prHeaderState: String?
+    /// JSON `[PullRequestCheck]`.
+    public var prChecks: String?
+    public var prUpdatedAt: Date?
+    /// JSON `[String]`: the GitHub node ids of the comments hidden with Hide (`REV-01`).
+    public var prHiddenCommentIds: String?
 
     public init(
         id: String = UUID().uuidString,
@@ -77,6 +102,46 @@ public struct Workspace: Codable, Sendable, Equatable, Identifiable, FetchableRe
         self.port = port
         self.baseRef = baseRef
         self.createdAt = createdAt
+    }
+
+    /// The pull request columns as one value; nil while any of the required ones is missing.
+    public var storedPullRequest: StoredPullRequest? {
+        guard let prNumber, let url = prUrl.flatMap({ URL(string: $0) }), let prState, let prHeaderState, let prUpdatedAt else {
+            return nil
+        }
+        let decoder = JSONDecoder()
+        return StoredPullRequest(
+            number: prNumber,
+            url: url,
+            state: prState,
+            headerState: prHeaderState,
+            checks: prChecks.flatMap { try? decoder.decode([PullRequestCheck].self, from: Data($0.utf8)) } ?? [],
+            updatedAt: prUpdatedAt,
+            hiddenCommentIds: prHiddenCommentIds.flatMap { try? decoder.decode([String].self, from: Data($0.utf8)) } ?? []
+        )
+    }
+}
+
+/// A workspace's last pull request state, kept in its `pr*` columns (`PR-07`).
+public struct StoredPullRequest: Codable, Equatable, Sendable {
+    public var number: Int
+    public var url: URL
+    /// "OPEN", "DRAFT" or "MERGED".
+    public var state: String
+    /// A `HeaderState` raw value.
+    public var headerState: String
+    public var checks: [PullRequestCheck]
+    public var updatedAt: Date
+    public var hiddenCommentIds: [String]
+
+    public init(number: Int, url: URL, state: String, headerState: String, checks: [PullRequestCheck], updatedAt: Date, hiddenCommentIds: [String] = []) {
+        self.number = number
+        self.url = url
+        self.state = state
+        self.headerState = headerState
+        self.checks = checks
+        self.updatedAt = updatedAt
+        self.hiddenCommentIds = hiddenCommentIds
     }
 }
 

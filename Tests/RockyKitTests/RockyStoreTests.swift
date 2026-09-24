@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 import Testing
 @testable import RockyKit
 
@@ -117,6 +118,102 @@ struct RockyStoreTests {
     @Test func aTabTitleLeavesTheFilesOut() {
         let marker = PromptAttachment.marker
         #expect(ChatSessionRecord.title(from: "\(marker) Mira \(marker) esta imagen\nsegunda línea") == "Mira esta imagen")
+    }
+
+    // MARK: GitHub (M2.7)
+
+    /// v7 adds `repo.githubLogin` and the workspace's pull request columns; rows of a v6 database keep their data and
+    /// get nil in them.
+    @Test func theNextMigrationAddsTheGitHubColumns() throws {
+        let path = try Fixtures.temporaryDirectory("store").appendingPathComponent("rocky.sqlite").path
+        let v6 = try DatabaseQueue(path: path)
+        try RockyStore.migrator.migrate(v6, upTo: "v6")
+        try v6.write { db in
+            try db.execute(sql: "INSERT INTO repo (id, name, path, linkedPaths, createdAt) VALUES ('r1', 'app', '/r/app', '.venv', '2026-09-01 10:00:00.000')")
+            try db.execute(sql: """
+                INSERT INTO workspace (id, repoId, name, path, branch, port, baseRef, createdAt)
+                VALUES ('w1', 'r1', 'lisbon', '/r/app-worktrees/lisbon', 'rocky/lisbon', 41000, 'origin/main', '2026-09-01 10:00:00.000')
+                """)
+        }
+        try v6.close()
+
+        let store = try RockyStore(path: path)
+        let repo = try #require(try store.repos().first)
+        #expect(repo.linkedPaths == ".venv")
+        #expect(repo.githubLogin == nil)
+        let workspace = try #require(try store.workspaces(repoId: "r1").first)
+        #expect(workspace.name == "lisbon")
+        #expect(workspace.port == 41000)
+        #expect(workspace.baseRef == "origin/main")
+        #expect(workspace.prNumber == nil)
+        #expect(workspace.prHiddenCommentIds == nil)
+        #expect(workspace.storedPullRequest == nil)
+    }
+
+    @Test func keepsTheRepoGitHubLogin() throws {
+        let store = try RockyStore.inMemory()
+        var repo = Repo(name: "app", path: "/dev/app", createdAt: day)
+        try store.add(repo)
+        repo.githubLogin = "ocampos-biai"
+        try store.update(repo)
+        #expect(try store.repos().first?.githubLogin == "ocampos-biai")
+        repo.githubLogin = nil
+        try store.update(repo)
+        #expect(try store.repos().first?.githubLogin == nil)
+    }
+
+    private func storedPullRequest() -> StoredPullRequest {
+        StoredPullRequest(
+            number: 4525,
+            url: URL(string: "https://github.com/jhzl1/rocky/pull/4525")!,
+            state: "OPEN",
+            headerState: "checksFailing",
+            checks: [
+                PullRequestCheck(
+                    name: "e2e / chromium", state: .failed, startedAt: day, completedAt: day.addingTimeInterval(200),
+                    url: URL(string: "https://github.com/jhzl1/rocky/actions/runs/901/job/7002"), checkRunId: 7002, workflowRunId: 901
+                ),
+                PullRequestCheck(name: "Vercel", state: .pending, url: URL(string: "https://vercel.com/jhzl1/rocky/abc")),
+            ],
+            updatedAt: day,
+            hiddenCommentIds: ["PRRT_retry", "IC_timeout"]
+        )
+    }
+
+    @Test func storedPullRequestRoundTrips() throws {
+        let store = try RockyStore.inMemory()
+        let repo = Repo(name: "app", path: "/dev/app")
+        try store.add(repo)
+        let workspace = Workspace(repoId: repo.id, name: "tokyo", path: "/p", branch: "rocky/tokyo")
+        try store.add(workspace)
+        #expect(try store.workspaces(repoId: repo.id).first?.storedPullRequest == nil)
+
+        let stored = storedPullRequest()
+        try store.savePullRequest(stored, workspaceId: workspace.id)
+        #expect(try store.workspaces(repoId: repo.id).first?.storedPullRequest == stored)
+
+        try store.savePullRequest(nil, workspaceId: workspace.id)
+        let cleared = try #require(try store.workspaces(repoId: repo.id).first)
+        #expect(cleared.storedPullRequest == nil)
+        #expect(cleared.prNumber == nil)
+        #expect(cleared.prHiddenCommentIds == nil)
+    }
+
+    /// The pull request columns are written alone: saving never brings back a name changed since the copy was read.
+    @Test func savingAPullRequestKeepsTheWorkspaceName() throws {
+        let store = try RockyStore.inMemory()
+        let repo = Repo(name: "app", path: "/dev/app")
+        try store.add(repo)
+        let stale = Workspace(repoId: repo.id, name: "tokyo", path: "/p", branch: "rocky/tokyo")
+        try store.add(stale)
+        var renamed = stale
+        renamed.name = "kyoto"
+        try store.update(renamed)
+
+        try store.savePullRequest(storedPullRequest(), workspaceId: stale.id)
+        let saved = try #require(try store.workspaces(repoId: repo.id).first)
+        #expect(saved.name == "kyoto")
+        #expect(saved.storedPullRequest?.number == 4525)
     }
 
     @Test func persistsAcrossReopen() throws {

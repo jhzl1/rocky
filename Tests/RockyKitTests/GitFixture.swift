@@ -1,4 +1,5 @@
 import Foundation
+import Testing
 @testable import RockyKit
 
 /// Real git repositories in a temp directory; no network.
@@ -31,6 +32,22 @@ enum GitFixture {
         return repo
     }
 
+    // For `@MainActor` suites: on `BlockingWorkExecutor`, neither the main thread nor the cooperative pool (see
+    // `BlockingWorkExecutor` for what a full pool stops).
+
+    static func localRepoOffMain(in parent: URL, name: String = "app") async throws -> URL {
+        try await Task.blocking { try localRepo(in: parent, name: name) }.value
+    }
+
+    static func clonedRepoOffMain(in parent: URL) async throws -> URL {
+        try await Task.blocking { try clonedRepo(in: parent) }.value
+    }
+
+    @discardableResult
+    static func gitOffMain(_ arguments: [String], in directory: URL) async throws -> String {
+        try await Task.blocking { try git(arguments, in: directory) }.value
+    }
+
     /// A clone of a bare origin whose default branch is `trunk`, with the clone checked out on `feature`.
     static func clonedRepo(in parent: URL) throws -> URL {
         let seed = try localRepo(in: parent, name: "seed")
@@ -41,4 +58,25 @@ enum GitFixture {
         try git(["switch", "-q", "-c", "feature"], in: repo)
         return repo
     }
+}
+
+/// Runs a suite's tests on `BlockingWorkExecutor`. Swift Testing runs a synchronous test on the cooperative pool, and
+/// the git of these suites held a pool thread for the whole test: in a full run they filled the pool, and `DispatchIO`
+/// stopped reading `PTYSessionTests`' terminals (see `BlockingWorkExecutor`).
+struct BlockingWorkTrait: SuiteTrait, TestTrait, TestScoping {
+    var isRecursive: Bool { true }
+
+    func provideScope(
+        for test: Test,
+        testCase: Test.Case?,
+        performing function: @Sendable () async throws -> Void
+    ) async throws {
+        try await withTaskExecutorPreference(BlockingWorkExecutor.shared) {
+            try await function()
+        }
+    }
+}
+
+extension Trait where Self == BlockingWorkTrait {
+    static var blockingWork: Self { Self() }
 }

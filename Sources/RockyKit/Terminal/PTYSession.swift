@@ -153,17 +153,25 @@ public final class PTYSession: Identifiable {
     public func stop() async {
         guard state.isRunning, pid > 0 else { return }
         stopRequested = true
-        // forkpty makes the child a session leader, so its pid is also its process group id.
-        let group = -pid
-        kill(group, stopSignal)
+        signalProcessGroup(stopSignal)
         let grace = stopGracePeriod
         let escalation = Task { @MainActor [weak self] in
             try? await Task.sleep(for: grace)
             guard let self, self.state.isRunning else { return }
-            kill(group, SIGKILL)
+            self.signalProcessGroup(SIGKILL)
         }
         _ = await waitForExit()
         escalation.cancel()
+    }
+
+    /// forkpty makes the child a session leader, so its pid is also its process group id. Right after `start()` the
+    /// child has usually not called `setsid()` yet and the group does not exist (`ESRCH` in 294 of 300 tries): then the
+    /// child is the only process to signal. A Stop that came that early waited out the grace period and ended in
+    /// SIGKILL (2026-09-24).
+    private func signalProcessGroup(_ signal: Int32) {
+        if kill(-pid, signal) != 0, errno == ESRCH {
+            kill(pid, signal)
+        }
     }
 
     private func finish(_ final: PTYState) {

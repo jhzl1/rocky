@@ -107,6 +107,28 @@ public final class RockyStore: Sendable {
                 t.add(column: "linkedPaths", .text)
             }
         }
+        // M2.7: the repository's GitHub account (ACC-01) and each workspace's last pull request (PR-07).
+        migrator.registerMigration("v7") { db in
+            try db.alter(table: "repo") { t in
+                t.add(column: "githubLogin", .text)
+            }
+            try db.alter(table: "workspace") { t in
+                t.add(column: "prNumber", .integer)
+                t.add(column: "prUrl", .text)
+                t.add(column: "prState", .text)
+                t.add(column: "prHeaderState", .text)
+                t.add(column: "prChecks", .text)
+                t.add(column: "prUpdatedAt", .datetime)
+                t.add(column: "prHiddenCommentIds", .text)
+            }
+        }
+        // Each repository's monogram color, stored instead of hashed from its id: the hash put most repositories on
+        // the same pink (user report, 2026-09-23).
+        migrator.registerMigration("v8") { db in
+            try db.alter(table: "repo") { t in
+                t.add(column: "colorIndex", .integer)
+            }
+        }
         return migrator
     }
 
@@ -145,6 +167,27 @@ public final class RockyStore: Sendable {
 
     public func update(_ workspace: Workspace) throws {
         try db.write { try workspace.update($0) }
+    }
+
+    /// Writes only the workspace's pull request columns, so a stale copy of the workspace never undoes a rename;
+    /// nil clears them, hidden comment ids included.
+    public func savePullRequest(_ stored: StoredPullRequest?, workspaceId: String) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        let checks = try stored.map { String(decoding: try encoder.encode($0.checks), as: UTF8.self) }
+        let hidden = try stored.map { String(decoding: try encoder.encode($0.hiddenCommentIds), as: UTF8.self) }
+        let number = stored?.number
+        let url = stored?.url.absoluteString
+        let state = stored?.state
+        let headerState = stored?.headerState
+        let updatedAt = stored?.updatedAt
+        try db.write { db in
+            try db.execute(
+                sql: "UPDATE workspace SET prNumber = ?, prUrl = ?, prState = ?, prHeaderState = ?, prChecks = ?, "
+                    + "prUpdatedAt = ?, prHiddenCommentIds = ? WHERE id = ?",
+                arguments: [number, url, state, headerState, checks, updatedAt, hidden, workspaceId]
+            )
+        }
     }
 
     public func deleteWorkspace(id: String) throws {
