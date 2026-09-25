@@ -123,9 +123,10 @@ struct SidebarView: View {
                 .font(.rocky(13))
                 .foregroundStyle(Theme.textTertiary)
                 .accessibilityHidden(true)
-            TextField("Search workspaces", text: $query, prompt: Text("Search").foregroundStyle(Theme.textTertiary))
+            TextField("Search workspaces", text: $query, prompt: Text(verbatim: ""))
                 .textFieldStyle(.plain)
                 .font(.rocky(13))
+                .stablePlaceholder("Search", isVisible: query.isEmpty)
                 .foregroundStyle(Theme.textPrimary)
                 .focused($focus, equals: .search)
                 .onKeyPress(.downArrow) { focusFirstRow() }

@@ -643,9 +643,22 @@ final class CodeGutterView: NSRulerView {
         ruleThickness
     }
 
+    /// Since macOS 14 a view does not clip its drawing to its bounds, and `dirtyRect` can be larger than them: filling it
+    /// painted the gutter's background over the whole text, and past the editor over the window (user reports,
+    /// 2026-09-24: no text, then no sidebar and no top bar, and numbers over the terminal bar).
+    override init(scrollView: NSScrollView?, orientation: NSRulerView.Orientation) {
+        super.init(scrollView: scrollView, orientation: orientation)
+        clipsToBounds = true
+    }
+
+    required init(coder: NSCoder) {
+        super.init(coder: coder)
+        clipsToBounds = true
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         Theme.background.setFill()
-        dirtyRect.fill()
+        bounds.intersection(dirtyRect).fill()
         drawHashMarksAndLabels(in: dirtyRect)
     }
 

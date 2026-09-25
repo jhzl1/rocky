@@ -119,8 +119,8 @@ struct RockyOutlineButtonStyle: ButtonStyle {
     }
 }
 
-/// A white filled button for a view's one primary action (M3's "white filled": a comment's Comment, CMT-02, and Send to
-/// agent, CMT-05): white with #111316 text, #DADDE1 on hover; 26 points high, padding 10, radius 6. 45 % when disabled.
+/// A white filled button for a view's one primary action (M3's "white filled": the comment box's Send, CMT-02): white
+/// with #111316 text, #DADDE1 on hover; 26 points high, padding 10, radius 6. 45 % when disabled.
 struct RockyPrimaryButtonStyle: ButtonStyle {
     var height: CGFloat = 26
 
@@ -187,6 +187,23 @@ struct RockyFilledButtonStyle: ButtonStyle {
                 .contentShape(Rectangle())
                 .onHover { inside in withAnimation(Theme.Motion.hover) { hovering = inside } }
                 .clickable()
+        }
+    }
+}
+
+extension View {
+    /// A text field's placeholder drawn by SwiftUI, in place of the field's own `prompt`: AppKit draws that one through
+    /// the field editor once the field has the keyboard, 1 point higher, so it jumped on focus (user report,
+    /// 2026-09-24). Give the field an empty prompt, and put this after its font so the two match.
+    func stablePlaceholder(_ text: String, isVisible: Bool) -> some View {
+        overlay(alignment: .leading) {
+            if isVisible {
+                Text(text)
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
         }
     }
 }
