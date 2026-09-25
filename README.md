@@ -47,3 +47,9 @@ Without the certificate the script signs ad hoc, and macOS asks again for each s
 - Prism 1.30.0 (https://prismjs.com, MIT License, Copyright (c) 2012 Lea Verou), vendored as
   `Sources/RockyUI/Resources/Prism/prism-bundle.js`: its core and 17 language components, which highlight the diff and
   the editor.
+- Material Icon Theme 5.38.1 (https://github.com/material-extensions/vscode-material-icon-theme, MIT License,
+  Copyright (c) 2025 Material Extensions), vendored in `Sources/RockyUI/Resources/FileIcons/`: the 586 file icons that
+  its file names, file extensions and default reference, plus its GitHub Actions workflow icon (587 SVGs), with a
+  trimmed `manifest.json` and the package's `LICENSE`. Folders keep Rocky's own icon.
+  `scripts/vendor-file-icons.py` downloads the pinned npm tarball, checks its integrity and version, and writes the
+  folder again.
