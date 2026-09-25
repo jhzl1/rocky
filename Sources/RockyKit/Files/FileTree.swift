@@ -45,6 +45,23 @@ public struct FileList: Sendable {
         !path.isEmpty && !known.contains(path)
     }
 
+    /// Where `path` is in `paths`, nil when the list does not hold it (a folder, an ignored or a deleted file). A
+    /// binary search in the order `paths` was sorted in, folder by folder and each folder's entries by name, so looking
+    /// up the few recent files of `FIL-08` needs no index of every path.
+    public func position(of path: String) -> Int? {
+        var low = 0
+        var high = paths.count
+        while low < high {
+            let middle = (low + high) / 2
+            if FileTree.pathPrecedes(paths[middle], path) {
+                low = middle + 1
+            } else {
+                high = middle
+            }
+        }
+        return low < paths.count && paths[low] == path ? low : nil
+    }
+
     /// `paths` in Finder's order, and every path the list knows. Files are grouped by folder, and each folder's files
     /// and subfolders are sorted together by name, so a sort compares short names instead of whole paths.
     private static func build(listed: [String], deleted: [String]) -> (paths: [String], known: Set<String>) {
@@ -256,11 +273,18 @@ public enum FileTree {
     /// it; the path contains it; its characters appear in order in the name ("srv" finds `server.ts`); then in order
     /// anywhere in the path. Ties keep the list's order (Finder's). One pass with byte searches and no locale-aware
     /// comparison, so 100,000 paths rank in under 50 ms (`FIL-07`). Ignored files are not in the list, so they are
-    /// never ranked. An empty query ranks every path.
-    public static func rank(_ query: String, in list: FileList) -> [String] {
+    /// never ranked. An empty query ranks every path, as one tier.
+    ///
+    /// `recent` (`FIL-08`, newest first) goes first inside each tier, newest first, and never above a better tier; a
+    /// recent path the list does not hold is left out. The All files filter passes none.
+    public static func rank(_ query: String, in list: FileList, recent: [String] = []) -> [String] {
         let lowered = query.lowercased()
         let needle = Array(lowered.utf8)
-        guard !needle.isEmpty else { return list.paths }
+        let recentPositions = positions(of: recent, in: list)
+        guard !needle.isEmpty else {
+            guard !recentPositions.isEmpty else { return list.paths }
+            return joined([Array(list.paths.indices)], recent: recentPositions, in: list)
+        }
         // Where each of the query's characters ends in `needle`: the in-order ranks look for one character at a time,
         // all its bytes at once, so a byte never matches half of another character.
         var pieceEnds: [Int] = []
@@ -318,12 +342,53 @@ public enum FileTree {
                 }
             }
         }
+        return joined(buckets, recent: recentPositions, in: list)
+    }
+
+    /// Each of `paths` the list holds, as its index in `list.paths`, in the order given and each once.
+    static func positions(of paths: [String], in list: FileList) -> [Int] {
+        var seen = Set<Int>()
+        return paths.compactMap { path in
+            guard let position = list.position(of: path), seen.insert(position).inserted else { return nil }
+            return position
+        }
+    }
+
+    /// The tiers one after the other, as paths: in each, the `recent` indices it holds first, in `recent`'s order,
+    /// then the rest in the list's order. A tier's indices are ascending, so a recent one is found by binary search
+    /// and skipped with one comparison per item, which keeps `rank` in its budget with 20 recent files.
+    private static func joined(_ tiers: [[Int]], recent: [Int], in list: FileList) -> [String] {
         var ranked: [String] = []
-        ranked.reserveCapacity(buckets.reduce(0) { $0 + $1.count })
-        for bucket in buckets {
-            for item in bucket { ranked.append(list.paths[item]) }
+        ranked.reserveCapacity(tiers.reduce(0) { $0 + $1.count })
+        for tier in tiers {
+            let first = recent.filter { holds(tier, $0) }
+            for item in first { ranked.append(list.paths[item]) }
+            let skipped = first.sorted()
+            var next = 0
+            for item in tier {
+                if next < skipped.count, skipped[next] == item {
+                    next += 1
+                    continue
+                }
+                ranked.append(list.paths[item])
+            }
         }
         return ranked
+    }
+
+    /// Whether the ascending `items` hold `item`.
+    private static func holds(_ items: [Int], _ item: Int) -> Bool {
+        var low = 0
+        var high = items.count
+        while low < high {
+            let middle = (low + high) / 2
+            if items[middle] < item {
+                low = middle + 1
+            } else {
+                high = middle
+            }
+        }
+        return low < items.count && items[low] == item
     }
 
     /// The characters of `path` to draw in `accent` for `query` (`FIL-04`), by the rank that matched it: the query in
@@ -402,6 +467,25 @@ public enum FileTree {
         case .orderedAscending: true
         case .orderedDescending: false
         case .orderedSame: lhs < rhs
+        }
+    }
+
+    /// `FileList.paths`' order for two paths: their first differing names in Finder's order, as the list was built
+    /// folder by folder. A path whose names all begin the other comes first (a folder and a file never share a path
+    /// in one list).
+    static func pathPrecedes(_ lhs: String, _ rhs: String) -> Bool {
+        var left = lhs.split(separator: "/", omittingEmptySubsequences: false).makeIterator()
+        var right = rhs.split(separator: "/", omittingEmptySubsequences: false).makeIterator()
+        while true {
+            switch (left.next(), right.next()) {
+            case let (leftName?, rightName?):
+                guard leftName != rightName else { continue }
+                return finderPrecedes(String(leftName), String(rightName))
+            case (nil, .some):
+                return true
+            case (.some, nil), (nil, nil):
+                return false
+            }
         }
     }
 }

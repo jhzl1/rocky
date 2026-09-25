@@ -4,15 +4,26 @@ import Foundation
 /// ↑ again the one before, and ↓ goes forward until the box is empty again. It only browses while the box shows an
 /// entry untouched: after an edit the arrows move the cursor again.
 public struct MessageHistory: Equatable, Sendable {
-    /// A sent message: its text (a `PromptAttachment.marker` where each file sat) and its files.
+    /// A sent message: its text (a `PromptAttachment.marker` where each file sat) and its files. A line comment keeps
+    /// its range, which the box shows as its chip before the text (`CMT-05` History, user decision, 2026-09-25: "Chip y
+    /// texto").
     public struct Entry: Equatable, Sendable {
         public let text: String
         public let files: [String]
+        public let lineRange: LineRangeAttachment?
 
-        public init(text: String, files: [String]) {
+        public init(text: String, files: [String], lineRange: LineRangeAttachment? = nil) {
             self.text = text
             self.files = files
+            self.lineRange = lineRange
         }
+    }
+
+    /// The conversation's user messages as entries, oldest first. A line comment is one too: before 2026-09-25 the
+    /// history left it out, and ↑ landed on an older message. A review prompt sent before the comments' redesign is
+    /// plain text, and comes back as it is.
+    public static func entries(from items: [ChatItem]) -> [Entry] {
+        items.filter { $0.kind == .user }.map { Entry(text: $0.text, files: $0.attachedFiles, lineRange: $0.lineRange) }
     }
 
     public enum Step: Equatable, Sendable {

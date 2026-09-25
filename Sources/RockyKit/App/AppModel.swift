@@ -120,6 +120,8 @@ public final class AppModel {
                     // FIL-07: a workspace that is not selected keeps nothing of its All files tab and reads nothing.
                     fileTrees[oldValue] = nil
                     staleFileTrees[oldValue] = nil
+                    // FIL-08: nor for Quick Open, which the window closes with the selection.
+                    if quickOpenWorkspaceId == oldValue { quickOpenWorkspaceId = nil }
                 }
                 visibleRightPanelTab = nil
                 // A diff tab on screen in the new workspace needs its full diff at once (DIFF-01), panel or not.
@@ -300,11 +302,16 @@ public final class AppModel {
     }
     /// Each diff tab's mode (`DIFF-01`'s Diff | Edit), by workspace and path; a tab without one shows its diff.
     public private(set) var diffTabModes: [String: [String: DiffTabMode]] = [:]
-    /// DIFF-05: the diff tab each workspace was last asked to scroll to its first hunk.
+    /// DIFF-05 and CMT-06: the diff tab each workspace was last asked to scroll, to its first hunk (a badge) or to a
+    /// line (a chip).
     public private(set) var diffScrollRequests: [String: DiffScrollRequest] = [:]
-    /// CMT-03: each workspace's review comments on its diffs, oldest first, read from the store once when the model
-    /// loads the workspace and dropped with it.
-    public private(set) var diffComments: [String: [DiffCommentRecord]] = [:]
+    /// CMT-06: the serial of the chip request each workspace's diff tab has scrolled to (`lineScrollHandled`).
+    public private(set) var handledLineScrolls: [String: Int] = [:]
+    /// CMT-02: each diff tab's comment box, by workspace and worktree-relative path, while its tab is open: a tab
+    /// switch or Diff | Edit brings the box back with its range, its text and its conversation. In memory only, and
+    /// dropped when the tab closes, the comment goes or it is cancelled. Rocky stores no comment (CMT-05): the
+    /// conversation keeps it.
+    public private(set) var commentDrafts: [String: [String: CommentDraft]] = [:]
     /// EDIT-01…EDIT-03: the files open in the editor, by workspace and absolute path (a diff tab's file through
     /// `editorPath(worktree:relativePath:)`, a file tab's path as it is). One buffer per file, whichever tabs show it,
     /// so two tabs never hold two versions of one file. Kept while a tab of the workspace holds the file, in memory only:
@@ -334,9 +341,13 @@ public final class AppModel {
     /// FIL-05's Reveal: the row each workspace's All files tab is to scroll into view, once it is drawn; the tab clears
     /// it (`revealHandled`).
     public private(set) var revealedPaths: [String: String] = [:]
-    /// FIL-04's Go to File: the workspace whose All files tab is to focus its filter and select its text; the tab
-    /// clears it (`goToFileHandled`).
-    public private(set) var goToFileRequest: String?
+    /// FIL-08: each workspace's recently opened worktree files, worktree-relative, newest first, at most
+    /// `QuickOpen.recentLimit`. Read from the store once per launch, the first time Quick Open or an open needs them,
+    /// and written on every open of a worktree tab (`showWorktreeTab`).
+    public private(set) var recentFiles: [String: [String]] = [:]
+    /// FIL-08: the workspace Quick Open shows, from `quickOpenWillShow` to `quickOpenDidHide`. It admits a read of git's
+    /// list (`readFilesOnce`), no folder, and keeps the full diff computed for its status letters (`showsChanges`).
+    @ObservationIgnored private var quickOpenWorkspaceId: String?
 
     private struct StaleFileTree: Sendable {
         var list = false
@@ -348,8 +359,6 @@ public final class AppModel {
         let task: Task<Void, Never>
         var runsAgain = false
     }
-    /// The workspaces whose review (CMT-05) is on its way, so a second click sends nothing.
-    @ObservationIgnored private var sendingReviews: Set<String> = []
     /// The last command list each repository's agent announced (KIT-01), so a new conversation has one while its own
     /// agent starts. In memory only: the agent sends it again after every start. Observed: the popup shows it.
     private var lastCommands: [CommandListKey: [SlashCommand]] = [:]
@@ -829,11 +838,13 @@ public final class AppModel {
             selectedDiffTabs[id] = nil
             diffTabModes[id] = nil
             diffScrollRequests[id] = nil
+            handledLineScrolls[id] = nil
+            commentDrafts[id] = nil
             editors[id] = nil
             editorBases[id] = nil
             previewTabs[id] = nil
             revealedPaths[id] = nil
-            if goToFileRequest == id { goToFileRequest = nil }
+            recentFiles[id] = nil
             fileTrees[id] = nil
             staleFileTrees[id] = nil
             mergeMethodPicks[id] = nil
@@ -859,9 +870,9 @@ public final class AppModel {
 
     // MARK: Conversations
 
-    /// Loads the workspace's tabs and shows the selected conversation (else the newest, else a new one). Its
-    /// agent starts in the background, so the model list is there and the first message does not wait; the
-    /// other tabs' agents start when their tab is shown (user decision, 2026-09-23).
+    /// Loads the workspace's tabs and shows the selected conversation (else the newest, else a new one with the
+    /// default agent, CNV-02). Its agent starts in the background, so the model list is there and the first message
+    /// does not wait; the other tabs' agents start when their tab is shown (user decision, 2026-09-23).
     public func showConversations(workspace: Workspace) async {
         reloadConversations(workspaceId: workspace.id)
         let open = conversations[workspace.id] ?? []
@@ -870,7 +881,7 @@ public final class AppModel {
         } else if let newest = open.last {
             await showConversation(workspace: workspace, conversationId: newest.id)
         } else {
-            await newConversation(workspace: workspace, agent: .claude)
+            await newConversation(workspace: workspace)
         }
     }
 
@@ -890,7 +901,22 @@ public final class AppModel {
         startInBackground(chats[conversationId])
     }
 
-    /// Opens a new tab with an empty conversation. Earlier ones stay open and running.
+    /// CNV-01, KIT-11: "+" makes the conversation at once, with the default agent (CNV-02).
+    @discardableResult
+    public func newConversation(workspace: Workspace) async -> ChatSessionModel? {
+        await newConversation(workspace: workspace, agent: defaultAgent(repoId: workspace.repoId))
+    }
+
+    /// CNV-02: the agent of the conversation where you last sent a message in the repository (any of its workspaces,
+    /// open or closed tabs, KIT-13), else Claude Code. Opening a conversation with another agent does not change it by
+    /// itself: only a sent message does. A failed read falls back to Claude Code too, since a new conversation must
+    /// not wait on it.
+    func defaultAgent(repoId: String) -> AgentKind {
+        (try? store.lastUsedAgent(repoId: repoId)) ?? .claude
+    }
+
+    /// Opens a new tab with an empty conversation with `agent`: the bridge's picks on "+" (CNV-01) and the agent
+    /// actions. Earlier ones stay open and running.
     @discardableResult
     public func newConversation(workspace: Workspace, agent: AgentKind) async -> ChatSessionModel? {
         do {
@@ -982,6 +1008,9 @@ public final class AppModel {
         let current = self.workspace(id: workspace.id) ?? workspace
         let environment = self.environment(for: current)
         let launch = try await resolveLaunch(agent, cwd: URL(fileURLWithPath: current.path), environment: environment)
+        // Made by another caller while this one waited (its tab shown while a line comment opened it, CMT-05): that
+        // chat is the conversation's, and a second one would run a second agent nobody stops.
+        if let existing = chats[record.id] { return existing }
         let history = try store.messages(sessionId: record.id).map(ChatItem.init(record:))
         let store = self.store
         let conversationId = record.id
@@ -1347,11 +1376,9 @@ public final class AppModel {
 
     // MARK: Pull request (PR-07)
 
-    /// What the workspace's panel header shows (HDR-02, ERR-01): "Working…" while its selected conversation's turn
-    /// runs (AGT-00).
+    /// What the workspace's panel header shows (HDR-02, ERR-01), whether or not a turn runs.
     public func pullRequestHeader(workspaceId: String) -> HeaderPresentation {
-        let working = existingChat(workspaceId: workspaceId)?.state == .running
-        return (pullRequests.panels[workspaceId] ?? PullRequestPanelState()).header(agentWorking: working)
+        (pullRequests.panels[workspaceId] ?? PullRequestPanelState()).header()
     }
 
     /// The GitHub client of a login: every request carries that login's token, fetched once per launch (ACC-01).
@@ -1553,15 +1580,7 @@ public final class AppModel {
     /// the workspace shows that conversation instead of a file tab. Never queued (user decision): while its turn runs,
     /// or with its agent stopped, nothing is sent, also when the turn started while this one waited. Returns when the
     /// turn ends, whose end refreshes the pull request (`PR-07`).
-    ///
-    /// `willSend` runs right before the prompt goes out, and only if it does: the agent is started first, so a start
-    /// that fails, or a turn the user began meanwhile, sends nothing and calls nothing (`CMT-05`'s Sent).
-    public func sendAgentAction(
-        workspaceId: String,
-        text: String,
-        attachments: [URL],
-        willSend: (@MainActor () -> Void)? = nil
-    ) async {
+    public func sendAgentAction(workspaceId: String, text: String, attachments: [URL]) async {
         guard agentActionAvailability(workspaceId: workspaceId) == .available, let workspace = workspace(id: workspaceId) else { return }
         if existingChat(workspaceId: workspaceId) == nil {
             await showConversations(workspace: workspace)
@@ -1569,12 +1588,6 @@ public final class AppModel {
         guard let chat = existingChat(workspaceId: workspaceId) else { return }
         showConversationTab(workspaceId: workspaceId)
         guard agentActionAvailability(workspaceId: workspaceId) == .available else { return }
-        if let willSend {
-            if chat.state == .idle || chat.state == .starting { await chat.start() }
-            // `send`, on this actor too, then finds the agent ready and sends at once.
-            guard chat.state == .ready else { return }
-            willSend()
-        }
         await chat.send(text, attachments: attachments)
     }
 
@@ -1957,11 +1970,12 @@ public final class AppModel {
     }
 
     /// Whether the workspace's full diff is computed on each change: it is selected and shows it, in its Changes tab, in
-    /// its All files tab (FIL-02's letters, FIL-05's "Becoming changed") or in a diff tab on screen, so an open diff
-    /// follows the agent with the panel on Checks or closed.
+    /// its All files tab (FIL-02's letters, FIL-05's "Becoming changed"), in a diff tab on screen, so an open diff
+    /// follows the agent with the panel on Checks or closed, or in Quick Open (FIL-08's letters and changed files).
     private func showsChanges(workspaceId: String) -> Bool {
         guard workspaceId == selectedWorkspaceId else { return false }
         return visibleRightPanelTab == .changes || visibleRightPanelTab == .files || selectedDiffTabs[workspaceId] != nil
+            || quickOpenWorkspaceId == workspaceId
     }
 
     /// GIT-01's "on a change": the sidebar's stats for every workspace, and the full diff for the one on screen. Called
@@ -1997,10 +2011,10 @@ public final class AppModel {
         gitRefreshes[workspaceId] = nil
     }
 
-    /// What one git run found: the full diff and the review comments it moved (CMT-04), the stats alone, a worktree busy
-    /// with a rebase, merge or index lock (GIT-01 skips it until the next event), or git's failure.
+    /// What one git run found: the full diff, the stats alone, a worktree busy with a rebase, merge or index lock
+    /// (GIT-01 skips it until the next event), or git's failure.
     private enum GitReading: Sendable {
-        case changes(WorkspaceChanges, movedComments: [DiffCommentRecord])
+        case changes(WorkspaceChanges)
         case stat(DiffStat)
         case busy
         case failed(String)
@@ -2013,25 +2027,13 @@ public final class AppModel {
         let service = GitChangesService(environment: environment(for: workspace))
         let worktree = URL(fileURLWithPath: workspace.path)
         let baseRef = workspace.baseRef
-        // CMT-04 follows every refresh of the full diff: the comments that can move, as they are now.
-        let anchored: [DiffCommentRecord] = wantsChanges
-            ? (diffComments[workspaceId] ?? []).filter { $0.side == .new && $0.state != .outdated }
-            : []
         let reading = await Task.blocking { () -> GitReading in
             guard !GitChangesService.isBusy(worktree: worktree) else { return .busy }
             do {
                 let base = try service.base(worktree: worktree, baseRef: baseRef)
                 // The full diff has the totals too: one reading, not two.
                 if wantsChanges {
-                    let found = try service.changes(worktree: worktree, base: base)
-                    let moved = CommentAnchor.reanchor(anchored) { path in
-                        let file = worktree.appendingPathComponent(path)
-                        // A file that is gone outdates its comments; one Rocky does not read (binary, over 20 MB)
-                        // leaves them where they are.
-                        guard FileManager.default.fileExists(atPath: file.path) else { return [] }
-                        return DiffLayout.readLines(of: file)
-                    }
-                    return .changes(found, movedComments: moved)
+                    return .changes(try service.changes(worktree: worktree, base: base))
                 }
                 return .stat(try service.shortstat(worktree: worktree, base: base))
             } catch {
@@ -2041,9 +2043,8 @@ public final class AppModel {
         // Removed while git ran.
         guard self.workspace(id: workspaceId) != nil else { return }
         switch reading {
-        case .changes(let found, let moved):
+        case .changes(let found):
             if showsChanges(workspaceId: workspaceId) { changes[workspaceId] = found }
-            applyReanchoring(moved, before: Dictionary(uniqueKeysWithValues: anchored.map { ($0.id, $0) }), workspaceId: workspaceId)
             diffStats[workspaceId] = found.stat
             staleChanges.remove(workspaceId)
             if changesFailures[workspaceId]?.action == .diff { changesFailures[workspaceId] = nil }
@@ -2088,6 +2089,9 @@ public final class AppModel {
             canonicalWorktrees[id] = nil
             previewTabs[id] = nil
             revealedPaths[id] = nil
+            recentFiles[id] = nil
+            commentDrafts[id] = nil
+            handledLineScrolls[id] = nil
         }
         for workspace in workspaces.values.joined() where !watchedWorkspaceIds.contains(workspace.id) {
             startWatching(workspace)
@@ -2247,7 +2251,8 @@ public final class AppModel {
     }
 
     /// The worktree tab of `path` on screen, opened after the workspace's others if needed; `mode` is its mode from now
-    /// on.
+    /// on. Every open goes through here (`openDiff`, `openFromTree`), so the file becomes the workspace's newest recent
+    /// file (FIL-08); selecting a tab already on screen (`showDiff`) does not.
     private func showWorktreeTab(workspaceId: String, path: String, mode: DiffTabMode?) {
         var tabs = diffTabs[workspaceId] ?? []
         if !tabs.contains(path) { tabs.append(path) }
@@ -2255,6 +2260,7 @@ public final class AppModel {
         if let mode { diffTabModes[workspaceId, default: [:]][path] = mode }
         selectedFiles[workspaceId] = nil
         selectedDiffTabs[workspaceId] = path
+        recordRecentFile(path, workspaceId: workspaceId)
     }
 
     public func showDiff(workspaceId: String, path: String) {
@@ -2271,11 +2277,12 @@ public final class AppModel {
         forgetWorktreeTab(workspaceId: workspaceId, path: path)
     }
 
-    /// What a worktree tab that closed, or a preview that was replaced, leaves behind: its mode, its base, its preview
-    /// mark, and its editor unless a file tab shows the same file.
+    /// What a worktree tab that closed, or a preview that was replaced, leaves behind: its mode, its base, its comment
+    /// box (CMT-02), its preview mark, and its editor unless a file tab shows the same file.
     private func forgetWorktreeTab(workspaceId: String, path: String) {
         diffTabModes[workspaceId]?[path] = nil
         editorBases[workspaceId]?[path] = nil
+        commentDrafts[workspaceId]?[path] = nil
         if previewTabs[workspaceId] == path { previewTabs[workspaceId] = nil }
         if let workspace = workspace(id: workspaceId) {
             dropEditorIfUnused(workspaceId: workspaceId, path: Self.editorPath(worktree: workspace.path, relativePath: path))
@@ -2308,8 +2315,36 @@ public final class AppModel {
             return
         }
         openDiff(workspaceId: workspaceId, path: relative, mode: .diff)
+        requestDiffScroll(workspaceId: workspaceId, path: relative, line: nil)
+    }
+
+    /// CMT-06: a line chip of the conversation. Its path resolves like a file badge's (`openBadgeFile`): a worktree file
+    /// in Changes, or any while the changes are not read, opens its diff tab on the diff, scrolled to the range's first
+    /// line; a file no longer changed opens its worktree tab in Edit, the unchanged file's tab (FIL-05); a file outside
+    /// the worktree a file tab.
+    public func openLineRange(workspaceId: String, attachment: LineRangeAttachment) {
+        guard let workspace = workspace(id: workspaceId), let relative = worktreeRelativePath(of: attachment.path, in: workspace) else {
+            openFile(workspaceId: workspaceId, path: attachment.path)
+            return
+        }
+        if let current = changes[workspaceId], current.file(at: relative) == nil {
+            openDiff(workspaceId: workspaceId, path: relative, mode: .edit)
+            return
+        }
+        openDiff(workspaceId: workspaceId, path: relative, mode: .diff)
+        requestDiffScroll(workspaceId: workspaceId, path: relative, line: CommentLine(side: attachment.side, number: attachment.start))
+    }
+
+    /// The diff tab scrolled to the line `serial` asked for, so it does not scroll there again each time it appears.
+    /// The request itself stays as it was: a badge's first-hunk request is told apart by having no line.
+    public func lineScrollHandled(workspaceId: String, serial: Int) {
+        guard diffScrollRequests[workspaceId]?.serial == serial, handledLineScrolls[workspaceId] != serial else { return }
+        handledLineScrolls[workspaceId] = serial
+    }
+
+    private func requestDiffScroll(workspaceId: String, path: String, line: CommentLine?) {
         let serial = (diffScrollRequests[workspaceId]?.serial ?? 0) + 1
-        diffScrollRequests[workspaceId] = DiffScrollRequest(path: relative, serial: serial)
+        diffScrollRequests[workspaceId] = DiffScrollRequest(path: path, serial: serial, line: line)
     }
 
     /// `path` relative to the workspace's worktree, when it is a file inside it: spelled as the worktree's own path, or
@@ -2387,9 +2422,14 @@ public final class AppModel {
         Task { await refreshFiles(workspaceId: workspaceId) }
     }
 
+    /// Whether git's list is missing or stale: all Quick Open reads (FIL-08).
+    private func needsList(_ state: FileTreeState, workspaceId: String) -> Bool {
+        state.list == nil || staleFileTrees[workspaceId]?.list == true
+    }
+
     private func needsRead(_ state: FileTreeState, workspaceId: String) -> Bool {
         let stale = staleFileTrees[workspaceId]
-        if state.list == nil || stale?.list == true { return true }
+        if needsList(state, workspaceId: workspaceId) { return true }
         let shown = FileTree.shownFolders(
             listings: state.listings,
             expanded: state.expanded,
@@ -2429,13 +2469,22 @@ public final class AppModel {
 
     /// One read, in one blocking job: `ls-files` when the list is missing or stale, then the folders from the root down
     /// through the expanded ones the rows reach, reading only those missing or stale (FIL-07). A folder that cannot be
-    /// read lists nothing, so it is not read again until an event names it.
+    /// read lists nothing, so it is not read again until an event names it. For Quick Open alone (FIL-08), with the
+    /// All files tab hidden, only the list is read, and the folders an event marked stay marked for the tab.
     private func readFilesOnce(workspaceId: String) async {
         await launchEnvironment?.value
-        guard showsFiles(workspaceId: workspaceId), let workspace = workspace(id: workspaceId),
-              let state = fileTrees[workspaceId], needsRead(state, workspaceId: workspaceId) else { return }
+        let readsFolders = showsFiles(workspaceId: workspaceId)
+        guard readsFolders || quickOpenWorkspaceId == workspaceId, let workspace = workspace(id: workspaceId),
+              let state = fileTrees[workspaceId],
+              readsFolders ? needsRead(state, workspaceId: workspaceId) : needsList(state, workspaceId: workspaceId) else { return }
         // Cleared now: an event during the read marks what it names again, and the next run reads it.
-        let stale = staleFileTrees.removeValue(forKey: workspaceId) ?? StaleFileTree()
+        let stale: StaleFileTree
+        if readsFolders {
+            stale = staleFileTrees.removeValue(forKey: workspaceId) ?? StaleFileTree()
+        } else {
+            stale = StaleFileTree(list: staleFileTrees[workspaceId]?.list ?? false)
+            staleFileTrees[workspaceId]?.list = false
+        }
         let readsList = state.list == nil || stale.list
         let previous = state.list
         let cached = state.listings
@@ -2455,6 +2504,7 @@ public final class AppModel {
                     result.listFailure = GitBranchService.branchError(error).description
                 }
             }
+            guard readsFolders else { return result }
             var pending = [""]
             var visited: Set<String> = []
             while let folder = pending.popLast() {
@@ -2573,16 +2623,18 @@ public final class AppModel {
         }
     }
 
-    /// FIL-05 from the tree (`path` worktree-relative): a single click or Return (`keep` false) opens the workspace's
-    /// one preview tab or replaces it, unless the preview has unsaved edits; a double-click (`keep` true) keeps it. A
-    /// file in Changes opens in Diff mode, or as its open tab was left; any other in Edit, its only mode. A tab already
-    /// open is only shown, and a kept one never turns into the preview.
+    /// FIL-05 from the tree and Quick Open (`path` worktree-relative): a single click, the tree's Return or Quick Open's
+    /// ⌥Return (`keep` false) opens the workspace's one preview tab or replaces it, unless the preview has unsaved
+    /// edits. A double-click's second click keeps the preview it opened; a file opened to keep (`keep` true, Quick
+    /// Open's Return) gets a kept tab after the others and leaves the preview alone: only a new preview replaces the
+    /// preview. A file in Changes opens in Diff mode, or as its open tab was left; any other in Edit, its only mode. A
+    /// tab already open is only shown, and a kept one never turns into the preview.
     public func openFromTree(workspaceId: String, path: String, keep: Bool) {
         guard let workspace = workspace(id: workspaceId) else { return }
         var tabs = diffTabs[workspaceId] ?? []
         let preview = previewTabs[workspaceId]
         if !tabs.contains(path) {
-            if let preview, let index = tabs.firstIndex(of: preview),
+            if !keep, let preview, let index = tabs.firstIndex(of: preview),
                !isEditorDirty(workspaceId: workspaceId, path: Self.editorPath(worktree: workspace.path, relativePath: preview)) {
                 tabs[index] = path
                 diffTabs[workspaceId] = tabs
@@ -2591,7 +2643,7 @@ public final class AppModel {
                 tabs.append(path)
                 diffTabs[workspaceId] = tabs
             }
-            previewTabs[workspaceId] = keep ? nil : path
+            if !keep { previewTabs[workspaceId] = path }
         } else if keep, preview == path {
             previewTabs[workspaceId] = nil
         }
@@ -2632,17 +2684,52 @@ public final class AppModel {
         revealedPaths[workspaceId] = nil
     }
 
-    /// FIL-04's Go to File (⌘P): the panel's tab turns to All files, whose filter takes the keyboard with its text
-    /// selected (`goToFileRequest`). The command opens the panel.
-    public func goToFile(workspaceId: String) {
-        guard workspace(id: workspaceId) != nil else { return }
-        rightPanelTabs[workspaceId] = .files
-        goToFileRequest = workspaceId
+    // MARK: Quick Open (FIL-08)
+
+    /// Quick Open is about to show for the selected workspace: its file list's state is made if needed, its recent
+    /// files are read from the store once per launch, and git's list is read only when there is none or an event made
+    /// it stale since the last read, so at most once per opening. The read lists no folder, and Quick Open never makes
+    /// the All files tab count as shown: events while it is open only mark the list stale, and typing reads nothing.
+    /// Its status letters need the full diff, which is computed now if it is missing or stale (`showsChanges`).
+    public func quickOpenWillShow(workspaceId: String) {
+        guard workspaceId == selectedWorkspaceId, let state = prepareFileTree(workspaceId: workspaceId) else { return }
+        quickOpenWorkspaceId = workspaceId
+        loadRecentFilesIfNeeded(workspaceId: workspaceId)
+        refreshShownChangesIfStale()
+        if needsList(state, workspaceId: workspaceId) {
+            Task { await refreshFiles(workspaceId: workspaceId) }
+        }
     }
 
-    /// The All files tab focused its filter for `goToFileRequest`.
-    public func goToFileHandled(workspaceId: String) {
-        if goToFileRequest == workspaceId { goToFileRequest = nil }
+    /// Quick Open closed: nothing more is read for it.
+    public func quickOpenDidHide() {
+        quickOpenWorkspaceId = nil
+    }
+
+    private func loadRecentFilesIfNeeded(workspaceId: String) {
+        guard recentFiles[workspaceId] == nil else { return }
+        do {
+            recentFiles[workspaceId] = try store.recentFiles(workspaceId: workspaceId)
+        } catch {
+            errorMessage = "Could not read the recent files: \(error)"
+            recentFiles[workspaceId] = []
+        }
+    }
+
+    /// FIL-08: `path` becomes the workspace's newest recent file, in the store and here. A store failure says so and
+    /// changes nothing else: the tab still opens, and the list stays as the store has it.
+    private func recordRecentFile(_ path: String, workspaceId: String) {
+        loadRecentFilesIfNeeded(workspaceId: workspaceId)
+        do {
+            try store.recordRecentFile(path: path, workspaceId: workspaceId, at: Date())
+        } catch {
+            errorMessage = "Could not save the recent files: \(error)"
+            return
+        }
+        var recent = recentFiles[workspaceId] ?? []
+        recent.removeAll { $0 == path }
+        recent.insert(path, at: 0)
+        recentFiles[workspaceId] = Array(recent.prefix(QuickOpen.recentLimit))
     }
 
     // MARK: Editing (EDIT-01…EDIT-04)
@@ -2966,140 +3053,132 @@ public final class AppModel {
         editors[workspaceId]?[path] = nil
     }
 
-    // MARK: Review comments (CMT-01…CMT-05)
+    // MARK: Line comments (CMT-01, CMT-02, CMT-05)
 
-    /// The comments on one file of the workspace (`path` worktree-relative), oldest first: its diff tab's cards and
-    /// the count on its Changes row (CHG-03).
-    public func comments(onFile path: String, workspaceId: String) -> [DiffCommentRecord] {
-        (diffComments[workspaceId] ?? []).filter { $0.path == path }
+    /// The comment box of the diff tab of `path` (worktree-relative), while it is open.
+    public func commentDraft(workspaceId: String, path: String) -> CommentDraft? {
+        commentDrafts[workspaceId]?[path]
     }
 
-    /// CMT-05's "2 comments ready": the workspace's pending comments, oldest first, which Send to agent sends.
-    public func readyComments(workspaceId: String) -> [DiffCommentRecord] {
-        (diffComments[workspaceId] ?? []).filter { $0.state == .pending }
-    }
-
-    /// CMT-02's Comment: a pending comment on `lines` of `side`, keeping `capture` for `CommentAnchor` (CMT-04). The
-    /// body is trimmed; an empty one saves nothing.
-    public func addDiffComment(
-        workspaceId: String,
-        path: String,
-        side: DiffCommentRecord.Side,
-        lines: ClosedRange<Int>,
-        capture: CommentAnchor.Capture,
-        body: String
-    ) {
-        let text = body.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, workspace(id: workspaceId) != nil else { return }
-        let comment = DiffCommentRecord(
-            workspaceId: workspaceId,
-            path: path,
-            side: side,
-            startLine: lines.lowerBound,
-            endLine: lines.upperBound,
-            snippet: capture.snippet,
-            contextBefore: capture.contextBefore,
-            contextAfter: capture.contextAfter,
-            body: text
-        )
-        do {
-            try store.saveComment(comment)
-            diffComments[workspaceId, default: []].append(comment)
-        } catch {
-            errorMessage = "Could not save the comment: \(error)"
+    /// CMT-01's selection ended: the tab's box opens on `lines` of `side`, or moves there with its text and its
+    /// conversation, as the mock keeps them for another range of the same file. Only for an open diff tab. Opening a
+    /// box keeps a preview tab (FIL-05), so a click in the tree never takes a comment being written away with it.
+    @discardableResult
+    public func openCommentDraft(workspaceId: String, path: String, side: CommentLine.Side, lines: ClosedRange<Int>) -> CommentDraft? {
+        guard diffTabs[workspaceId]?.contains(path) == true else { return nil }
+        if previewTabs[workspaceId] == path { previewTabs[workspaceId] = nil }
+        if let draft = commentDrafts[workspaceId]?[path] {
+            draft.move(side: side, lines: lines)
+            return draft
         }
+        let draft = CommentDraft(side: side, lines: lines)
+        commentDrafts[workspaceId, default: [:]][path] = draft
+        return draft
     }
 
-    /// CMT-02's Edit: a new body, trimmed; the comment keeps its lines and its state.
-    public func editDiffComment(id: String, workspaceId: String, body: String) {
-        let text = body.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, var comment = diffComments[workspaceId]?.first(where: { $0.id == id }), comment.body != text else { return }
-        comment.body = text
-        saveComments([comment], workspaceId: workspaceId)
+    /// CMT-02's Cancel and Esc, and Send once the comment has gone: the box goes.
+    public func dropCommentDraft(workspaceId: String, path: String) {
+        commentDrafts[workspaceId]?[path] = nil
     }
 
-    /// CMT-02's Delete.
-    public func deleteDiffComment(id: String, workspaceId: String) {
-        do {
-            try store.deleteComment(id: id)
-            diffComments[workspaceId]?.removeAll { $0.id == id }
-        } catch {
-            errorMessage = "Could not delete the comment: \(error)"
+    /// The conversation a box sends to (CMT-02's "Sending to"): the one picked in its menu while its tab is still
+    /// open, else the one the workspace shows, else its newest open one.
+    public func commentConversation(for draft: CommentDraft, workspaceId: String) -> ChatSessionRecord? {
+        let open = conversations[workspaceId] ?? []
+        for id in [draft.conversationId, selectedConversationIds[workspaceId]].compactMap({ $0 }) {
+            if let record = open.first(where: { $0.id == id }) { return record }
         }
+        return open.last
     }
 
-    /// CMT-05's Send to agent: the pending comments, in `ReviewPrompt`'s format on the live branch, as one prompt to the
-    /// selected conversation (AGT-00: its agent starts if needed, the workspace shows it, and nothing goes while its turn
-    /// runs or its agent is stopped). They turn Sent as the prompt goes out, not before, so a prompt that never went
-    /// leaves them pending. Returns when the turn ends.
-    public func sendReview(workspaceId: String) async {
-        guard !sendingReviews.contains(workspaceId), let workspace = workspace(id: workspaceId),
-              agentActionAvailability(workspaceId: workspaceId) == .available else { return }
-        let ready = readyComments(workspaceId: workspaceId)
-        guard !ready.isEmpty else { return }
-        // The branch the agent may have renamed, as the compare URL names it.
-        let branch = pullRequests.panels[workspaceId]?.local?.branch ?? workspace.branch
-        let prompt = ReviewPrompt.build(branch: branch, comments: ready)
-        let ids = Set(ready.map(\.id))
-        sendingReviews.insert(workspaceId)
-        defer { sendingReviews.remove(workspaceId) }
-        await sendAgentAction(workspaceId: workspaceId, text: prompt, attachments: []) { [weak self] in
-            self?.markSent(ids, workspaceId: workspaceId)
-        }
-    }
-
-    private func markSent(_ ids: Set<String>, workspaceId: String) {
-        let now = Date()
-        let sent = (diffComments[workspaceId] ?? []).filter { ids.contains($0.id) && $0.state == .pending }.map { comment in
-            var marked = comment
-            marked.state = .sent
-            marked.sentAt = now
-            return marked
-        }
-        saveComments(sent, workspaceId: workspaceId)
-    }
-
-    /// CMT-04 after a refresh: `moved` is `CommentAnchor.reanchor` of `before`, run while git ran. A comment whose lines
-    /// changed meanwhile (an edit or a delete) is left for the next refresh; one sent meanwhile still moves.
-    private func applyReanchoring(_ moved: [DiffCommentRecord], before: [String: DiffCommentRecord], workspaceId: String) {
-        guard !moved.isEmpty, let current = diffComments[workspaceId] else { return }
-        var updates: [DiffCommentRecord] = []
-        for update in moved {
-            guard var comment = current.first(where: { $0.id == update.id }), let old = before[update.id],
-                  comment.startLine == old.startLine, comment.endLine == old.endLine, comment.state != .outdated else { continue }
-            comment.startLine = update.startLine
-            comment.endLine = update.endLine
-            if update.state == .outdated { comment.state = .outdated }
-            updates.append(comment)
-        }
-        saveComments(updates, workspaceId: workspaceId)
-    }
-
-    /// Writes changed comments to the store and to `diffComments`, in place.
-    private func saveComments(_ comments: [DiffCommentRecord], workspaceId: String) {
-        guard !comments.isEmpty, var all = diffComments[workspaceId] else { return }
-        for comment in comments {
-            do {
-                try store.saveComment(comment)
-            } catch {
-                errorMessage = "Could not save the comment: \(error)"
-                continue
+    /// CMT-05's Send: `comment` goes to the conversation at once, or into its queue while its turn runs; the toast says
+    /// which. A conversation whose tab was never shown gets its chat now, and an agent not started, or stopped, starts
+    /// first, as Send now starts a stopped one. The selected conversation and the tabs stay as they are, so the diff
+    /// stays on screen. Returns once the comment is on its way or in the queue, not when the turn ends.
+    public func sendLineComment(workspaceId: String, conversationId: String, comment: LineComment) async -> LineCommentOutcome {
+        guard let workspace = workspace(id: workspaceId),
+              (conversations[workspaceId] ?? []).contains(where: { $0.id == conversationId }) else { return .unavailable }
+        if chats[conversationId] == nil {
+            guard let record = try? store.session(id: conversationId), let agent = AgentKind(rawValue: record.agent) else {
+                return .unavailable
             }
-            if let index = all.firstIndex(where: { $0.id == comment.id }) { all[index] = comment }
+            do {
+                try await makeChat(workspace: workspace, record: record, agent: agent)
+            } catch {
+                errorMessage = "Could not open the \(agent.displayName) conversation: \(error)"
+                return .unavailable
+            }
         }
-        diffComments[workspaceId] = all
+        // Closed, or its workspace removed, while its chat was made.
+        guard let chat = chats[conversationId] else { return .unavailable }
+        if chat.state != .running, chat.state != .ready { await chat.start() }
+        switch chat.state {
+        case .running:
+            chat.enqueue(comment)
+            return .queued
+        case .ready:
+            // The turn runs on its own: `send` returns when the agent has answered. A turn that begins before this task
+            // runs queues the comment instead.
+            Task { await chat.send(comment) }
+            return .sent
+        case .idle, .starting, .stopped:
+            return .unavailable
+        }
     }
 
-    /// Reads the comments of workspaces the model has just loaded and drops those of workspaces that are gone (their
-    /// rows went with them, by cascade).
-    private func syncDiffComments() {
-        let ids = Set(workspaces.values.joined().map(\.id))
-        for id in Array(diffComments.keys) where !ids.contains(id) {
-            diffComments[id] = nil
+    /// CMT-05's Resend: a comment the message box sends with a chip that ↑ or a queued comment's Edit brought back. The
+    /// agent's block is built again from the chip's lines as they are now: the new side from the worktree file, the
+    /// removed side from the base with `git cat-file`, as the diff and EDIT-04 read it, both off the main actor. When
+    /// any line of the range cannot be read (the file is gone, the range runs past its end, a binary file, a path
+    /// outside the worktree on the removed side), the block goes without code, never with part of it (designer's
+    /// update, 2026-09-25). `files`, attached next to the chip, go as links after the block, each one named in it.
+    public func lineComment(for range: LineRangeAttachment, comment: String, files: [URL] = [], workspaceId: String) async -> LineComment {
+        let workspace = workspace(id: workspaceId)
+        let relative = workspace.flatMap { worktreeRelativePath(of: range.path, in: $0) }
+        let lines = range.start...range.end
+        let code: [String]?
+        switch range.side {
+        case .new:
+            let url = URL(fileURLWithPath: range.path)
+            code = await Task.blocking { DiffLayout.readLines(of: url).flatMap { Self.lines(lines, of: $0) } }.value
+        case .old:
+            code = await baseLines(lines, relativePath: relative, workspace: workspace)
         }
-        for id in ids where diffComments[id] == nil {
-            diffComments[id] = (try? store.comments(workspaceId: id)) ?? []
-        }
+        let path = relative ?? range.path
+        let prompt = ReviewPrompt.single(
+            path: path,
+            side: range.side,
+            start: range.start,
+            end: range.end,
+            code: code,
+            language: ReviewPrompt.fenceLanguage(forPath: path),
+            comment: ReviewPrompt.comment(comment, naming: files.map(\.path))
+        )
+        return LineComment(text: comment, range: range, prompt: prompt, files: files)
+    }
+
+    /// The removed side's `lines` from the base: the commit and a rename's old path the diff uses while the changes are
+    /// read (`editorBaseKey`), else the base found now, at the chip's path. nil for a file the base lacks.
+    private func baseLines(_ lines: ClosedRange<Int>, relativePath: String?, workspace: Workspace?) async -> [String]? {
+        guard let workspace, let relativePath else { return nil }
+        let known = editorBaseKey(workspaceId: workspace.id, relativePath: relativePath)
+        if let known, known.path == nil { return nil }
+        let service = GitChangesService(environment: environment(for: workspace))
+        let worktree = URL(fileURLWithPath: workspace.path)
+        let baseRef = workspace.baseRef
+        return await Task.blocking { () -> [String]? in
+            guard let commit = known?.commit ?? (try? service.base(worktree: worktree, baseRef: baseRef)),
+                  let data = service.blob(worktree: worktree, commit: commit, path: known?.path ?? relativePath),
+                  !GitChangesService.isBinary(data) else { return nil }
+            // Split as the patch splits the removed rows, so the code reads as the diff showed it.
+            return Self.lines(lines, of: DiffParser.lines(of: String(decoding: data, as: UTF8.self)))
+        }.value
+    }
+
+    /// Every line of `range` in a file's `lines`, or nil when the file ends before the range does.
+    nonisolated static func lines(_ range: ClosedRange<Int>, of lines: [String]) -> [String]? {
+        guard range.lowerBound >= 1, range.upperBound <= lines.count else { return nil }
+        return Array(lines[(range.lowerBound - 1)..<range.upperBound])
     }
 
     // MARK: Keyboard
@@ -3193,7 +3272,6 @@ public final class AppModel {
             workspaces = byRepo
             pullRequests.seed(byRepo.values.flatMap { $0 })
             syncWatchers()
-            syncDiffComments()
             refreshWorkspaceTitles()
         } catch {
             errorMessage = "\(error)"
@@ -3224,7 +3302,8 @@ extension ChatItem {
             attachments: record.attachments ?? [],
             toolKind: record.toolKind,
             createdAt: record.createdAt,
-            completedAt: record.completedAt
+            completedAt: record.completedAt,
+            diffStat: record.additions.flatMap { additions in record.deletions.map { DiffStat(additions: additions, deletions: $0) } }
         )
     }
 }
@@ -3241,7 +3320,9 @@ extension ChatMessageRecord {
             attachments: item.attachments.isEmpty ? nil : item.attachments,
             toolKind: item.toolKind,
             createdAt: item.createdAt,
-            completedAt: item.completedAt
+            completedAt: item.completedAt,
+            additions: item.diffStat?.additions,
+            deletions: item.diffStat?.deletions
         )
     }
 }

@@ -67,15 +67,19 @@ public enum DiffTabMode: String, Sendable {
     case diff, edit
 }
 
-/// `DIFF-05`: a diff tab asked to show its first hunk. `serial` grows with each request, so asking twice for the same
-/// file scrolls twice.
+/// `DIFF-05`: a diff tab asked to show its first hunk, or with `line` (`CMT-06`'s chip) that line's row. `serial` grows
+/// with each request, so asking twice for the same file scrolls twice.
 public struct DiffScrollRequest: Equatable, Sendable {
     public let path: String
     public let serial: Int
+    /// The first line of a chip's range; nil for the first hunk. Once the tab has scrolled there,
+    /// `AppModel.handledLineScrolls` holds the serial, so the tab does not scroll there again each time it appears.
+    public let line: CommentLine?
 
-    public init(path: String, serial: Int) {
+    public init(path: String, serial: Int, line: CommentLine? = nil) {
         self.path = path
         self.serial = serial
+        self.line = line
     }
 }
 

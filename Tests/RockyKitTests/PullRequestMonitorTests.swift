@@ -256,7 +256,7 @@ struct PullRequestMonitorTests {
         let (monitor, loader, _) = try makeMonitor()
         await monitor.refresh(workspaceId: "a", reason: .button)
         let loaded = try #require(monitor.panels["a"])
-        #expect(loaded.header(agentWorking: false) == HeaderPresentation(group: .inSync, label: "Ready to merge", action: .merge))
+        #expect(loaded.header() == HeaderPresentation(group: .inSync, label: "Ready to merge", action: .merge))
 
         loader.error = GitHubError.offline
         await monitor.refresh(workspaceId: "a", reason: .button)
@@ -264,7 +264,7 @@ struct PullRequestMonitorTests {
         #expect(offline.error == .offline)
         #expect(offline.snapshot == loaded.snapshot)
         #expect(offline.updatedAt == loaded.updatedAt)
-        #expect(offline.header(agentWorking: false) == loaded.header(agentWorking: false))
+        #expect(offline.header() == loaded.header())
         #expect(!offline.isLoading)
 
         // Back online, the error goes.
@@ -293,15 +293,15 @@ struct PullRequestMonitorTests {
         #expect(PanelError.accessRequired.detail == nil)
 
         // Without a snapshot, any failure is the header's label; the first load says it is loading.
-        #expect(PullRequestPanelState().header(agentWorking: false) == HeaderPresentation(group: .loading, label: "Loading PR info…", spins: true))
-        #expect(PullRequestPanelState(error: .offline).header(agentWorking: false) == HeaderPresentation(group: .loading, label: "No internet connection"))
+        #expect(PullRequestPanelState().header() == HeaderPresentation(group: .loading, label: "Loading PR info…", spins: true))
+        #expect(PullRequestPanelState(error: .offline).header() == HeaderPresentation(group: .loading, label: "No internet connection"))
 
         // With a snapshot, only offline keeps the last state.
         let (monitor, loader, _) = try makeMonitor()
         await monitor.refresh(workspaceId: "a", reason: .button)
         loader.error = GitHubError.notFound
         await monitor.refresh(workspaceId: "a", reason: .button)
-        #expect(monitor.panels["a"]?.header(agentWorking: false) == HeaderPresentation(group: .loading, label: "PR info unavailable"))
+        #expect(monitor.panels["a"]?.header() == HeaderPresentation(group: .loading, label: "PR info unavailable"))
     }
 
     /// No GitHub remote or no access: polling stops until the user retries.

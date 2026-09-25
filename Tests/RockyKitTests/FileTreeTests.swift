@@ -118,8 +118,11 @@ struct FileTreeTests {
         #expect(FileTree.rank("file1", in: list) == ["a/file10.ts", "b/file10.ts", "file1.ts"])
     }
 
-    /// FIL-07: 100,000 paths ranked in under 50 ms, `rank` alone timed. Known risks: measured in `swift test`'s debug
-    /// build; if it misses only there, a release build is measured and recorded, the bound is never raised silently.
+    /// FIL-07: 100,000 paths ranked in under 50 ms, `rank` alone timed, with FIL-08's 20 recent files. Known risks:
+    /// measured in `swift test`'s debug build; if it misses only there, a release build is measured and recorded, the
+    /// bound is never raised silently. The best of three runs counts: alone the ranking takes 17 to 19 ms, and a single
+    /// run once took 58 ms while the other suites ran in parallel (2026-09-24), which measured the machine's load, not
+    /// the ranking.
     @Test func ranks100000PathsInUnder50ms() {
         var paths: [String] = []
         paths.reserveCapacity(100_000)
@@ -130,13 +133,74 @@ struct FileTreeTests {
         }
         let list = FileList(listed: paths, deleted: [])
         #expect(list.paths.count == 100_000)
+        // Matches spread over the ranking, none a "-server" file, so each goes first in the last tier.
+        let plain = FileTree.rank("srv", in: list)
+        let lastTier = plain.filter { !$0.contains("-server") }
+        let recent = (0..<20).map { lastTier[$0 * (lastTier.count / 20)] }
 
         let clock = ContinuousClock()
         var ranked: [String] = []
-        let elapsed = clock.measure { ranked = FileTree.rank("srv", in: list) }
-        #expect(!ranked.isEmpty)
+        let elapsed = (0..<3).map { _ in clock.measure { ranked = FileTree.rank("srv", in: list, recent: recent) } }.min()!
+        #expect(ranked.count == plain.count)
+        #expect(Set(ranked) == Set(plain))
         #expect(ranked.first?.contains("-server") == true)
+        #expect(Array(ranked[(plain.count - lastTier.count)...].prefix(20)) == recent)
         #expect(elapsed < .milliseconds(50))
+    }
+
+    /// FIL-08: a recent file ranks first inside its tier, newest first, and never above a better tier; a recent file
+    /// the list no longer holds is left out.
+    @Test func aRecentFileRanksFirstInsideItsTier() {
+        let list = FileList(listed: [
+            "lib/observer.ts",        // "serv" in the name: tier 1
+            "src/server.ts",          // name starts with "serv": tier 0
+            "src/service.ts",         // tier 0
+            "web/serve.ts",           // tier 0
+            "vendor/preserve.ts",     // tier 1
+            "README.md",              // no match
+        ], deleted: [])
+        #expect(FileTree.rank("serv", in: list) == ["src/server.ts", "src/service.ts", "web/serve.ts", "lib/observer.ts", "vendor/preserve.ts"])
+
+        let recent = ["vendor/preserve.ts", "gone.ts", "web/serve.ts", "src/service.ts", "README.md"]
+        #expect(FileTree.rank("serv", in: list, recent: recent) == [
+            "web/serve.ts", "src/service.ts", "src/server.ts",
+            "vendor/preserve.ts", "lib/observer.ts",
+        ])
+        // An empty query is one tier: the recent files first, then Finder's order.
+        #expect(FileTree.rank("", in: list, recent: ["README.md", "gone.ts"]) == ["README.md"] + list.paths.filter { $0 != "README.md" })
+        // The same path twice counts once.
+        #expect(FileTree.rank("serv", in: list, recent: ["lib/observer.ts", "lib/observer.ts"]).count == 5)
+    }
+
+    /// FIL-08's empty query: the recent files still in the list, newest first; then the changed files that are not
+    /// recent, in the changes' order, a deleted one left out; then every other file in Finder's order. Each file once.
+    @Test func quickOpensEmptyQueryListsRecentThenChangedThenTheRest() {
+        let list = FileList(listed: ["b.ts", "a.ts", "src/c.ts", "src/d.ts", "src/gone.ts", "e.md"], deleted: ["src/gone.ts"])
+        #expect(list.paths == ["a.ts", "b.ts", "e.md", "src/c.ts", "src/d.ts"])
+        let results = QuickOpen.results(
+            query: "",
+            list: list,
+            recent: ["src/d.ts", "old.ts", "b.ts"],
+            changed: ["b.ts", "e.md", "src/gone.ts"]
+        )
+        #expect(results == ["src/d.ts", "b.ts", "e.md", "a.ts", "src/c.ts"])
+        #expect(QuickOpen.results(query: "", list: list, recent: [], changed: []) == list.paths)
+        // A query ranks, with the recent files first inside a tier; the changed files have no say.
+        #expect(QuickOpen.results(query: ".ts", list: list, recent: ["src/c.ts"], changed: ["b.ts"]) == ["src/c.ts", "a.ts", "b.ts", "src/d.ts"])
+    }
+
+    /// The binary search behind the recent files finds every path of a list at its index, in Finder's order across
+    /// folders ("file2" before "file10", a folder's files among its subfolders by name), and nothing else.
+    @Test func everyPathIsFoundAtItsPosition() {
+        let list = FileList(listed: [
+            "b/file10.ts", "a/file2.ts", "b/file2.ts", "a/file10.ts", "file1.ts", "a.ts", "a/b/c.ts", "A/x.ts", "Zeta.md",
+        ], deleted: [])
+        for (index, path) in list.paths.enumerated() {
+            #expect(list.position(of: path) == index)
+        }
+        #expect(list.position(of: "a") == nil)
+        #expect(list.position(of: "a/file3.ts") == nil)
+        #expect(list.position(of: "") == nil)
     }
 
     /// FIL-07: an event names its folder, relative to the worktree ("" the root); a rescan names a subtree.

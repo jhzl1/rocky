@@ -1,44 +1,53 @@
 import Foundation
 
-/// `CMT-05`'s prompt: a workspace's pending review comments, numbered, each with its file, lines and code, as one
-/// message to the agent.
+/// `CMT-05`'s text for the agent: one comment on a diff's lines with their code, the one text block of the message
+/// that carries the comment.
 public enum ReviewPrompt {
-    /// The exact text of `CMT-05`, the comments in the order given:
+    /// The exact text of `CMT-05`:
     ///
-    ///     Review comments on jhzl/openapi-export:
-    ///
-    ///     1. src/openapi.ts, lines 18–25
+    ///     Comment on src/openapi.ts, lines 18–25:
     ///     ```ts
     ///     function operation(route: Route) {
     ///     ```
     ///     Use the route's name as operationId only when it is unique.
     ///
-    ///     Address each comment and say what you changed for each number.
+    /// One line says "line 18"; the removed side says "removed lines 12–13 (from the base)" over the base's code. `path`
+    /// is worktree-relative. `language` names the code block (nil leaves it bare; `fenceLanguage(forPath:)` gives it),
+    /// and code holding a fence of its own gets a longer one, so its block stays whole. A CRLF file's lines keep their
+    /// "\r" in the diff; the prompt's lines end with "\n" alone.
     ///
-    /// A removed-side comment says "(removed)" after its lines. `language` names each file's code block (nil leaves it
-    /// bare); a snippet holding a fence of its own gets a longer one, so its block stays whole.
-    public static func build(
-        branch: String,
-        comments: [DiffCommentRecord],
-        language: (String) -> String? = ReviewPrompt.fenceLanguage(forPath:)
+    /// nil `code` gives the block without one, the header and the comment: `CMT-05`'s Resend when a line of the range
+    /// can no longer be read, which sends no code at all rather than part of it (designer's update, 2026-09-25).
+    public static func single(
+        path: String,
+        side: CommentLine.Side,
+        start: Int,
+        end: Int,
+        code: [String]?,
+        language: String?,
+        comment: String
     ) -> String {
-        var text = "Review comments on \(branch):\n"
-        for (index, comment) in comments.enumerated() {
-            let lines = comment.startLine == comment.endLine
-                ? "line \(comment.startLine)"
-                : "lines \(comment.startLine)–\(comment.endLine)"
-            let side = comment.side == .old ? " (removed)" : ""
-            // A CRLF file's lines keep their "\r" in the snippet; the prompt's lines end with "\n" alone.
-            let code = comment.snippet.map { $0.hasSuffix("\r") ? String($0.dropLast()) : $0 }
-            let fence = String(repeating: "`", count: max(3, longestBacktickRun(in: code) + 1))
-            text += "\n\(index + 1). \(comment.path), \(lines)\(side)\n"
-            text += fence + (language(comment.path) ?? "") + "\n"
-            text += code.joined(separator: "\n") + "\n"
-            text += fence + "\n"
-            text += comment.body + "\n"
-        }
-        text += "\nAddress each comment and say what you changed for each number."
+        let lines = start == end ? "line \(start)" : "lines \(start)–\(end)"
+        let range = side == .old ? "removed \(lines) (from the base)" : lines
+        var text = "Comment on \(path), \(range):\n"
+        guard let read = code else { return text + comment }
+        let code = read.map { $0.hasSuffix("\r") ? String($0.dropLast()) : $0 }
+        let fence = String(repeating: "`", count: max(3, longestBacktickRun(in: code) + 1))
+        text += fence + (language ?? "") + "\n"
+        if !code.isEmpty { text += code.joined(separator: "\n") + "\n" }
+        text += fence + "\n"
+        text += comment
         return text
+    }
+
+    /// A comment's text for its block when files sat in it (`CMT-05`'s Resend, files attached next to the chip): each
+    /// `PromptAttachment.marker` reads as its file's name. The files go as links after the block, which is one text
+    /// block never split at a marker, so a marker left in it would reach the agent as a stray character.
+    public static func comment(_ text: String, naming files: [String]) -> String {
+        var names = files.map { ($0 as NSString).lastPathComponent }[...]
+        return text.components(separatedBy: PromptAttachment.marker).enumerated().map { index, part in
+            index == 0 ? part : (names.popFirst() ?? "") + part
+        }.joined()
     }
 
     /// A code block's language: the file's extension when Rocky highlights the file ("ts" for `src/openapi.ts`, as in

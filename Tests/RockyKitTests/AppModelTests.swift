@@ -704,6 +704,36 @@ struct AppModelTests {
         await model.stopAllAgents()
     }
 
+    /// CNV-01, CNV-02: "+" makes a conversation with the agent where the repository's last message went, Claude Code
+    /// before any; a workspace's first conversation follows the same rule, and a conversation opened with another agent
+    /// changes nothing until a message is sent in it.
+    @Test func theDefaultAgentFollowsTheLastUserMessageInTheRepository() async throws {
+        let (model, workspace) = try await emptyWorkspace(store: try RockyStore.inMemory())
+        let first = try #require(await model.newConversation(workspace: workspace))
+        #expect(first.agent == .claude)
+
+        let opencode = try #require(await model.newConversation(workspace: workspace, agent: .opencode))
+        async let sending: Void = opencode.send("hi")
+        try await answerNextPermission(opencode)
+        await sending
+        let next = try #require(await model.newConversation(workspace: workspace))
+        #expect(next.agent == .opencode)
+        #expect(model.conversations[workspace.id]?.map(\.agent) == ["claude", "opencode", "opencode"])
+        #expect(model.selectedConversationIds[workspace.id] == model.conversations[workspace.id]?.last?.id)
+
+        // A Claude Code conversation picked from the bridge, with no message sent, leaves the default alone.
+        _ = try #require(await model.newConversation(workspace: workspace, agent: .claude))
+        #expect(try #require(await model.newConversation(workspace: workspace)).agent == .opencode)
+
+        // Another workspace of the repository opens its first conversation with the same agent.
+        await model.createWorkspace(repoId: workspace.repoId)
+        let second = try #require(model.workspaces[workspace.repoId]?.first { $0.id != workspace.id })
+        await model.showConversations(workspace: second)
+        #expect(model.conversations[second.id]?.map(\.agent) == ["opencode"])
+        #expect(model.existingChat(workspaceId: second.id)?.agent == .opencode)
+        await model.stopAllAgents()
+    }
+
     @Test func closingATabStopsItsAgentAndKeepsTheConversation() async throws {
         let store = try RockyStore.inMemory()
         let (model, workspace, first) = try await workspaceWithAConversation(store: store)
@@ -1564,141 +1594,222 @@ struct AppModelTests {
         #expect(model.diffTabs[workspace.id] == ["notes.md", "README.md"])
     }
 
-    // MARK: Review comments (CMT-03…CMT-05)
+    // MARK: Line comments (CMT-02, CMT-05, CMT-06)
 
-    /// CMT-05 (Review Focus 4): Send to agent sends the pending comments, oldest first, as one prompt in CMT-05's exact
-    /// format to the selected conversation, which the workspace shows instead of the diff tab, and they turn Sent in
-    /// the store too. With nothing pending, a second Send sends nothing.
-    @Test func sendReviewMarksCommentsSent() async throws {
+    /// A comment on README.md's first removed line, with the prompt `ReviewPrompt.single` builds for it.
+    private static func lineComment(in workspace: Workspace) -> LineComment {
+        let path = AppModel.editorPath(worktree: workspace.path, relativePath: "README.md")
+        let prompt = ReviewPrompt.single(path: "README.md", side: .old, start: 1, end: 1, code: ["hello"], language: "md", comment: "Keep the greeting.")
+        return LineComment(text: "Keep the greeting.", range: LineRangeAttachment(path: path, side: .old, start: 1, end: 1), prompt: prompt)
+    }
+
+    /// CMT-05: a comment goes to a conversation whose tab was never shown: its chat is made and started without
+    /// selecting it, the diff stays on screen, and the transcript and the store keep the comment and its entry. A
+    /// conversation that is not open takes nothing.
+    @Test func aLineCommentGoesToAConversationNotShownWithoutSelectingIt() async throws {
         let store = try RockyStore.inMemory()
-        let (model, workspace, chat) = try await workspaceWithAConversation(store: store)
-        // The worktree has the commented line, so the diff tab's refresh keeps the comment where it is (CMT-04).
-        try await write("hello world\n", to: "README.md", in: workspace)
-        model.addDiffComment(
-            workspaceId: workspace.id, path: "README.md", side: .new, lines: 1...1,
-            capture: CommentAnchor.Capture(snippet: ["hello world"]), body: "Say hello to the world."
-        )
-        model.addDiffComment(
-            workspaceId: workspace.id, path: "README.md", side: .old, lines: 1...1,
-            capture: CommentAnchor.Capture(snippet: ["hello"]), body: "  Why drop this?\n"
-        )
+        let (model, workspace, shown) = try await workspaceWithAConversation(store: store)
+        let other = ChatSessionRecord(workspaceId: workspace.id, agent: AgentKind.claude.rawValue)
+        try store.add(other)
+        await model.showConversations(workspace: workspace)
+        #expect(model.conversations[workspace.id]?.contains { $0.id == other.id } == true)
+        #expect(model.chat(conversationId: other.id) == nil)
         model.openDiff(workspaceId: workspace.id, path: "README.md")
-        #expect(model.readyComments(workspaceId: workspace.id).map(\.body) == ["Say hello to the world.", "Why drop this?"])
+        let selected = model.selectedConversationIds[workspace.id]
+        let comment = Self.lineComment(in: workspace)
 
-        async let sending: Void = model.sendReview(workspaceId: workspace.id)
+        #expect(await model.sendLineComment(workspaceId: workspace.id, conversationId: "missing", comment: comment) == .unavailable)
+        #expect(await model.sendLineComment(workspaceId: workspace.id, conversationId: other.id, comment: comment) == .sent)
+        let chat = try #require(model.chat(conversationId: other.id))
         try await answerNextPermission(chat)
-        await sending
+        try await waitUntil { chat.state == .ready && chat.items.contains { $0.kind == .user } }
 
-        #expect(chat.items.last(where: { $0.kind == .user })?.text == """
-            Review comments on \(workspace.branch):
-
-            1. README.md, line 1
-            ```md
-            hello world
-            ```
-            Say hello to the world.
-
-            2. README.md, line 1 (removed)
-            ```md
-            hello
-            ```
-            Why drop this?
-
-            Address each comment and say what you changed for each number.
-            """)
-        #expect(model.selectedDiffTabs[workspace.id] == nil)
-        #expect(model.existingChat(workspaceId: workspace.id) === chat)
-        #expect(model.readyComments(workspaceId: workspace.id).isEmpty)
-        let stored = try store.comments(workspaceId: workspace.id)
-        #expect(stored.map(\.state) == [.sent, .sent])
-        #expect(stored.allSatisfy { $0.sentAt != nil })
-
-        let prompts = chat.items.filter { $0.kind == .user }.count
-        await model.sendReview(workspaceId: workspace.id)
-        #expect(chat.items.filter { $0.kind == .user }.count == prompts)
+        let sent = try #require(chat.items.first { $0.kind == .user })
+        #expect(sent.text == comment.text)
+        #expect(sent.lineRange == comment.range)
+        #expect(try store.messages(sessionId: other.id).first?.attachments == [comment.range.entry])
+        #expect(model.selectedConversationIds[workspace.id] == selected)
+        #expect(model.existingChat(workspaceId: workspace.id) === shown)
+        #expect(model.selectedDiffTabs[workspace.id] == "README.md")
+        #expect(shown.items.allSatisfy { $0.lineRange == nil })
         await model.stopAllAgents()
     }
 
-    /// CMT-05 with AGT-00: while the selected conversation's turn runs, Send to agent sends nothing, not even to the
-    /// queue, and the comments stay pending.
-    @Test func sendReviewWaitsForTheTurn() async throws {
+    /// CMT-05's Queue: while the conversation's turn runs the comment waits in its queue, then goes after the turn.
+    @Test func aLineCommentQueuesWhileTheTurnRuns() async throws {
         let store = try RockyStore.inMemory()
         let (model, workspace, chat) = try await workspaceWithAConversation(store: store)
-        model.addDiffComment(
-            workspaceId: workspace.id, path: "README.md", side: .old, lines: 1...1,
-            capture: CommentAnchor.Capture(snippet: ["hello"]), body: "Keep the greeting."
-        )
+        let conversationId = try #require(model.selectedConversationIds[workspace.id])
+        let comment = Self.lineComment(in: workspace)
         async let turn: Void = chat.send("a long task")
         try await waitUntil { chat.pendingPermission != nil }
 
-        await model.sendReview(workspaceId: workspace.id)
-        #expect(!chat.items.contains { $0.text.hasPrefix("Review comments on") })
-        #expect(chat.queue.isEmpty)
-        #expect(model.readyComments(workspaceId: workspace.id).count == 1)
-
+        #expect(await model.sendLineComment(workspaceId: workspace.id, conversationId: conversationId, comment: comment) == .queued)
+        #expect(chat.queue.map(\.lineComment) == [comment])
         chat.answerPermission(optionId: "allow")
         await turn
+        try await answerNextPermission(chat)
+        try await waitUntil { chat.state == .ready && chat.queue.isEmpty && chat.items.last { $0.kind == .user }?.lineRange == comment.range }
         await model.stopAllAgents()
     }
 
-    /// CMT-04 through the model: each refresh of the full diff moves a comment whose lines moved and outdates one whose
-    /// lines changed, and the store keeps both; a removed-side comment stays where it is.
-    @Test func aRefreshKeepsCommentsOnTheirLinesAndStoresThem() async throws {
-        let (model, workspace) = try await watchedWorkspace(watchers: FakeWatchers())
-        try await write("one\ntwo\nthree\n", to: "notes.md", in: workspace)
-        model.visibleRightPanelTab = .changes
-        try await waitUntil { model.changes[workspace.id]?.files.map(\.path) == ["notes.md"] }
-        model.addDiffComment(
-            workspaceId: workspace.id, path: "notes.md", side: .new, lines: 2...2,
-            capture: CommentAnchor.Capture(snippet: ["two"]), body: "Rename this."
-        )
-        model.addDiffComment(
-            workspaceId: workspace.id, path: "README.md", side: .old, lines: 1...1,
-            capture: CommentAnchor.Capture(snippet: ["hello"]), body: "Keep the greeting."
-        )
+    /// CMT-05: a stopped conversation starts again, and the comment goes to it.
+    @Test func aLineCommentStartsAStoppedConversation() async throws {
+        let store = try RockyStore.inMemory()
+        let (model, workspace, chat) = try await workspaceWithAConversation(store: store)
+        let conversationId = try #require(model.selectedConversationIds[workspace.id])
+        await chat.stop()
+        #expect(chat.state == .stopped("Stopped"))
+        let comment = Self.lineComment(in: workspace)
 
-        try await write("zero\none\ntwo\nthree\n", to: "notes.md", in: workspace)
-        await model.refreshChanges(workspaceId: workspace.id)
-        let moved = try #require(model.comments(onFile: "notes.md", workspaceId: workspace.id).first)
-        #expect(moved.startLine == 3)
-        #expect(moved.endLine == 3)
-        #expect(moved.state == .pending)
-        let storedMove = try #require(try model.store.comments(workspaceId: workspace.id).first { $0.path == "notes.md" })
-        #expect(storedMove.startLine == 3)
-
-        try await write("zero\none\nTWO\nthree\n", to: "notes.md", in: workspace)
-        await model.refreshChanges(workspaceId: workspace.id)
-        let outdated = try #require(model.comments(onFile: "notes.md", workspaceId: workspace.id).first)
-        #expect(outdated.state == .outdated)
-        #expect(outdated.startLine == 3)
-        #expect(model.readyComments(workspaceId: workspace.id).map(\.path) == ["README.md"])
-        #expect(try model.store.comments(workspaceId: workspace.id).map(\.state) == [.outdated, .pending])
-        let removedSide = try #require(model.comments(onFile: "README.md", workspaceId: workspace.id).first)
-        #expect(removedSide.startLine == 1)
+        #expect(await model.sendLineComment(workspaceId: workspace.id, conversationId: conversationId, comment: comment) == .sent)
+        try await answerNextPermission(chat)
+        try await waitUntil { chat.state == .ready && chat.items.last { $0.kind == .user }?.lineRange == comment.range }
+        await model.stopAllAgents()
     }
 
-    /// CMT-03: comments come back with their workspace after a relaunch and go when it is removed.
-    @Test func commentsSurviveARelaunchAndGoWithTheirWorkspace() async throws {
+    /// CMT-05 Resend: the block is built again from the chip's lines as they are now: the new side from the worktree
+    /// file, the removed side from the base, whether the changes are read (their base) or not (the base found then).
+    @Test func aResentCommentReadsTheNewSideFromTheWorktreeAndTheRemovedSideFromTheBase() async throws {
+        let (model, workspace) = try await watchedWorkspace(watchers: FakeWatchers())
+        try await write("hi there\nsecond\n", to: "README.md", in: workspace)
+        let path = AppModel.editorPath(worktree: workspace.path, relativePath: "README.md")
+        let language = ReviewPrompt.fenceLanguage(forPath: "README.md")
+        let new = LineRangeAttachment(path: path, side: .new, start: 1, end: 2)
+        let removed = LineRangeAttachment(path: path, side: .old, start: 1, end: 1)
+
+        let fromWorktree = await model.lineComment(for: new, comment: "Why?", workspaceId: workspace.id)
+        #expect(fromWorktree == LineComment(
+            text: "Why?",
+            range: new,
+            prompt: ReviewPrompt.single(path: "README.md", side: .new, start: 1, end: 2, code: ["hi there", "second"], language: language, comment: "Why?")
+        ))
+        let removedPrompt = ReviewPrompt.single(path: "README.md", side: .old, start: 1, end: 1, code: ["hello"], language: language, comment: "Keep it?")
+        #expect(model.changes[workspace.id] == nil)
+        #expect(await model.lineComment(for: removed, comment: "Keep it?", workspaceId: workspace.id).prompt == removedPrompt)
+        model.visibleRightPanelTab = .changes
+        await model.refreshChanges(workspaceId: workspace.id)
+        #expect(model.changes[workspace.id]?.files.map(\.path) == ["README.md"])
+        #expect(await model.lineComment(for: removed, comment: "Keep it?", workspaceId: workspace.id).prompt == removedPrompt)
+
+        // Files attached next to the chip travel with the comment and are named in its block.
+        let shot = URL(fileURLWithPath: "/tmp/shot.png")
+        let withFile = await model.lineComment(for: new, comment: "Like \(PromptAttachment.marker)?", files: [shot], workspaceId: workspace.id)
+        #expect(withFile.files == [shot])
+        #expect(withFile.text == "Like \(PromptAttachment.marker)?")
+        #expect(withFile.prompt.hasSuffix("```\nLike shot.png?"))
+    }
+
+    /// CMT-05 Resend, all or nothing: a range past the end of the file, on either side, or a file that is gone, gives
+    /// the block without code.
+    @Test func aRangePastTheEndOfTheFileGivesTheBlockWithoutCode() async throws {
+        let (model, workspace) = try await watchedWorkspace(watchers: FakeWatchers())
+        try await write("hi there\nsecond\n", to: "README.md", in: workspace)
+        let path = AppModel.editorPath(worktree: workspace.path, relativePath: "README.md")
+
+        let pastTheEnd = LineRangeAttachment(path: path, side: .new, start: 2, end: 5)
+        #expect(await model.lineComment(for: pastTheEnd, comment: "Why?", workspaceId: workspace.id).prompt
+            == "Comment on README.md, lines 2–5:\nWhy?")
+        let pastTheBase = LineRangeAttachment(path: path, side: .old, start: 1, end: 3)
+        #expect(await model.lineComment(for: pastTheBase, comment: "Why?", workspaceId: workspace.id).prompt
+            == "Comment on README.md, removed lines 1–3 (from the base):\nWhy?")
+        let gone = LineRangeAttachment(path: AppModel.editorPath(worktree: workspace.path, relativePath: "gone.ts"), side: .new, start: 1, end: 1)
+        #expect(await model.lineComment(for: gone, comment: "Why?", workspaceId: workspace.id).prompt == "Comment on gone.ts, line 1:\nWhy?")
+        let neverInTheBase = LineRangeAttachment(path: gone.path, side: .old, start: 1, end: 1)
+        #expect(await model.lineComment(for: neverInTheBase, comment: "Why?", workspaceId: workspace.id).prompt
+            == "Comment on gone.ts, removed line 1 (from the base):\nWhy?")
+    }
+
+    /// CMT-05 Resend: a comment the message box sends again shows its chip and its text in the transcript, like the
+    /// comment box's, and the agent gets the block read now.
+    @Test func aResentCommentShowsItsChipAndItsText() async throws {
         let store = try RockyStore.inMemory()
-        let first = try makeModel(store: store)
-        await first.bootstrap()
-        await first.addRepo(at: try await GitFixture.localRepoOffMain(in: try Fixtures.temporaryDirectory("repos")))
-        let repoId = try #require(first.repos.first?.id)
-        await first.createWorkspace(repoId: repoId)
-        let workspace = try #require(first.workspaces[repoId]?.first)
-        first.addDiffComment(
-            workspaceId: workspace.id, path: "README.md", side: .old, lines: 1...1,
-            capture: CommentAnchor.Capture(snippet: ["hello"]), body: "Keep the greeting."
-        )
+        let (model, workspace, chat) = try await workspaceWithAConversation(store: store)
+        let range = Self.lineComment(in: workspace).range
+        let comment = await model.lineComment(for: range, comment: "Keep the greeting.", workspaceId: workspace.id)
+        #expect(comment == Self.lineComment(in: workspace))
 
-        let relaunched = try makeModel(store: store)
-        await relaunched.bootstrap()
-        #expect(relaunched.comments(onFile: "README.md", workspaceId: workspace.id).map(\.body) == ["Keep the greeting."])
+        async let sending: Void = chat.send(comment)
+        try await answerNextPermission(chat)
+        await sending
+        let sent = try #require(chat.items.last { $0.kind == .user })
+        #expect(sent.text == "Keep the greeting.")
+        #expect(sent.lineRange == range)
+        let conversationId = try #require(model.selectedConversationIds[workspace.id])
+        #expect(try store.messages(sessionId: conversationId).last { $0.kind == ChatItem.Kind.user.rawValue }?.attachments == [range.entry])
+        await model.stopAllAgents()
+    }
 
-        await relaunched.removeWorkspace(id: workspace.id)
-        #expect(relaunched.workspace(id: workspace.id) == nil)
-        #expect(relaunched.diffComments[workspace.id] == nil)
-        #expect(try store.comments(workspaceId: workspace.id).isEmpty)
+    /// CMT-06: a chip of a changed file opens its diff tab on the diff with its first line to scroll to, until the tab
+    /// has scrolled there; one of a file no longer changed opens its worktree tab in Edit, and scrolls nothing.
+    @Test func aChipOpensTheDiffAtItsLineOrTheUnchangedFilesTab() async throws {
+        let (model, workspace) = try await watchedWorkspace(watchers: FakeWatchers())
+        try await write("draft\n", to: "notes.md", in: workspace)
+        model.visibleRightPanelTab = .changes
+        await model.refreshChanges(workspaceId: workspace.id)
+        #expect(model.changes[workspace.id]?.files.map(\.path) == ["notes.md"])
+
+        let notes = LineRangeAttachment(path: AppModel.editorPath(worktree: workspace.path, relativePath: "notes.md"), side: .new, start: 1, end: 1)
+        model.openLineRange(workspaceId: workspace.id, attachment: notes)
+        #expect(model.selectedDiffTabs[workspace.id] == "notes.md")
+        #expect(model.diffMode(workspaceId: workspace.id, path: "notes.md") == .diff)
+        let request = try #require(model.diffScrollRequests[workspace.id])
+        #expect(request.path == "notes.md")
+        #expect(request.line == CommentLine(side: .new, number: 1))
+        #expect(model.handledLineScrolls[workspace.id] == nil)
+        model.lineScrollHandled(workspaceId: workspace.id, serial: request.serial - 1)
+        #expect(model.handledLineScrolls[workspace.id] == nil)
+        model.lineScrollHandled(workspaceId: workspace.id, serial: request.serial)
+        #expect(model.handledLineScrolls[workspace.id] == request.serial)
+        // The request keeps its line, so it never reads as a badge's first-hunk request.
+        #expect(model.diffScrollRequests[workspace.id] == request)
+
+        let readme = LineRangeAttachment(path: AppModel.editorPath(worktree: workspace.path, relativePath: "README.md"), side: .old, start: 1, end: 1)
+        model.openLineRange(workspaceId: workspace.id, attachment: readme)
+        #expect(model.selectedDiffTabs[workspace.id] == "README.md")
+        #expect(model.diffMode(workspaceId: workspace.id, path: "README.md") == .edit)
+        #expect(model.diffScrollRequests[workspace.id]?.path == "notes.md")
+        #expect((model.openFiles[workspace.id] ?? []).isEmpty)
+    }
+
+    /// CMT-02: a diff tab's box stays in the model while the tab is open, across tab switches, keeps its text on
+    /// another range of the file, sends to the picked conversation while it is open (else the one shown), keeps a
+    /// preview tab, and goes with its tab.
+    @Test func aCommentBoxStaysWithItsTabAndGoesWhenItCloses() async throws {
+        let store = try RockyStore.inMemory()
+        let (model, workspace, _) = try await workspaceWithAConversation(store: store)
+        let first = try #require(model.selectedConversationIds[workspace.id])
+        #expect(model.openCommentDraft(workspaceId: workspace.id, path: "README.md", side: .new, lines: 1...1) == nil)
+        model.openFromTree(workspaceId: workspace.id, path: "README.md", keep: false)
+        #expect(model.previewTabs[workspace.id] == "README.md")
+
+        let draft = try #require(model.openCommentDraft(workspaceId: workspace.id, path: "README.md", side: .new, lines: 2...4))
+        #expect(model.previewTabs[workspace.id] == nil)
+        draft.text = "Rename this."
+        #expect(model.commentConversation(for: draft, workspaceId: workspace.id)?.id == first)
+
+        _ = try #require(await model.newConversation(workspace: workspace, agent: .claude))
+        let second = try #require(model.selectedConversationIds[workspace.id])
+        #expect(second != first)
+        #expect(model.commentConversation(for: draft, workspaceId: workspace.id)?.id == second)
+        draft.conversationId = first
+        #expect(model.commentConversation(for: draft, workspaceId: workspace.id)?.id == first)
+
+        model.showDiff(workspaceId: workspace.id, path: "README.md")
+        #expect(model.commentDraft(workspaceId: workspace.id, path: "README.md") === draft)
+        #expect(model.openCommentDraft(workspaceId: workspace.id, path: "README.md", side: .old, lines: 1...1) === draft)
+        #expect(draft.side == .old)
+        #expect(draft.lines == 1...1)
+        #expect(draft.text == "Rename this.")
+
+        await model.closeConversation(workspace: workspace, conversationId: first)
+        #expect(model.commentConversation(for: draft, workspaceId: workspace.id)?.id == second)
+        model.dropCommentDraft(workspaceId: workspace.id, path: "README.md")
+        #expect(model.commentDraft(workspaceId: workspace.id, path: "README.md") == nil)
+        model.openCommentDraft(workspaceId: workspace.id, path: "README.md", side: .new, lines: 1...1)
+        model.closeDiff(workspaceId: workspace.id, path: "README.md")
+        #expect(model.commentDraft(workspaceId: workspace.id, path: "README.md") == nil)
+        await model.stopAllAgents()
     }
 
     // MARK: Editing (EDIT-01…EDIT-04)
@@ -2150,7 +2261,7 @@ struct AppModelTests {
     }
 
     /// FIL-05: a double-click on the row (its second click) or on the preview tab keeps it; a double-click on another
-    /// row replaces the preview with a kept tab.
+    /// row (its first click, then its second) replaces the preview with a kept tab.
     @Test func aDoubleClickKeepsThePreview() async throws {
         let (model, workspace) = try await watchedWorkspace(watchers: FakeWatchers())
         model.openFromTree(workspaceId: workspace.id, path: "a.md", keep: false)
@@ -2164,9 +2275,25 @@ struct AppModelTests {
         model.openFromTree(workspaceId: workspace.id, path: "c.md", keep: false)
         #expect(model.diffTabs[workspace.id] == ["a.md", "b.md", "c.md"])
 
+        model.openFromTree(workspaceId: workspace.id, path: "d.md", keep: false)
         model.openFromTree(workspaceId: workspace.id, path: "d.md", keep: true)
         #expect(model.diffTabs[workspace.id] == ["a.md", "b.md", "d.md"])
         #expect(model.previewTabs[workspace.id] == nil)
+    }
+
+    /// FIL-05 (Review Focus 8) with FIL-08: a file opened to keep (Quick Open's Return) gets a kept tab after the others
+    /// and leaves the preview tab alone; only a new preview replaces the preview.
+    @Test func openingToKeepLeavesThePreviewTabAlone() async throws {
+        let (model, workspace) = try await watchedWorkspace(watchers: FakeWatchers())
+        model.openFromTree(workspaceId: workspace.id, path: "a.md", keep: false)
+        model.openFromTree(workspaceId: workspace.id, path: "b.md", keep: true)
+        #expect(model.diffTabs[workspace.id] == ["a.md", "b.md"])
+        #expect(model.previewTabs[workspace.id] == "a.md")
+        #expect(model.selectedDiffTabs[workspace.id] == "b.md")
+
+        model.openFromTree(workspaceId: workspace.id, path: "c.md", keep: false)
+        #expect(model.diffTabs[workspace.id] == ["c.md", "b.md"])
+        #expect(model.previewTabs[workspace.id] == "c.md")
     }
 
     /// FIL-05 (Review Focus 8): the first edit keeps the preview, so the next click opens another tab and the edits
@@ -2247,18 +2374,117 @@ struct AppModelTests {
         #expect(model.revealedPaths[workspace.id] == nil)
     }
 
-    /// FIL-04's Go to File: the panel's tab turns to All files and asks its filter to take the keyboard, until that
-    /// workspace's tab says it did.
-    @Test func goToFileSelectsTheAllFilesTab() async throws {
-        let (model, workspace) = try await watchedWorkspace(watchers: FakeWatchers())
-        #expect(model.rightPanelTab(workspaceId: workspace.id) == .changes)
-        model.goToFile(workspaceId: workspace.id)
-        #expect(model.rightPanelTab(workspaceId: workspace.id) == .files)
-        #expect(model.goToFileRequest == workspace.id)
-        model.goToFileHandled(workspaceId: "another")
-        #expect(model.goToFileRequest == workspace.id)
-        model.goToFileHandled(workspaceId: workspace.id)
-        #expect(model.goToFileRequest == nil)
+    // MARK: Quick Open (FIL-08)
+
+    /// FIL-08's energy: Quick Open reads git's list itself, with the All files tab hidden, and lists no folder; opened
+    /// again with no event in between, it reads nothing. It never changes the right panel.
+    @Test func quickOpenReadsTheListOnceWhileItIsCurrent() async throws {
+        let files = FakeWorktreeFiles()
+        let (model, workspace) = try await watchedWorkspace(watchers: FakeWatchers(), files: files)
+        try await writeFile("a\n", to: "src/a.ts", in: workspace)
+        model.quickOpenWillShow(workspaceId: workspace.id)
+        try await waitUntil { model.fileTrees[workspace.id]?.list != nil }
+        await model.refreshFiles(workspaceId: workspace.id)
+        #expect(files.listCount == 1)
+        #expect(files.listedFolders.isEmpty)
+        #expect(model.fileTrees[workspace.id]?.list?.paths == ["README.md", "src/a.ts"])
+        #expect(model.fileTrees[workspace.id]?.listings.isEmpty == true)
+        #expect(model.rightPanelTabs[workspace.id] == nil)
+        model.quickOpenDidHide()
+
+        model.quickOpenWillShow(workspaceId: workspace.id)
+        await model.refreshFiles(workspaceId: workspace.id)
+        #expect(files.listCount == 1)
+        model.quickOpenDidHide()
+        #expect(files.listedFolders.isEmpty)
+    }
+
+    /// FIL-08: an FSEvents batch between two openings makes the next one read git's list again, and only the list.
+    @Test func quickOpenReadsAgainAfterAnEvent() async throws {
+        let watchers = FakeWatchers()
+        let files = FakeWorktreeFiles()
+        let (model, workspace) = try await watchedWorkspace(watchers: watchers, files: files)
+        model.quickOpenWillShow(workspaceId: workspace.id)
+        try await waitUntil { model.fileTrees[workspace.id]?.list != nil }
+        await model.refreshFiles(workspaceId: workspace.id)
+        model.quickOpenDidHide()
+        #expect(files.listCount == 1)
+
+        try await writeFile("b\n", to: "src/b.ts", in: workspace)
+        watchers.fire(workspace.path)
+        try await waitUntil { model.diffStats[workspace.id]?.files == 1 }
+        #expect(files.listCount == 1)
+
+        model.quickOpenWillShow(workspaceId: workspace.id)
+        try await waitUntil { model.fileTrees[workspace.id]?.list?.paths.contains("src/b.ts") == true }
+        await model.refreshFiles(workspaceId: workspace.id)
+        #expect(files.listCount == 2)
+        #expect(files.listedFolders.isEmpty)
+        model.quickOpenDidHide()
+    }
+
+    /// FIL-08: events while Quick Open is open only mark the list stale, so typing never waits on git; the full diff
+    /// follows them, for the status letters. The next opening reads the list.
+    @Test func eventsWhileQuickOpenIsOpenReadNothing() async throws {
+        let watchers = FakeWatchers()
+        let files = FakeWorktreeFiles()
+        let (model, workspace) = try await watchedWorkspace(watchers: watchers, files: files)
+        model.quickOpenWillShow(workspaceId: workspace.id)
+        try await waitUntil { model.fileTrees[workspace.id]?.list != nil && model.changes[workspace.id] != nil }
+        await model.refreshFiles(workspaceId: workspace.id)
+        #expect(files.listCount == 1)
+
+        try await writeFile("b\n", to: "src/b.ts", in: workspace)
+        watchers.fire(workspace.path)
+        try await waitUntil { model.changes[workspace.id]?.files.map(\.path) == ["src/b.ts"] }
+        #expect(files.listCount == 1)
+        #expect(files.listedFolders.isEmpty)
+        #expect(model.fileTrees[workspace.id]?.list?.paths.contains("src/b.ts") == false)
+        model.quickOpenDidHide()
+
+        model.quickOpenWillShow(workspaceId: workspace.id)
+        try await waitUntil { model.fileTrees[workspace.id]?.list?.paths.contains("src/b.ts") == true }
+        #expect(files.listCount == 2)
+        model.quickOpenDidHide()
+    }
+
+    /// FIL-08: every open of a worktree tab (the tree, the Changes tab, a badge, Quick Open) makes its file the newest
+    /// recent file; selecting a tab already on screen does not. The last 20 are kept, and they come back after a
+    /// relaunch, read when Quick Open first shows.
+    @Test func openingRecordsARecentFile() async throws {
+        let store = try RockyStore.inMemory()
+        let model = try makeModel(store: store)
+        await model.bootstrap()
+        await model.addRepo(at: try await GitFixture.localRepoOffMain(in: try Fixtures.temporaryDirectory("repos")))
+        let repoId = try #require(model.repos.first?.id)
+        await model.createWorkspace(repoId: repoId)
+        let workspace = try #require(model.workspaces[repoId]?.first)
+
+        model.openFromTree(workspaceId: workspace.id, path: "a.md", keep: false)
+        model.openDiff(workspaceId: workspace.id, path: "b.md")
+        model.openBadgeFile(workspaceId: workspace.id, path: workspace.path + "/c.md")
+        #expect(model.recentFiles[workspace.id] == ["c.md", "b.md", "a.md"])
+        model.showDiff(workspaceId: workspace.id, path: "a.md")
+        #expect(model.recentFiles[workspace.id] == ["c.md", "b.md", "a.md"])
+        model.openFromTree(workspaceId: workspace.id, path: "a.md", keep: true)
+        #expect(model.recentFiles[workspace.id] == ["a.md", "c.md", "b.md"])
+
+        for index in 0..<25 {
+            model.openDiff(workspaceId: workspace.id, path: "f\(index).md")
+        }
+        let recent = try #require(model.recentFiles[workspace.id])
+        #expect(recent.count == QuickOpen.recentLimit)
+        #expect(recent.first == "f24.md")
+        #expect(recent.last == "f5.md")
+        #expect(try store.recentFiles(workspaceId: workspace.id) == recent)
+
+        let relaunched = try makeModel(store: store)
+        await relaunched.bootstrap()
+        relaunched.selectedWorkspaceId = workspace.id
+        #expect(relaunched.recentFiles[workspace.id] == nil)
+        relaunched.quickOpenWillShow(workspaceId: workspace.id)
+        #expect(relaunched.recentFiles[workspace.id] == recent)
+        relaunched.quickOpenDidHide()
     }
 
     @Test func worktreeRelativePathIsOnlyForFilesInsideTheWorktree() {

@@ -130,7 +130,7 @@ public final class RockyStore: Sendable {
             }
         }
         // M3: review comments on diff lines (CMT-03), which go with their workspace. The snippet and its context are
-        // JSON arrays of lines.
+        // JSON arrays of lines. Dropped by v12.
         migrator.registerMigration("v9") { db in
             try db.create(table: "diffComment") { t in
                 t.primaryKey("id", .text)
@@ -158,6 +158,30 @@ public final class RockyStore: Sendable {
             }
             try db.alter(table: "repo") { t in
                 t.add(column: "showsIgnoredFiles", .boolean).notNull().defaults(to: false)
+            }
+        }
+        // FIL-08: each workspace's recently opened worktree files, worktree-relative, which go with it. Quick Open lists
+        // them first, across relaunches.
+        migrator.registerMigration("v11") { db in
+            try db.create(table: "recentFile") { t in
+                t.column("workspaceId", .text).notNull().references("workspace", onDelete: .cascade)
+                t.column("path", .text).notNull()
+                t.column("openedAt", .datetime).notNull()
+                t.primaryKey(["workspaceId", "path"])
+            }
+        }
+        // Comments like Conductor (CMT-05, user decision 2026-09-24): a comment goes to a conversation as it is
+        // written, and the conversation keeps it. v9's table goes; v9 stays registered as history, so old and new
+        // databases end with the same schema.
+        migrator.registerMigration("v12") { db in
+            try db.drop(table: "diffComment")
+        }
+        // DIFF-06: the lines each tool call added and removed, on its transcript row, so a resumed conversation keeps
+        // them. Rows saved before stay nil and show no counts.
+        migrator.registerMigration("v13") { db in
+            try db.alter(table: "chatMessage") { t in
+                t.add(column: "additions", .integer)
+                t.add(column: "deletions", .integer)
             }
         }
         return migrator
@@ -258,6 +282,40 @@ public final class RockyStore: Sendable {
         }
     }
 
+    // MARK: Recent files (FIL-08)
+
+    /// Records that the workspace opened `path` (worktree-relative) at `date`: a file opened before moves to the front.
+    /// Only the newest `QuickOpen.recentLimit` of the workspace are kept, trimmed in the same transaction. The row is
+    /// replaced rather than updated, so two opens in the same millisecond keep their order by rowid.
+    public func recordRecentFile(path: String, workspaceId: String, at date: Date) throws {
+        try db.write { db in
+            try db.execute(sql: "DELETE FROM recentFile WHERE workspaceId = ? AND path = ?", arguments: [workspaceId, path])
+            try db.execute(
+                sql: "INSERT INTO recentFile (workspaceId, path, openedAt) VALUES (?, ?, ?)",
+                arguments: [workspaceId, path, date]
+            )
+            try db.execute(
+                sql: """
+                    DELETE FROM recentFile WHERE workspaceId = ? AND rowid NOT IN (
+                        SELECT rowid FROM recentFile WHERE workspaceId = ? ORDER BY openedAt DESC, rowid DESC LIMIT ?
+                    )
+                    """,
+                arguments: [workspaceId, workspaceId, QuickOpen.recentLimit]
+            )
+        }
+    }
+
+    /// The workspace's recently opened files, newest first. Removing the workspace deletes them (cascade).
+    public func recentFiles(workspaceId: String) throws -> [String] {
+        try db.read { db in
+            try String.fetchAll(
+                db,
+                sql: "SELECT path FROM recentFile WHERE workspaceId = ? ORDER BY openedAt DESC, rowid DESC",
+                arguments: [workspaceId]
+            )
+        }
+    }
+
     // MARK: Repo variables
 
     public func repoVars(repoId: String) throws -> [RepoVar] {
@@ -281,27 +339,6 @@ public final class RockyStore: Sendable {
 
     public func deleteRepoVar(repoId: String, name: String) throws {
         _ = try db.write { try RepoVar.filter(Column("repoId") == repoId && Column("name") == name).deleteAll($0) }
-    }
-
-    // MARK: Review comments (CMT-03)
-
-    /// The workspace's comments on its diffs, oldest first. Removing the workspace deletes them (cascade).
-    public func comments(workspaceId: String) throws -> [DiffCommentRecord] {
-        try db.read {
-            try DiffCommentRecord
-                .filter(Column("workspaceId") == workspaceId)
-                .order(Column("createdAt"), Column.rowID)
-                .fetchAll($0)
-        }
-    }
-
-    /// Inserts the comment, or replaces the one with its id.
-    public func saveComment(_ comment: DiffCommentRecord) throws {
-        try db.write { try comment.save($0) }
-    }
-
-    public func deleteComment(id: String) throws {
-        _ = try db.write { try DiffCommentRecord.deleteOne($0, key: id) }
     }
 
     // MARK: Chat
@@ -351,6 +388,27 @@ public final class RockyStore: Sendable {
                 .order(Column("createdAt"))
                 .fetchAll($0)
         }
+    }
+
+    /// KIT-13, CNV-02: the agent of the conversation where the repository's newest user message was sent, across all
+    /// its workspaces and closed tabs included; nil before its first message. Messages at the same time go by the
+    /// order they were written in (rowid). An agent this build does not know reads as nil.
+    public func lastUsedAgent(repoId: String) throws -> AgentKind? {
+        let agent = try db.read { db in
+            try String.fetchOne(
+                db,
+                sql: """
+                    SELECT chatSession.agent FROM chatMessage
+                    JOIN chatSession ON chatSession.id = chatMessage.sessionId
+                    JOIN workspace ON workspace.id = chatSession.workspaceId
+                    WHERE workspace.repoId = ? AND chatMessage.kind = 'user'
+                    ORDER BY chatMessage.createdAt DESC, chatMessage.rowid DESC
+                    LIMIT 1
+                    """,
+                arguments: [repoId]
+            )
+        }
+        return agent.flatMap(AgentKind.init(rawValue:))
     }
 
     /// The text of the conversation's first user message, for titling conversations saved before titles existed.

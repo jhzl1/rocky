@@ -5,7 +5,9 @@ import SwiftUI
 /// decision, 2026-09-23: not floating over the message box). Drawn like the user's messages but dimmer, with a
 /// dashed edge; the queue shares one `QueueCaption` under its last message. On hover, like Conductor's queue: send
 /// it now (which stops the turn in progress first), take it back into the message box to edit it when the box is
-/// empty, or delete it.
+/// empty, or delete it. A line comment (CMT-05) shows its chip over the comment and offers Send now, Edit and Remove;
+/// its Edit brings the chip back into the box with the text, as ↑ does, and the code it was queued with goes (Edit was
+/// left out while the box could not hold a chip; the designer's update, 2026-09-25, puts it back).
 struct QueuedMessageRow: View {
     let message: QueuedMessage
     let isAgentWorking: Bool
@@ -29,7 +31,9 @@ struct QueuedMessageRow: View {
 
     private var bubble: some View {
         Group {
-            if message.attachments.isEmpty {
+            if let comment = message.lineComment {
+                LineCommentText(range: comment.range, text: comment.text, files: message.attachments.map(\.path), selectable: false)
+            } else if message.attachments.isEmpty {
                 Text(message.text)
             } else {
                 InlineFilesText(text: message.text, files: message.attachments.map(\.path))
@@ -53,9 +57,15 @@ struct QueuedMessageRow: View {
                 .buttonStyle(RockyIconButtonStyle(size: 22))
                 .disabled(!canEdit)
                 .help(canEdit ? "Edit in the message box" : "Send or clear the message box first")
-            Button("Delete", systemImage: "xmark", action: onDelete)
-                .buttonStyle(RockyIconButtonStyle(size: 22))
-                .help("Delete this queued message")
+            if message.lineComment == nil {
+                Button("Delete", systemImage: "xmark", action: onDelete)
+                    .buttonStyle(RockyIconButtonStyle(size: 22))
+                    .help("Delete this queued message")
+            } else {
+                Button("Remove", systemImage: "xmark", action: onDelete)
+                    .buttonStyle(RockyIconButtonStyle(size: 22))
+                    .help("Remove this queued comment")
+            }
         }
         .font(.rocky(12))
     }

@@ -2,7 +2,7 @@ import Foundation
 
 /// `HDR-02`'s states, declared in its priority order. Stored by raw value (`StoredPullRequest.headerState`).
 public enum HeaderState: String, Codable, Sendable, CaseIterable {
-    case merged, queuedToMerge, working, noChanges, createPR, commitAndPush, incompatible, pull, push, mergeConflicts,
+    case merged, queuedToMerge, noChanges, createPR, commitAndPush, incompatible, pull, push, mergeConflicts,
          changesRequested, draftPR, checksFailing, checksPending, reviewRequired, blocked, loadingPR, readyToMerge,
          unableToMerge
 }
@@ -42,12 +42,13 @@ public struct HeaderPresentation: Equatable, Sendable {
 /// `HDR-02`: the pull request header's state and how it reads.
 public enum PullRequestHeader {
     /// The first row of `HDR-02` that applies. `pr` is the branch's newest open or merged pull request (a closed one
-    /// is nil, so it falls back to create PR); `agentWorking` is the selected conversation's turn running (`AGT-00`).
-    public static func state(pr: PullRequestInfo?, local: LocalGitStatus?, agentWorking: Bool) -> HeaderState {
+    /// is nil, so it falls back to create PR). A running turn changes nothing here: its "Working…" was one loader too
+    /// many beside the chat's (user decision, 2026-09-25); the actions it would start stay disabled with `AGT-00`'s
+    /// reason instead.
+    public static func state(pr: PullRequestInfo?, local: LocalGitStatus?) -> HeaderState {
         if pr?.isMerged == true { return .merged }
         // Only a merge queue entry: an enabled auto-merge is Conductor's Automerge (OUT-30).
         if pr?.mergeQueueState != nil { return .queuedToMerge }
-        if agentWorking { return .working }
         guard let pr else {
             // Without a local status Rocky cannot tell there is nothing to put in a pull request, so it offers one.
             let hasChanges = local.map { $0.uncommitted > 0 || $0.commitsAheadOfBase > 0 } ?? true
@@ -83,8 +84,6 @@ public enum PullRequestHeader {
             return HeaderPresentation(group: .merged, label: "Merged", action: .archive)
         case .queuedToMerge:
             return HeaderPresentation(group: .queued, label: queueLabel(pr?.mergeQueueState), action: .queuedBadge)
-        case .working:
-            return HeaderPresentation(group: .loading, label: "Working…", spins: true)
         case .noChanges:
             return HeaderPresentation(group: .noPR, label: "No changes yet", isDim: true)
         case .createPR:

@@ -123,6 +123,12 @@ struct ToolCallRow: View {
             if item.attachments.count > 3 {
                 DetailBadge(text: "+\(item.attachments.count - 3)")
             }
+            // DIFF-06: the lines the call added and removed, 6 after its badges (the row's spacing less 2, as the
+            // mock's `margin-left: -2px`).
+            if let stat = ToolDiffStats.label(for: [item]) {
+                DiffStatLabel(stat: stat)
+                    .padding(.leading, -2)
+            }
             if let detail = summary.detail {
                 DetailBadge(text: detail, monospaced: summary.isCommand)
             }
@@ -177,6 +183,8 @@ struct ToolGroupRow: View {
                     // Its title shimmers while one of its calls runs (MOT-03).
                     ShimmerText(title, isLive: isLive && tools.contains { $0.status == "pending" || $0.status == "in_progress" })
                         .layoutPriority(1)
+                    // DIFF-06: the sum of its rows' counts, so a folded group still shows them.
+                    if let stat = ToolDiffStats.label(for: tools) { DiffStatLabel(stat: stat) }
                     if !expanded { DetailBadge(text: overview) }
                     Image(systemName: "chevron.right")
                         .font(.rocky(10, weight: .semibold))
@@ -269,14 +277,17 @@ struct CommandMessageText: View {
 }
 
 /// The user's message on the right. Its files sit inside the text as badges, where they were written, as in
-/// Conductor. A message that runs one of the agent's commands starts with its chip.
+/// Conductor. A message that runs one of the agent's commands starts with its chip. A line comment (CMT-06) is its
+/// line chip on top and the comment under it, never a file badge; the agent got the lines' code with it (CMT-05).
 struct UserMessageRow: View {
     let item: ChatItem
     var command: String?
 
     var body: some View {
         Group {
-            if let command {
+            if let range = item.lineRange {
+                LineCommentText(range: range, text: item.text, files: item.attachedFiles)
+            } else if let command {
                 CommandMessageText(item: item, command: command)
             } else if item.attachments.isEmpty {
                 Text(item.text).textSelection(.enabled)
@@ -290,6 +301,29 @@ struct UserMessageRow: View {
         .background(.tint.opacity(0.15), in: RoundedRectangle(cornerRadius: 10))
         .frame(maxWidth: Zoom.shared(620), alignment: .trailing)
         .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+}
+
+/// A line comment in a message bubble (CMT-06): the chip, which opens the file at its lines, then the comment 6 points
+/// under it, with the files attached next to the chip on a resend (CMT-05) as badges where they sat. The queue's rows
+/// draw it too.
+struct LineCommentText: View {
+    let range: LineRangeAttachment
+    let text: String
+    var files: [String] = []
+    var selectable = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            LineChip(range: range, opens: true)
+            if !files.isEmpty {
+                InlineFilesText(text: text, files: files)
+            } else if selectable {
+                Text(verbatim: text).textSelection(.enabled)
+            } else {
+                Text(verbatim: text)
+            }
+        }
     }
 }
 

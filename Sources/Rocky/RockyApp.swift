@@ -101,12 +101,15 @@ struct RockyApp: App {
             CommandGroup(replacing: .newItem) {
                 NewWorkspaceCommand(model: model)
             }
+            CommandGroup(after: .newItem) {
+                OpenInDefaultAppCommand(model: model)
+            }
             // After the group that holds Close (⌘W), which stays.
             CommandGroup(after: .saveItem) {
                 SaveCommand(model: model)
             }
-            // ⌘P is Go to File, like VS Code's Quick Open, in place of Page Setup and Print…, which Rocky has no use for
-            // (user decision, 2026-09-24); the editor's Go to Line sits under it (KBD-02).
+            // ⌘P is Go to File, Quick Open (FIL-08) as in Zed and VS Code, in place of Page Setup and Print…, which Rocky
+            // has no use for (user decision, 2026-09-24); the editor's Go to Line sits under it (KBD-02).
             CommandGroup(replacing: .printItem) {
                 GoToFileCommand(model: model)
                 GoToLineCommand()
@@ -214,6 +217,25 @@ private struct NewWorkspaceCommand: View {
     }
 }
 
+/// File ▸ Open in <app> (⌘O, OPN-02): the selected workspace's worktree in the default app, as the Open split button's
+/// left part does (TB-03). The title follows the default ("Open in Zed", "Open in Finder"), looked up when the menu bar
+/// reads it and again when it runs. ⌘O was free: the app is a `WindowGroup` with no documents, so File has no Open….
+/// A failure shows in the window's toast, through the model. Off without a selected workspace.
+private struct OpenInDefaultAppCommand: View {
+    let model: AppModel
+    @AppStorage(DefaultOpenApp.storageKey) private var storedDefault: String?
+
+    var body: some View {
+        Button("Open in \(InstalledApp.defaultApp(stored: storedDefault).app.displayName)") {
+            guard let workspace = model.selectedWorkspace else { return }
+            let worktree = URL(fileURLWithPath: workspace.path, isDirectory: true)
+            InstalledApp.defaultApp(stored: storedDefault).openFolder(worktree) { [model] in model.onToast?($0) }
+        }
+        .keyboardShortcut("o", modifiers: .command)
+        .disabled(model.selectedWorkspace == nil)
+    }
+}
+
 /// File ▸ Save (⌘S, EDIT-02, KBD-02): the file on screen, while it has unsaved edits, as its header's Save. The one owner
 /// of ⌘S in the window: off while the settings or a repository's settings are open, whose own Save has it.
 private struct SaveCommand: View {
@@ -234,21 +256,20 @@ private struct SaveCommand: View {
     }
 }
 
-/// File ▸ Go to File… (⌘P, FIL-04, KBD-02): the right panel on All files, whose filter takes the keyboard with its text
-/// selected. It opens the panel through the open state the panel toggle and ⌥⌘B share. A menu command, so it works
-/// from the message box and the terminal too; off without a selected workspace.
+/// File ▸ Go to File… (⌘P, FIL-08, KBD-02): Quick Open over the window for the selected workspace, or, while it shows,
+/// closed. It leaves the right panel as it is, open or closed. A menu command, so it works from the message box, the
+/// editor and the terminal too; off without a selected workspace, and while the settings or a repository's settings
+/// are open, as Save is.
 private struct GoToFileCommand: View {
     let model: AppModel
-    @AppStorage(RightPanelStorage.openKey) private var isOpen = true
 
     var body: some View {
         Button("Go to File…") {
             guard let workspaceId = model.selectedWorkspaceId else { return }
-            model.goToFile(workspaceId: workspaceId)
-            isOpen = true
+            QuickOpenPresenter.shared.toggle(for: workspaceId, model: model)
         }
         .keyboardShortcut("p", modifiers: .command)
-        .disabled(model.selectedWorkspace == nil)
+        .disabled(model.selectedWorkspace == nil || SettingsPresenter.isAnySettingsPanelOpen)
     }
 }
 

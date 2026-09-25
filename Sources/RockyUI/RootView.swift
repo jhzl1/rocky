@@ -78,6 +78,12 @@ public struct RootView: View {
         .onChange(of: model.isSearchFocusRequested) { _, requested in
             if requested, !sidebarVisible { toggleSidebar() }
         }
+        // FIL-08: Quick Open lists the selected workspace's files, and a settings panel takes the window's keys, so
+        // another workspace (⌘1…⌘9) or a settings panel (⌘,) closes it.
+        .onChange(of: model.selectedWorkspaceId) { QuickOpenPresenter.shared.dismiss() }
+        .onChange(of: SettingsPresenter.isAnySettingsPanelOpen) { _, isOpen in
+            if isOpen { QuickOpenPresenter.shared.dismiss() }
+        }
         .preferredColorScheme(.dark)
         // The default font of every view that sets none (sidebar rows, buttons, fields), at Rocky's zoom.
         .font(.rocky(13))
@@ -86,6 +92,8 @@ public struct RootView: View {
         // menus.
         .overlay { SettingsModal(model: model) }
         .overlay { RepoSettingsModal(model: model) }
+        // FIL-08: over the workspace and the settings, under the menus.
+        .overlay { QuickOpenHost(model: model) }
         .overlay { MenuHost(presenter: menus) }
         .overlay { ToastHost(presenter: toasts) }
         .onChange(of: appearsActive, initial: true) { _, active in model.isWindowActive = active }

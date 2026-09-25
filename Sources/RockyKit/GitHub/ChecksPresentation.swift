@@ -65,7 +65,7 @@ public struct GitStatusRow: Equatable, Sendable {
         if pr.reviewDecision == "CHANGES_REQUESTED" {
             rows.append(GitStatusRow(text: "PR changes requested", tone: .danger, action: .addAllComments))
         }
-        if PullRequestHeader.state(pr: pr, local: local, agentWorking: false) == .readyToMerge {
+        if PullRequestHeader.state(pr: pr, local: local) == .readyToMerge {
             rows.append(GitStatusRow(text: "Ready to merge", tone: .success, action: .merge))
         }
         if rows.isEmpty {

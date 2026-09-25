@@ -21,7 +21,7 @@ Visual and behavioral source of truth for
   archivos"), and the mock follows M2.7's final layout (LAY-01). Order: M2.7, then M3, then M2.8.
 - Revised 2026-09-23: the pull request part (GitHub account, create, checks, merge, sidebar glyphs; formerly
   ACC-01, PR-01..07, ROW-07) moved to M2.7, and the Changes panel became the Changes tab of M2.7's panel.
-- Every requirement has an id (CHG-02, DIFF-02, CMT-04, EDIT-03…). The same id is on the element of the
+- Every requirement has an id (CHG-02, DIFF-02, CMT-05, EDIT-03…). The same id is on the element of the
   mock (button "Requirement pins"), in the <section id="REQ-…"> on the right, and in the plan task.
 - Each requirement lists Values (points at 100 % zoom), SwiftUI/Kit (where and how in our code) and
   Done when. When the mock and a requirement's text disagree, the text wins.
@@ -42,7 +42,7 @@ Visual and behavioral source of truth for
   /* M3 tokens (TOK-10) */
   --add-line: rgba(124,192,138,0.12); --add-gutter: rgba(124,192,138,0.20);
   --del-line: rgba(240,135,106,0.12); --del-gutter: rgba(240,135,106,0.20);
-  --hunk: rgba(120,189,245,0.06); --range: rgba(120,189,245,0.14); --cur-line: rgba(255,255,255,0.03);
+  --range: rgba(120,189,245,0.14); --cur-line: rgba(255,255,255,0.03);
   --syn-keyword: #C792EA; --syn-string: #A5D6A7; --syn-number: #F2A96B; --syn-comment: #7F848E; --syn-function: #7CB7F2; --syn-type: #E6C07B;
   --titlebar: 38px; --row: 28px; --r-row: 7px; --r-btn: 6px; --code-line: 20px;
   --mono: ui-monospace, "SF Mono", Menlo, monospace;
@@ -185,6 +185,18 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
 .dv-head { height: 34px; flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 0 10px 0 14px; border-bottom: 1px solid var(--hairline); }
 .dv-path { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .dv-path .dir { color: var(--text-3); }
+.path-chip { height: 24px; display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; min-width: 0; border-radius: var(--r-btn); box-shadow: inset 0 0 0 1px var(--hairline); color: var(--text); transition: background var(--dur-fast) ease-out; }
+button.path-chip:hover { background: var(--fill-hover); }
+.path-chip.plain { padding: 0; box-shadow: none; }
+/* TB-03: the Open split button, the default app (OPN-02) and the menu */
+.open-split { height: 28px; display: inline-flex; align-items: center; flex-shrink: 0; border-radius: var(--r-btn); background: var(--fill-control); box-shadow: inset 0 0 0 1px var(--hairline); overflow: hidden; }
+.open-split button { height: 100%; display: inline-flex; align-items: center; justify-content: center; color: var(--text-2); transition: background var(--dur-fast) ease-out, color var(--dur-fast) ease-out; }
+.open-split button:hover { background: var(--fill-hover); color: var(--text); }
+.open-split .os-main { width: 30px; } .open-split .os-chev { width: 22px; }
+.open-split .os-chev.on { background: var(--fill-selected); color: var(--text); }
+.open-split .os-chev svg { width: 10px; height: 10px; }
+.os-sep { width: 1px; height: 16px; background: var(--hairline); flex-shrink: 0; }
+.app-ico { display: inline-flex; flex-shrink: 0; width: 16px; height: 16px; } .app-ico svg { width: 16px; height: 16px; }
 .dv-edited { font-size: 11.5px; color: var(--text-2); }
 .seg { height: 24px; display: flex; padding: 2px; border-radius: var(--r-btn); background: var(--fill-control); flex-shrink: 0; }
 .seg button { height: 20px; padding: 0 10px; border-radius: 4px; font-size: 12px; color: var(--text-2); transition: background var(--dur-fast), color var(--dur-fast); }
@@ -197,23 +209,21 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
 .dv-body { flex-grow: 1; min-height: 0; overflow: auto; position: relative; }
 .diff { min-width: max-content; padding: 6px 0 40px; font: 12px var(--mono); }
 .dl { display: flex; height: var(--code-line); line-height: var(--code-line); position: relative; }
-.dl .ln { width: 40px; flex-shrink: 0; padding-right: 8px; text-align: right; color: var(--text-3); user-select: none; cursor: pointer; font-variant-numeric: tabular-nums; }
+.dl .ln { width: 48px; flex-shrink: 0; padding-right: 8px; text-align: right; color: var(--text-3); user-select: none; cursor: pointer; font-variant-numeric: tabular-nums; }
 .dl .mk { width: 16px; flex-shrink: 0; text-align: center; user-select: none; color: var(--text-3); }
 .dl .src { padding-right: 24px; white-space: pre; }
-.dl.add { background: var(--add-line); } .dl.add .ln { background: var(--add-gutter); } .dl.add .mk { color: var(--success); }
-.dl.del { background: var(--del-line); } .dl.del .ln { background: var(--del-gutter); } .dl.del .mk { color: var(--danger); }
+.dl.add { background: var(--add-line); } .dl.add .ln { background: var(--add-gutter); color: var(--success); } .dl.add .mk { color: var(--success); }
+.dl.del { background: var(--del-line); } .dl.del .ln { background: var(--del-gutter); color: var(--danger); } .dl.del .mk { color: var(--danger); }
 .dl.sel { background: var(--range) !important; box-shadow: inset 3px 0 0 var(--accent); }
-.dl .cadd { position: absolute; left: 62px; top: 2px; width: 16px; height: 16px; border-radius: 4px; background: var(--accent); color: #0E1116; display: none; align-items: center; justify-content: center; z-index: 2; }
-.dl .cadd.old { left: 22px; }
+.dl .cadd { position: absolute; left: 26px; top: 2px; width: 16px; height: 16px; border-radius: 4px; background: var(--accent); color: #0E1116; display: none; align-items: center; justify-content: center; z-index: 2; }
 .dl:hover .cadd { display: flex; }
-.hunk { height: 26px; line-height: 26px; padding-left: 96px; background: var(--hunk); color: var(--text-3); font-size: 11.5px; user-select: none; }
-.gap { height: 26px; display: flex; align-items: center; gap: 6px; width: 100%; padding-left: 96px; color: var(--text-2); font: 12px -apple-system, BlinkMacSystemFont, sans-serif; transition: background var(--dur-fast); }
+.gap { height: 26px; display: flex; align-items: center; gap: 6px; width: 100%; padding-left: 64px; color: var(--text-2); font: 12px -apple-system, BlinkMacSystemFont, sans-serif; transition: background var(--dur-fast); }
 .gap:hover { background: var(--fill-hover); color: var(--text); }
 .special { margin: 40px auto; max-width: 420px; text-align: center; color: var(--text-2); font-size: 13px; }
 .t-k { color: var(--syn-keyword); } .t-s { color: var(--syn-string); } .t-n { color: var(--syn-number); } .t-c { color: var(--syn-comment); } .t-f { color: var(--syn-function); } .t-t { color: var(--syn-type); }
 
 /* ---------- CMT: comments ---------- */
-.cmt-slot { padding: 6px 24px 8px 96px; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+.cmt-slot { padding: 6px 24px 8px 64px; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
 .ccard, .ccomposer { max-width: 560px; border-radius: 8px; background: var(--composer); border: 1px solid var(--composer-border); }
 .ccard + .ccard { margin-top: 6px; }
 .ccard-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px 0 12px; font-size: 11.5px; color: var(--text-2); }
@@ -226,6 +236,22 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
 .cstate.sent { color: var(--text-2); border-color: rgba(255,255,255,0.14); }
 .cstate.outdated { color: var(--text-3); border-color: rgba(255,255,255,0.1); }
 .ccomposer { padding: 10px 12px; }
+/* CMT-02 / CMT-06: the comment box and the line chip */
+.cbox { max-width: 560px; border-radius: 10px; background: var(--composer); border: 1px solid var(--composer-border); overflow: hidden; }
+.cbox-head { height: 34px; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--hairline); font-size: 12px; color: var(--text-3); }
+.cbox-to { height: 24px; display: inline-flex; align-items: center; gap: 6px; padding: 0 6px; border-radius: 5px; color: var(--text); font-size: 12.5px; }
+.cbox-to:hover { background: var(--fill-icon-hover); }
+.cbox-body { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px; padding: 10px 12px 4px; }
+.cbox-body textarea { flex: 1 1 200px; min-height: 48px; resize: none; border: 0; outline: none; background: transparent; font-size: 13px; line-height: 22px; color: var(--text); padding: 0; }
+.cbox .cc-actions { padding: 0 10px 10px 12px; margin-top: 0; }
+.lchip { height: 22px; display: inline-flex; align-items: stretch; flex-shrink: 0; border-radius: 6px; border: 1px solid var(--hairline); background: rgba(255,255,255,0.04); font-size: 12px; color: var(--text); overflow: hidden; }
+.lchip .li { width: 22px; display: flex; align-items: center; justify-content: center; border-right: 1px solid var(--hairline); }
+.lchip .lt { display: flex; align-items: center; padding: 0 7px; white-space: nowrap; }
+.lchip .lr { color: var(--text-2); margin-left: 5px; font-variant-numeric: tabular-nums; }
+button.lchip:hover { border-color: rgba(255,255,255,0.2); }
+.msg-user .lchip { margin-bottom: 6px; }
+.msg-user.queued { opacity: 0.6; border: 1px dashed rgba(255,255,255,0.18); background: transparent; }
+.msg-user .qcap { display: block; margin-top: 4px; font-size: 11px; color: var(--text-3); }
 .cc-head { font-size: 11.5px; color: var(--text-2); margin-bottom: 6px; }
 .ccomposer textarea { width: 100%; min-height: 64px; resize: vertical; background: rgba(0,0,0,0.18); border: 1px solid var(--hairline); border-radius: 6px; padding: 8px 10px; font-size: 13px; line-height: 1.5; outline: none; color: var(--text); }
 .ccomposer textarea:focus { border-color: rgba(120,189,245,0.55); }
@@ -285,7 +311,24 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
 .fil-search { flex-grow: 1; height: 26px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border-radius: 6px; background: rgba(255,255,255,0.06); color: var(--text-3); border: 1px solid transparent; }
 .fil-search:focus-within { border-color: rgba(120,189,245,0.5); }
 .fil-search input { flex-grow: 1; min-width: 0; border: 0; outline: none; background: transparent; font-size: 12.5px; color: var(--text); }
-.fil-search .kbd { font-size: 11px; color: var(--text-3); }
+/* FIL-08: Quick Open, a floating panel in the menus' style */
+.qo-scrim { position: absolute; inset: 0; z-index: 70; }
+.qo { position: absolute; top: 50px; left: 50%; z-index: 71; width: 440px; transform: translateX(-50%); display: flex; flex-direction: column; border-radius: 12px; background: var(--panel); box-shadow: 0 0 0 1px var(--hairline), 0 10px 36px rgba(0,0,0,0.45); overflow: hidden; animation: qo-in 120ms var(--ease-out); }
+@keyframes qo-in { from { opacity: 0; transform: translate(-50%, -4px); } to { opacity: 1; transform: translate(-50%, 0); } }
+.qo-search { height: 40px; flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--hairline); color: var(--text-3); }
+.qo-search input { flex-grow: 1; min-width: 0; border: 0; outline: none; background: transparent; font-size: 14px; color: var(--text); }
+.qo-list { max-height: 316px; overflow-y: auto; padding: 4px; }
+.qo-row { width: 100%; height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-radius: 6px; font-size: 13px; white-space: nowrap; }
+.qo-row.sel { background: var(--fill-selected); }
+.qo-row .qn { font-weight: 600; color: var(--text); flex-shrink: 0; }
+.qo-row .qd { flex-grow: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 12px; color: var(--text-3); }
+.qo-row .qr { display: flex; align-items: center; gap: 6px; color: var(--text-3); flex-shrink: 0; }
+.qo-row mark { background: none; color: var(--accent); }
+.qo-empty { padding: 20px 12px; text-align: center; font-size: 12.5px; color: var(--text-3); }
+.qo-foot { height: 32px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 6px; border-top: 1px solid var(--hairline); }
+.qo-foot button { height: 22px; display: inline-flex; align-items: center; gap: 6px; padding: 0 6px; border-radius: 5px; font-size: 11.5px; color: var(--text-2); }
+.qo-foot button:hover { background: var(--fill-hover); color: var(--text); }
+.qo-foot kbd { font: 11px var(--mono); color: var(--text-3); }
 .fil-list { flex-grow: 1; min-height: 0; overflow-y: auto; padding: 2px 8px 8px; outline: none; }
 .trow { position: relative; width: 100%; height: 26px; display: flex; align-items: center; gap: 6px; padding-right: 8px; border-radius: 6px; font-size: 13px; color: var(--text); white-space: nowrap; transition: background var(--dur-fast); }
 .trow:hover { background: var(--fill-hover); }
@@ -302,6 +345,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
 .trow mark { background: none; color: var(--accent); }
 .fil-empty { padding: 28px 16px; text-align: center; font-size: 12.5px; color: var(--text-3); }
 .tab .ft { width: 12px; display: flex; justify-content: center; }
+.mat { display: inline-flex; flex-shrink: 0; } .mat svg { width: 100%; height: 100%; }
 .tab-wrap.preview .t-label { font-style: italic; }
 .dv-blank { flex-grow: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--text-2); font-size: 13px; }
 .dv-blank .sub { color: var(--text-3); font-size: 12px; }
@@ -387,11 +431,12 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
 
 <div class="stage">
   <h1 class="doc-title">Rocky · Review and edit (M3)</h1>
-  <p class="doc-sub">Interactive spec on top of M2.5's shell and M2.7's layout and right panel. Browse the worktree in <strong>All files</strong> (click opens a preview tab, double-click keeps it; ⌘P finds a file). Open a file from the <strong>Changes</strong> tab, hover a line and click <strong>+</strong> (or drag across line numbers) to comment, <strong>Send to agent</strong>, switch to <strong>Edit</strong> and type (⌘S saves), <strong>Commit…</strong>. The panel's header and its Checks tab are M2.7's, drawn simplified; the pull request lives there.</p>
+  <p class="doc-sub">Interactive spec on top of M2.5's shell and M2.7's layout and right panel. Browse the worktree in <strong>All files</strong> (click opens a preview tab, double-click keeps it). <strong>⌘P</strong> opens Quick Open, the file finder over everything (the "Quick Open" demo button does the same, since the browser prints on ⌘P). Open a file from the <strong>Changes</strong> tab, hover a line and click <strong>+</strong> (or drag across line numbers) to comment and send it at once to a conversation, switch to <strong>Edit</strong> and type (⌘S saves), <strong>Commit…</strong>. The panel's header and its Checks tab are M2.7's, drawn simplified; the pull request lives there.</p>
   <div class="demo" aria-label="Demo controls">
     <span class="demo-label">Demo controls, not part of Rocky</span>
     <button type="button" id="demoAgentEdit">Agent edits openapi.ts on disk</button>
     <button type="button" id="demoWorking" aria-pressed="false">Agent working in this workspace</button>
+    <button type="button" id="demoQuickOpen">Quick Open (⌘P)</button>
     <button type="button" id="demoPins" aria-pressed="false">Requirement pins</button>
   </div>
 
@@ -437,7 +482,6 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
       <tr><th>Token</th><th>Value</th><th>Use</th></tr>
       <tr><td><code>diffAddLine</code> / <code>diffAddGutter</code></td><td><code>success</code> at 12 % / 20 %</td><td>added lines</td></tr>
       <tr><td><code>diffDeleteLine</code> / <code>diffDeleteGutter</code></td><td><code>danger</code> at 12 % / 20 %</td><td>removed lines</td></tr>
-      <tr><td><code>diffHunk</code></td><td><code>accent</code> at 6 %</td><td>hunk headers</td></tr>
       <tr><td><code>commentRange</code></td><td><code>accent</code> at 14 %, 3 pt <code>accent</code> bar</td><td>selected lines</td></tr>
       <tr><td><code>currentLine</code></td><td>white 3 %</td><td>editor caret line</td></tr>
       <tr><td><code>syntax.keyword</code></td><td><span class="sw" style="background:#C792EA"></span>#C792EA</td><td rowspan="6">DIFF-04; one map for the diff and the editor</td></tr>
@@ -499,7 +543,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
     <header><code class="id">FIL-01</code><h3>The All files tab</h3><span class="scope in">In scope</span></header>
     <dl>
       <dt>Why</dt><dd>User, 2026-09-24: "falta el editor y visualizador de archivos". It is the worktree's file tree, first in the panel's tab row.</dd>
-      <dt>Layout</dt><dd>A 38 pt head: a filter field (26 pt, radius 6, <code>fillControl</code>, placeholder "Filter files", the hint "⌘P" at its right end) and "⋯" (Show Ignored Files ✓, Collapse All Folders, Reveal Active File). Then the tree, which scrolls. No footer: the panel's footer (PR-07) stays under it.</dd>
+      <dt>Layout</dt><dd>A 38 pt head: a filter field (26 pt, radius 6, <code>fillControl</code>, placeholder "Filter files", no shortcut hint: ⌘P is Quick Open, FIL-08) and "⋯" (Show Ignored Files ✓, Collapse All Folders, Reveal Active File). Then the tree, which scrolls. No footer: the panel's footer (PR-07) stays under it.</dd>
       <dt>State</dt><dd>Expanded folders are remembered per workspace across relaunches (a set of relative paths, dropped with the workspace); the first time, only the top level shows. The selected tab (PNL-03) is remembered per workspace as today.</dd>
       <dt>SwiftUI</dt><dd>A new <code>FilesTab</code> view in <code>RightPanel</code>'s tab list as <code>RightPanelTab.files</code>, before <code>.changes</code>; the tree is a <code>LazyVStack</code> of fixed 26 pt rows (the diff's approach), so a folder with thousands of entries scrolls without laying them all out.</dd>
     </dl>
@@ -508,7 +552,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
     <header><code class="id">FIL-02</code><h3>Tree rows</h3><span class="scope in">In scope</span></header>
     <dl>
       <dt>Row</dt><dd>26 pt, radius 6, indented 12 pt per level from an 8 pt inset: a 12 pt disclosure chevron for folders (turns 90° in 120 ms), a 14 pt icon, the name (13, truncated at its end), and at the right end the file's status letter from Changes (A <code>success</code>, M <code>attention</code>, R <code>textSecondary</code>; 11 mono semibold) or, for a folder that holds changed files, a 5 pt <code>textSecondary</code> dot. Hover <code>fillHover</code>; the row of the file whose tab is showing <code>fillSelected</code>.</dd>
-      <dt>Icons</dt><dd>Folders: <code>folder.fill</code> in <code>FileKind.folder</code>'s color. Files: <code>FileKind(path:)</code>'s symbol and color, the ones <code>FileBadge</code> and the file tabs already use (code blue, data yellow, text grey, image green, PDF red…).</dd>
+      <dt>Icons</dt><dd>Folders: <code>folder.fill</code> in <code>FileKind.folder</code>'s color. Files: their Material Icon Theme icon (FIL-09).</dd>
       <dt>Order</dt><dd>Folders first, then files, each in Finder's order (<code>localizedStandardCompare</code>: "file2" before "file10").</dd>
       <dt>Deleted</dt><dd>A file deleted on this branch is not in the tree (it is not on disk); Changes still lists it.</dd>
       <dt>A11y</dt><dd>An outline: "src, folder, expanded, 2 changed files"; "openapi.ts, modified".</dd>
@@ -526,17 +570,49 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
     <dl>
       <dt>Filter</dt><dd>Typing replaces the tree with a flat list of matching files: icon, name, directory (11 <code>textTertiary</code>), status letter. Matching is case-insensitive over the relative path, ranked: the name starts with the query; the name contains it; the path contains it; the query's characters appear in order in the name ("srv" finds <code>server.ts</code>); then in order anywhere in the path. Ties in Finder's order. Matched characters are drawn in <code>accent</code>. Empty query: the tree comes back as it was.</dd>
       <dt>Keys</dt><dd>↓ / ↑ move through the results, Return opens (FIL-05), Esc clears the query and a second Esc leaves the field.</dd>
-      <dt>Go to File</dt><dd><strong>⌘P</strong>, like VS Code's Quick Open (user decision, 2026-09-24; it was ⌘⇧O): File ▸ Go to File… shows the panel on All files with the filter focused and its text selected. It replaces macOS's File ▸ Print… (⌘P), which Rocky has no use for: <code>CommandGroup(replacing: .printItem)</code>.</dd>
+      <dt>Scope</dt><dd>This is the All files tab's own filter, and it stays. Finding a file from anywhere is Quick Open (FIL-08, ⌘P).</dd>
       <dt>Source</dt><dd>The file list comes from <code>git ls-files --cached --others --exclude-standard -z</code> in the worktree (tracked and untracked, ignored ones left out), so the filter needs no directory walk.</dd>
+    </dl>
+  </section>
+  <section class="req" id="REQ-FIL-08">
+    <header><code class="id">FIL-08</code><h3>Quick Open (⌘P)</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Why</dt><dd>User, 2026-09-24, after trying M3: "Pensé que haríamos como un command palette que tendría todos los archivos y un buscador". Reference: Zed's and VS Code's file finder.</dd>
+      <dt>Opens</dt><dd><strong>⌘P</strong>, File ▸ Go to File…, replacing macOS's File ▸ Print… (<code>CommandGroup(replacing: .printItem)</code>; user decision, 2026-09-24). ⌘P again, Esc, or a click outside closes it. It works from anywhere in the window, panel open or closed, and never changes the panel.</dd>
+      <dt>Panel</dt><dd>Floating over everything, centred, 12 pt under the title bar row, 440 pt wide; the style of Rocky's menus (<code>MenuPanel</code> in <code>RockyMenu.swift</code>: <code>panel</code> fill, radius 12, a <code>hairline</code> ring, shadow black 45 %, radius 18, y 10); appears in 120 ms (fade, 4 pt drop); no dimming behind it. <strong>The 120 ms entrance runs once, when it opens; typing updates the list in place and never re-animates the panel</strong> (user report, 2026-09-24).</dd>
+      <dt>Search</dt><dd>A 40 pt field with a <code>magnifyingglass</code>, placeholder "Search project files…", 14 pt text, focused on open; a <code>hairline</code> under it. Zed's two small buttons at its right are not planned.</dd>
+      <dt>Rows</dt><dd>28 pt, radius 6, 11 visible, then the list scrolls: the file's icon (FIL-09, 14 pt), the file name 13 <strong>semibold</strong>, the folder path 12 <code>textTertiary</code> on the same line (truncated), and at the right end the Changes status letter and a <code>clock</code> glyph on recently opened files. Matched characters in <code>accent</code>. The first row is selected (<code>fillSelected</code>); hover selects.</dd>
+      <dt>Empty query</dt><dd>Recently opened files of this workspace, newest first (clock), then the changed files not among them (status letter), then every other file in Finder's order. "Recent" is the last 20 files opened in a tab here, kept across relaunches with the workspace.</dd>
+      <dt>Ranking</dt><dd>FIL-04's tiers and budget (100,000 paths ranked in under 50 ms); inside a tier, recent files first, then Finder's order. Ignored files are never listed (FIL-03).</dd>
+      <dt>Keys</dt><dd>↓ / ↑ move (and wrap), Return opens the file in a regular tab, <strong>⌥Return opens it as a preview tab</strong> (FIL-05), Esc closes. A click opens, ⌥-click previews. Opening follows FIL-05: a changed file opens its diff, any other file its editor in Edit.</dd>
+      <dt>Footer</dt><dd>32 pt, a <code>hairline</code> on top: "Open ↩" on the left and "Open as preview ⌥↩" on the right, both 11.5 <code>textSecondary</code> text buttons that act on the selected row. Zed's "Actions… ⌘⇧A" is not planned (OUT-10).</dd>
+      <dt>Energy</dt><dd>The list is FIL-07's <code>git ls-files</code> list, refreshed at most once per opening and only if an FSEvents change came since the last run; typing never starts a process.</dd>
+      <dt>Keys, Esc</dt><dd>While it is open, it takes Esc and the arrow keys before ChatView's key monitor, like menus and sheets.</dd>
+      <dt>SwiftUI</dt><dd>A <code>QuickOpenPresenter</code> (like <code>SettingsPresenter</code>) showing a <code>QuickOpenPanel</code> overlay in <code>RootView</code>; the ranking is <code>FileTree</code>'s (FIL-07).</dd>
+      <dt>A11y</dt><dd>A dialog with a combo box: "Quick Open", the field "Search project files", the selected row read as "openapi.ts, src, modified, recent".</dd>
+    </dl>
+  </section>
+  <section class="req" id="REQ-FIL-09">
+    <header><code class="id">FIL-09</code><h3>File icons (Material Icon Theme)</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Why</dt><dd>User, 2026-09-24: "los files no tienen sus íconos… por cada tipo de archivo, tener un ícono… fijarte en algún tema de vsc". Every code file showed the same <code>&lt;/&gt;</code> and every data file the same <code>{}</code>. User decision: <strong>Material Icon Theme</strong>, <strong>files only</strong>; folders keep today's blue folder.</dd>
+      <dt>Source</dt><dd>npm <code>material-icon-theme</code> <strong>5.38.1</strong> (MIT, © 2025 Material Extensions), pinned like Prism. Its <code>dist/material-icons.json</code> maps 2,135 <code>fileNames</code> (204 of them path tails such as <code>.config/graphqlrc</code>) and 1,377 <code>fileExtensions</code> to icon ids; the default is <code>file</code>.</dd>
+      <dt>Ships</dt><dd>The <strong>587 icons</strong> (493,218 bytes of SVG): the 586 that <code>fileNames</code>, <code>fileExtensions</code> and the default reference, plus <code>github-actions-workflow</code>, which only <code>languageIds</code> reaches and the vendoring script adds for the workflow rule below. Also a trimmed manifest with just those two maps and the default, as RockyUI resources. Not shipped: the 542 folder icons, the 48 <code>light</code> variants (Rocky is dark), the other 8 icons reached only through VS Code <code>languageIds</code>. (Counts from the implementation, dev-1, 2026-09-24.)</dd>
+      <dt>Lookup</dt><dd>Case-insensitive, first match wins: (1) the one emulated <code>languageIds</code> rule: a <code>.yml</code> / <code>.yaml</code> at any depth under <code>.github/workflows/</code> gets github-actions-workflow; it is checked first, or <code>yml</code> → yaml would always win; (2) the longest path tail in <code>fileNames</code> (<code>.config/graphqlrc</code>); (3) the file name (<code>package.json</code> → nodejs, <code>tsconfig.json</code> → tsconfig, <code>.gitignore</code> → git, <code>README.md</code> → readme); (4) the extensions, in one pass over the name after each dot, longest first, as VS Code does: <code>test.ts</code> → test-ts before <code>ts</code> → typescript, <code>d.ts</code>, <code>tsx</code> → react_ts, <code>yml</code> → yaml, and <code>.env</code> → <code>env</code> → tune; (5) the default <code>file</code> icon. <code>FileKind</code>'s SF Symbol is only the fallback if an SVG fails to load.</dd>
+      <dt>Where</dt><dd>Everywhere a file's icon is drawn: the All files tree, Quick Open, Changes rows (after the status letter), unchanged file tabs (changed ones keep their status letter, DIFF-01), the diff and file tab headers, the chat's file badges and the composer's attachments (<code>FileBadge</code>), the line chip (CMT-06), tabs of files outside the worktree, and the file hover preview card.</dd>
+      <dt>Size</dt><dd>14 pt in 26–28 pt rows and headers (tree, Quick Open, Changes, tab headers); 12 pt in 22 pt elements (tabs, including those of files outside the worktree, badges, the chip); 22 pt in the hover preview card. The SVGs come in 16, 24, 32, 300 and 1024 viewBoxes; they are drawn scaled to the size, never as bitmaps.</dd>
+      <dt>Dimmed</dt><dd>Ignored files (FIL-03) draw their icon at 50 %, like their name.</dd>
+      <dt>Code</dt><dd>A <code>FileIcons</code> lookup in RockyKit (pure: path → icon id, with tests for each step and the workflow rule) and a view in RockyUI that loads the SVG the way Rocky's other bundled SVG marks load, cached per id. The icons are decorative for VoiceOver; the name carries the meaning.</dd>
+      <dt>License</dt><dd>The package's <code>LICENSE</code> is copied next to the icons, and <code>README.md</code> credits Material Icon Theme, as it does Prism and Simple Icons.</dd>
     </dl>
   </section>
   <section class="req" id="REQ-FIL-05">
     <header><code class="id">FIL-05</code><h3>Opening a file</h3><span class="scope in">In scope</span></header>
     <dl>
       <dt>Changed</dt><dd>A file in Changes opens its diff tab (DIFF-01) in Diff mode, or selects it if open.</dd>
-      <dt>Unchanged</dt><dd>Any other file opens a file tab with the same viewer and editor (EDIT-01..04: highlighting, ⌘S, the on-disk banner) in <strong>Edit</strong>, its only mode: the header shows the path and "Unchanged" (11 <code>textTertiary</code>) instead of Diff | Edit. The tab shows the file's <code>FileKind</code> icon instead of a status letter.</dd>
+      <dt>Unchanged</dt><dd>Any other file opens a file tab with the same viewer and editor (EDIT-01..04: highlighting, ⌘S, the on-disk banner) in <strong>Edit</strong>, its only mode: the header shows the path chip (DIFF-01) and "Unchanged" (11 <code>textTertiary</code>) instead of Diff | Edit. The tab shows the file's icon (FIL-09) instead of a status letter.</dd>
       <dt>Becoming changed</dt><dd>When the file changes against the base (your save, or the agent), it joins Changes: its tab gains the status letter and Diff | Edit, keeping the Edit mode on screen.</dd>
-      <dt>Preview</dt><dd>A single click opens a <strong>preview tab</strong> (title in italics) that the next single click replaces; a double-click, a double-click on the tab, or the first edit keeps it. So browsing the tree does not pile up tabs. (User decision, 2026-09-24; the Changes tab keeps opening regular tabs.)</dd>
+      <dt>Preview</dt><dd>A single click opens a <strong>preview tab</strong> (title in italics) that the next preview replaces (a file opened to keep, as from Quick Open's Return, leaves it alone); a double-click, a double-click on the tab, or the first edit keeps it. So browsing the tree does not pile up tabs. (User decision, 2026-09-24; the Changes tab keeps opening regular tabs.)</dd>
       <dt>Reveal</dt><dd>The diff and file tabs' "⋯" menu gains "Reveal in All Files": shows the panel on All files, expands the file's folders and scrolls its row into view.</dd>
     </dl>
   </section>
@@ -584,7 +660,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
     <header><code class="id">CHG-03</code><h3>File rows</h3><span class="scope in">In scope</span></header>
     <dl>
       <dt>Sections</dt><dd>"Uncommitted" (files with changes not yet committed, with "Commit…" on the right) and "Committed" (changed on this branch, already committed). 10.5 uppercase <code>textTertiary</code> headers with a count. A file with both kinds of change sits in Uncommitted.</dd>
-      <dt>Row</dt><dd>28 pt, radius 7: status letter (A <code>success</code>, M <code>attention</code>, D <code>danger</code>, R <code>textSecondary</code>; 11 mono semibold), file name 13, directory 11 <code>textTertiary</code> (truncated at its start), then the comment count (bubble + n) and <code>+a −d</code>. Hover: Edit (<code>pencil</code>) and, for uncommitted files, Discard replace the counts. Selected (its diff tab is active): <code>fillSelected</code>.</dd>
+      <dt>Row</dt><dd>28 pt, radius 7: status letter (A <code>success</code>, M <code>attention</code>, D <code>danger</code>, R <code>textSecondary</code>; 11 mono semibold), the file's icon (FIL-09, 14 pt), file name 13, directory 11 <code>textTertiary</code> (truncated at its start), then <code>+a −d</code>. Hover: Edit (<code>pencil</code>) and, for uncommitted files, Discard replace the counts. Selected (its diff tab is active): <code>fillSelected</code>.</dd>
       <dt>Behavior</dt><dd>Click opens the file's diff tab or selects it if open. ⌥⌘↓ / ⌥⌘↑ go to the next / previous file.</dd>
       <dt>Empty</dt><dd>"No changes yet" and "Changes the agent makes in this workspace show up here."</dd>
     </dl>
@@ -595,7 +671,8 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
     <header><code class="id">DIFF-01</code><h3>Diff tab</h3><span class="scope in">In scope</span></header>
     <dl>
       <dt>Tab</dt><dd>After conversations and files in the tab row (M2.5 TAB-01). Status letter instead of the file icon, then the file name; tooltip: the path. Unsaved edits: a 7 pt dot replaces the close button until hover. One tab per file.</dd>
-      <dt>Header</dt><dd>34 pt: directory (<code>textTertiary</code>) + name 12.5, <code>+a −d</code>, then "Edited" and Save while there are unsaved edits, a segmented control <strong>Diff | Edit</strong> (24 pt, <code>fillControl</code>, selected <code>fillSelected</code>), and "⋯" (Open in Finder, Copy Path, Discard Changes…).</dd>
+      <dt>Header</dt><dd>34 pt: the path chip (below), <code>+a −d</code>, then "Edited" and Save while there are unsaved edits, a segmented control <strong>Diff | Edit</strong> (24 pt, <code>fillControl</code>, selected <code>fillSelected</code>), and "⋯" (Open in Finder, Copy Path, Discard Changes…).</dd>
+      <dt>Path</dt><dd>A chip, as in Conductor (user request, 2026-09-24, M2.7 OPN-02): 24 pt, radius 6, a 1 px <code>hairline</code> ring, padding 0 8, gap 6; the file's icon (FIL-09, 14 pt), then the directory (<code>textTertiary</code>) and the name (<code>textPrimary</code>), 12.5. Hover: <code>fillHover</code>. A click opens the file in the default app (OPN-02); with Finder as the default it reveals the file in Finder. Tooltip: "Open in Zed" (the default app's name), or "Reveal in Finder". It opens the file on disk: unsaved edits in Rocky are not in it, and a save made in the other editor brings up EDIT-03's banner. A deleted file (status D) is not on disk, so its path is plain text: no ring, no hover, no tooltip. The header's "⋯" keeps Open in Finder and Copy Path.</dd>
       <dt>Closing</dt><dd>With unsaved edits: "Save changes to openapi.ts?" Save / Don't Save / Cancel.</dd>
     </dl>
   </section>
@@ -603,9 +680,10 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
   <section class="req" id="REQ-DIFF-02">
     <header><code class="id">DIFF-02</code><h3>Unified diff</h3><span class="scope in">In scope</span></header>
     <dl>
-      <dt>Rows</dt><dd>12 mono, 20 pt rows. Old number and new number columns (40 each, right-aligned, <code>textTertiary</code>), a 16 pt marker column (+ / −), then the code with syntax colors (DIFF-04). Added rows: <code>diffAddLine</code>, their gutter <code>diffAddGutter</code>, marker <code>success</code>. Removed: the delete tokens and <code>danger</code>. Context: no fill.</dd>
-      <dt>Hunks</dt><dd>Header row 26 pt, "<code>@@ -40,7 +40,12 @@</code>" 11.5 mono <code>textTertiary</code> on <code>diffHunk</code>. Three context lines around changes. Unchanged runs between hunks collapse to a 26 pt row "⋯ 18 unchanged lines" that expands on click.</dd>
-      <dt>Other</dt><dd>No wrapping: long lines scroll horizontally, the number columns stay. Text inside a row is selectable for copying.</dd>
+      <dt>Rows</dt><dd>12 mono, 20 pt rows. <strong>One line-number column</strong>, 48 pt, right-aligned, like Conductor (user, 2026-09-24: "tenemos un duplicado en el número de líneas"): context rows show the new number in <code>textTertiary</code>, removed rows the old number in <code>danger</code>, added rows the new number in <code>success</code>. Then a 16 pt marker column (+ / −; kept so color is not the only cue), then the code with syntax colors (DIFF-04). Added rows: <code>diffAddLine</code>, their gutter <code>diffAddGutter</code>, marker <code>success</code>. Removed: the delete tokens and <code>danger</code>. Context: no fill.</dd>
+      <dt>Hunks</dt><dd><strong>No <code>@@</code> header rows</strong>, as Conductor (user decision, 2026-09-24: "Sí, como Conductor"). Three context lines around changes. Before, between and after hunks the only row is the collapsed run, 26 pt, "⋯ 18 unchanged lines", which expands on click. git merges hunks with no unchanged line between them, so a run always separates two hunks.</dd>
+      <dt>Top</dt><dd>The diff starts at the top-left of its tab, even when it is shorter than the tab: never centred (user report, 2026-09-24: "estamos centrando en la pantalla las líneas modificadas"; Conductor shows them from the top). SwiftUI: the two-axis <code>ScrollView</code> gets <code>.defaultScrollAnchor(.topLeading, for: .alignment)</code>.</dd>
+      <dt>Other</dt><dd>No wrapping: long lines scroll horizontally, the number column stays. Text inside a row is selectable for copying.</dd>
       <dt>SwiftUI</dt><dd>A <code>LazyVStack</code> of rows (so comment cards can sit between rows), one row per line. It is read-only: editing is the Edit mode (EDIT-01), not the diff.</dd>
       <dt>Done when</dt><dd>A 2,000-line diff scrolls smoothly; beyond DIFF-03's limit it stays collapsed.</dd>
     </dl>
@@ -634,61 +712,77 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
 
   <section class="req" id="REQ-DIFF-05">
     <header><code class="id">DIFF-05</code><h3>From the chat</h3><span class="scope in">In scope</span></header>
-    <p>A tool call's file badge (Read, Edit…) for a file that is in Changes opens its diff tab, scrolled to the first hunk; other files open the plain file tab as today. This is the "see what the agent changed" M2 left a place for. Try it: the "openapi.ts" badge in the conversation.</p>
+    <p>A tool call's file badge (Read, Edit…) for a file that is in Changes opens its diff tab, scrolled to the first hunk's first line; other files open the plain file tab as today. This is the "see what the agent changed" M2 left a place for. Try it: the "openapi.ts" badge in the conversation.</p>
+  </section>
+
+  <section class="req" id="REQ-DIFF-06">
+    <header><code class="id">DIFF-06</code><h3>Line counts on edit rows</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Why</dt><dd>User, 2026-09-25 (relayed by dev-1): "en las ediciones a los archivos, sería bueno también ver cuántas líneas quitó y agregó". Like Conductor. Today the row reads "Edit [README.md]" with no counts.</dd>
+      <dt>Row</dt><dd>After the tool row's file badges, gap 6: <code>DiffStatLabel</code> as in Changes ("+2 −1", 11 mono, <code>success</code> / <code>diffDeletions</code>, tabular, abbreviated as in Changes). Both numbers show, "+10 −0" included; nothing when both are 0 or the counts are unknown. VoiceOver: the label's own "2 lines added, 1 removed".</dd>
+      <dt>Which rows</dt><dd>Any tool call whose content holds ACP <code>diff</code> entries (<code>{type: "diff", path, oldText, newText}</code>), whatever its kind or title: Claude's Edit, MultiEdit and Write; OpenCode's edit, write and patch. One label per call: the sum over its entries, also when they touch several files.</dd>
+      <dt>When</dt><dd>Only while the call's status is completed, with the counts of its latest content. Pending, in progress, failed or rejected: no label, since the file has not changed. Claude's first <code>tool_call</code> carries an optimistic diff (a Write looks like a new file), and the update after the tool runs replaces it with the real hunks. An update that carries <code>content</code> replaces the counts, as ACP replaces the content; one without <code>content</code> keeps them.</dd>
+      <dt>Group</dt><dd>The "N tool calls" group header shows the same label after its title: the sum of its rows' labels, hidden at 0. It is what the rows say, not the files' net change, so a line edited twice counts twice. (dev-2's call, 2026-09-25: a folded group would otherwise hide the counts; the user can drop it.)</dd>
+      <dt>Counting</dt><dd>Per entry, first match: (1) Claude's stats, <code>_meta.jetbrains.air.diffStats</code> with <code>version</code> 1: <code>added</code>, <code>removed</code> (claude-agent-acp 0.81.0 <code>dist/diff.js</code> puts them on each hunk entry whose coordinates check out); (2) <code>oldText</code> null (a new file, or a hunk that only adds): added is <code>newText</code>'s line count; (3) a line diff of <code>oldText</code> against <code>newText</code> with <code>CollectionDifference</code>: insertions are added, removals removed. Claude's hunks include context lines; the diff drops them, since they sit on both sides. Lines split on "\n"; the empty piece after a final newline is not a line, and empty text has 0 lines.</dd>
+      <dt>Cap</dt><dd>Step 3 runs off the main actor and only when both sides together have at most 5,000 lines. Over it the entry has no counts, and a call with any entry it cannot count shows no label: a partial sum would be wrong. The case is a whole-file Write of a large file (Claude sends <code>originalFile</code> and the new content when its patch comes back empty; when the old file was too large to diff it sends text instead, which has no counts).</dd>
+      <dt>Stored</dt><dd>On the tool call's transcript row, so resumed conversations keep it: <code>additions</code> and <code>deletions</code>, nullable integers on <code>chatMessage</code>, by the next free migration. Rows saved before it have nil and show no label.</dd>
+      <dt>Kit</dt><dd>ACP: <code>ACPUpdate.toolCall</code> / <code>toolCallUpdate</code> gain <code>diffs: [ToolCallDiff]?</code> (path, oldText, newText, and the stats when <code>_meta</code> has them): nil when the update has no <code>content</code>, empty when its content has no diffs. Pure <code>ToolDiffStats.count(_:) -&gt; DiffStat?</code> with tests: Claude's stats used as sent; a new file; context lines not counted; a final newline; over the cap; one uncountable entry makes it nil. <code>ChatItem</code> gains <code>diffStat: DiffStat?</code>; <code>ChatSessionModel</code> tests: counts appear on completion, not before; an update with content replaces them, one without keeps them; failed shows none.</dd>
+      <dt>Done when</dt><dd>Claude edits two lines in README.md: the row reads "Edit [README.md] +1 −1" once the edit completes, the folded group shows the same, and relaunching Rocky keeps it.</dd>
+    </dl>
   </section>
 
   <h2>Comments</h2>
   <section class="req" id="REQ-CMT-01">
     <header><code class="id">CMT-01</code><h3>Selecting lines</h3><span class="scope in">In scope</span></header>
     <dl>
-      <dt>Behavior</dt><dd>Hovering a row shows a 16 pt "+" (<code>accent</code> fill, dark glyph, radius 4) over its new line number (old number for removed rows). Click: comment on that line. Drag from "+" or a line number: a range. Shift-click another line number: a range from the last one clicked. A range stays on one side: new-side lines (added and context) or old-side lines (removed). Esc clears.</dd>
+      <dt>Behavior</dt><dd>Hovering a row shows a 16 pt "+" (<code>accent</code> fill, dark glyph, radius 4) over its line number, the single column of DIFF-02 (a removed row's number is the old one, so its comment is on the removed side). Click: comment on that line. Drag from "+" or a line number: a range. Shift-click another line number: a range from the last one clicked. A range stays on one side: new-side lines (added and context) or old-side lines (removed). Esc clears.</dd>
       <dt>Values</dt><dd>Selected rows: <code>commentRange</code> fill and a 3 pt <code>accent</code> bar at their left edge.</dd>
     </dl>
   </section>
 
+  <p><strong>Revised 2026-09-24</strong> (user decision: "Como Conductor"): a comment goes to a conversation <strong>as soon as it is written</strong>, with no batching. CMT-03 (storage) and CMT-04 (anchoring, Outdated) are removed: comments are not stored by Rocky or drawn in the diff after sending; the conversation keeps them. The former comments bar, Pending/Sent/Outdated chips and comment cards are gone.</p>
+
   <section class="req" id="REQ-CMT-02">
-    <header><code class="id">CMT-02</code><h3>Composer and comment cards</h3><span class="scope in">In scope</span></header>
+    <header><code class="id">CMT-02</code><h3>The comment box</h3><span class="scope in">In scope</span></header>
     <dl>
-      <dt>Composer</dt><dd>Under the last selected line, aligned with the code: "Comment on line 14" or "lines 14–22" (11.5, <code>textSecondary</code>), a text box (13, 3 lines min), a hint "⌘Return to comment", Cancel and Comment (white filled). Esc cancels when empty; with text it asks first.</dd>
-      <dt>Card</dt><dd>Under its range: "You", relative time, a state chip, Edit and Delete on hover, the text (13). Chips: <strong>Pending</strong> (<code>attention</code> outline), <strong>Sent</strong> (<code>textSecondary</code>, check), <strong>Outdated</strong> (<code>textTertiary</code>, tooltip "The commented lines changed").</dd>
-    </dl>
-  </section>
-
-  <section class="req" id="REQ-CMT-03">
-    <header><code class="id">CMT-03</code><h3>Storage</h3><span class="scope in">In scope</span></header>
-    <dl>
-      <dt>Store</dt><dd>The next free migration, table <code>diffComment</code>: <code>id, workspaceId, path, side ('new' | 'old'), startLine, endLine, snippet, contextBefore, contextAfter, body, state ('pending' | 'sent' | 'outdated'), createdAt, sentAt</code>. Comments survive a relaunch; removing a workspace removes its comments.</dd>
-    </dl>
-  </section>
-
-  <section class="req" id="REQ-CMT-04">
-    <header><code class="id">CMT-04</code><h3>Keeping comments on their lines</h3><span class="scope in">In scope</span></header>
-    <dl>
-      <dt>Rule</dt><dd>After every diff refresh, for each new-side comment: the snippet still at its lines → stays; else the snippet found elsewhere → moves to the match nearest its old position; else → <strong>Outdated</strong> (keeps its text and last lines). Old-side comments only need the base, which does not change. Outdated comments sit at the top of the file's diff in a collapsed "2 outdated comments".</dd>
-      <dt>Kit</dt><dd>Pure <code>CommentAnchor.relocate(comment:newText:) -&gt; LineRange?</code>. Tests: unchanged; shifted by lines inserted above; edited inside → nil; snippet appears twice → nearest wins.</dd>
-      <dt>Try it</dt><dd>Comment on lines of <code>operation()</code> in openapi.ts, then "Agent edits openapi.ts on disk".</dd>
+      <dt>Opens</dt><dd>When a line or range is selected (CMT-01), under its last line, aligned with the code, at most 560 pt wide. The range keeps its <code>commentRange</code> fill while the box is open.</dd>
+      <dt>Head</dt><dd>34 pt, a <code>hairline</code> under it: "Sending to" (12 <code>textTertiary</code>) and a picker button with the conversation's agent icon, its title (12.5 <code>textPrimary</code>) and <code>chevron.up.chevron.down</code>. The picker is Rocky's menu: the workspace's open conversations, a check on the chosen one. Default: the conversation last shown in this workspace.</dd>
+      <dt>Body</dt><dd>The line chip (CMT-06) fixed at the start, then the text, 13 pt, 22 pt lines, at least two lines, growing; placeholder "Ask about these lines…". The chip cannot be deleted; Cancel drops the whole comment.</dd>
+      <dt>Actions</dt><dd>"⌘Return to send" (11.5 <code>textTertiary</code>), Cancel, and Send (white filled; disabled while the text is empty). While the chosen conversation's turn runs, Send reads "Queue" with the tooltip "Claude Code is working; this goes out when its turn ends" (CMT-05).</dd>
+      <dt>Keys</dt><dd>⌘Return sends; Return is a new line; Esc closes an empty box, and with text asks "Discard this comment?" first. A draft lives in memory while its file tab is open, and switching tabs keeps it.</dd>
     </dl>
   </section>
 
   <section class="req" id="REQ-CMT-05">
-    <header><code class="id">CMT-05</code><h3>Send to agent</h3><span class="scope in">In scope</span></header>
+    <header><code class="id">CMT-05</code><h3>Sending a comment</h3><span class="scope in">In scope</span></header>
     <dl>
-      <dt>Entry</dt><dd>The comments bar pinned at the bottom of the Changes tab: "2 comments ready" and Send to agent (white filled), while pending comments exist. Disabled with "The agent is working" while a turn runs.</dd>
-      <dt>Does</dt><dd>One prompt to the workspace's selected conversation (its agent starts if needed); the tab switches to that conversation; the comments become Sent. The prompt:</dd>
+      <dt>Does</dt><dd>Send posts one message to the chosen conversation right away (its agent starts if needed). The agent's text (below) is built at Send, with the lines' code as it is then. The diff stays on screen and the box closes; a toast says "Sent to “Review the schemas”" with Show, which opens that conversation (a toast with an action stays 4 s).</dd>
+      <dt>Running</dt><dd>If that conversation's turn is running, the message goes into its M2.5 queue as a queued row (the chip and the text) with Send now, Edit and Remove. Edit brings the chip and the text back into the message box, as ↑ does (History), and drops the captured code, so the next Send reads the lines again (Resend). Edit is offered while the box is empty, like any queued row's (M2.5). (Edit was left out while the box could not hold a chip; dev-2 puts it back, 2026-09-25, and the user can drop it.) It keeps the code captured at Send, so edits the agent makes during its turn do not change it. The toast says "Queued in “Review the schemas”", with Show.</dd>
+      <dt>History</dt><dd>↑ on a line-comment message brings back its chip (CMT-06) at the start of the message box, with the comment after it (user decision, 2026-09-25: "Chip y texto"; before, the history skipped these messages and ↑ landed on an older one). The box holds one chip at most, and only ↑ and a queued row's Edit put one there. Backspace at the start of the text removes it, and the message then goes as a normal one. With the chip first, a "/" at the start of the text is not a command (CMD-01). Review prompts sent before this redesign are plain text in the transcript, and ↑ brings them back as they are.</dd>
+      <dt>Resend</dt><dd>Sending from the box with the chip builds the agent's block again, at Send. New side: the worktree file's lines. Removed side: the base's lines, read with <code>git cat-file</code> as the diff reads the base. The range is the chip's, so the code is what those lines hold now, which may differ from the first send. If any line cannot be read (the file is gone, or the range runs past its end), the block goes without code: "Comment on src/openapi.ts, lines 18–25:" (removed side: "Comment on src/openapi.ts, removed lines 12–13 (from the base):"), then the comment. During a turn it queues as above (Running), and it is stored like the first send (Stored).</dd>
+      <dt>Transcript</dt><dd>The user message shows the chip and the text only (CMT-06), not the prompt.</dd>
+      <dt>Agent</dt><dd>The agent receives the lines' code with the comment, as one text block:</dd>
     </dl>
-<pre>Review comments on jhzl/openapi-export:
-
-1. src/openapi.ts, lines 18–25
+<pre>Comment on src/openapi.ts, lines 18–25:
 ```ts
 function operation(route: Route) {
   …
 ```
-Use the route's name as operationId only when it is unique.
+Use the route's name as operationId only when it is unique.</pre>
+    <dl>
+      <dt>Removed lines</dt><dd>"Comment on src/openapi.ts, removed lines 12–13 (from the base):", with the base's code.</dd>
+      <dt>Stored</dt><dd>No new table: the message's text is the comment, and the chip is one entry of the message's existing <code>attachments</code> array, an <strong>absolute path</strong> plus a fragment like every chat attachment, <code>/…/tokyo/src/openapi.ts#L18-25</code> (removed side <code>…#base-L12-13</code>). The agent's text uses the worktree-relative path. When the prompt is built, that entry becomes the text block above instead of a <code>resource_link</code>. The <code>diffComment</code> table from the first M3 build is dropped by the next free migration (its v9 stays registered as history).</dd>
+      <dt>Kit</dt><dd>Pure <code>ReviewPrompt.single(path:side:start:end:code:language:comment:)</code> with tests for the exact text on each side; <code>code</code> is optional, and nil gives the block without code, with a test on each side. History entries of line-comment messages carry their <code>LineRangeAttachment</code>, with a <code>MessageHistory</code> test that ↑ stops on them; <code>LineRangeAttachment</code> parses and prints the <code>#L</code> form. <code>CommentAnchor</code> and <code>DiffCommentRecord</code> are gone.</dd>
+    </dl>
+  </section>
 
-2. …
-
-Address each comment and say what you changed for each number.</pre>
-    <dl><dt>Kit</dt><dd>Pure <code>ReviewPrompt.build(branch:comments:fileTexts:)</code> with a test for the exact text.</dd></dl>
+  <section class="req" id="REQ-CMT-06">
+    <header><code class="id">CMT-06</code><h3>The line chip</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Look</dt><dd>Conductor's: 22 pt, radius 6, a 1 pt <code>hairline</code> border on white 4 %; a 22 pt left segment with the file's icon (FIL-09, 12 pt) and a <code>hairline</code> divider; then the file name (12 <code>textPrimary</code>) and the range (12 <code>textSecondary</code>, tabular): "+18–25" for new-side lines, "−12–13" for removed ones, "+18" for one line.</dd>
+      <dt>In the box</dt><dd>At the start of the text, before the caret, not editable; the caret cannot go before it. In the comment box it cannot be deleted either: the box exists for that range. In the message box, where ↑ and a queued row's Edit bring it back (CMT-05 History), Backspace at the start of the text removes it, like any attachment there. Copy and paste leave it out, so it never appears twice or in the middle of the text.</dd>
+      <dt>In the transcript</dt><dd>At the top of the user message, the text under it. A click resolves the path like a file badge and opens the file's diff tab scrolled to those lines (if the file is no longer changed, its file tab). Tooltip: the path and the range.</dd>
+    </dl>
   </section>
 
   <h2>Editor</h2>
@@ -732,13 +826,13 @@ Address each comment and say what you changed for each number.</pre>
 
   <section class="req" id="REQ-KBD-02">
     <header><code class="id">KBD-02</code><h3>Keyboard</h3><span class="scope in">In scope</span></header>
-    <p>⌘⇧C right panel on its Changes tab (CHG-01) · ⌘P Go to File: the All files filter, in place of Print (FIL-04) · in the tree ↑ / ↓ move, → expands, ← collapses or goes to the parent, Return opens (FIL-05) · ⌥⌘↓ / ⌥⌘↑ next / previous file · ⌘S save · ⌘F find · ⌘L go to line · ⌘Return comment, commit · Esc cancel the composer, close a sheet. None collides with M2, M2.5, M2.6 or M2.7 shortcuts (M2.7 has ⌥⌘B for the panel; ⌘⇧G was dropped because it is Edit ▸ Find ▸ Find Previous).</p>
+    <p>⌘⇧C right panel on its Changes tab (CHG-01) · ⌘P Quick Open, in place of Print (FIL-08); in it ↑ / ↓, Return open, ⌥Return open as preview, Esc close · in the tree ↑ / ↓ move, → expands, ← collapses or goes to the parent, Return opens (FIL-05) · ⌥⌘↓ / ⌥⌘↑ next / previous file · ⌘S save · ⌘F find · ⌘L go to line · ⌘Return send a comment, commit · Esc cancel the composer, close a sheet. None collides with M2, M2.5, M2.6 or M2.7 shortcuts (M2.7 has ⌥⌘B for the panel; ⌘⇧G was dropped because it is Edit ▸ Find ▸ Find Previous).</p>
   </section>
 
   <h2>Out of scope</h2>
   <section class="req" id="REQ-OUT-10">
     <header><code class="id">OUT-10</code><h3>Not in M3</h3><span class="scope out">Later</span></header>
-    <p>Side-by-side diff · staging part of a file · resolving merge conflicts in Rocky (M2.7 sends them to the agent) · GitHub review threads inside the diff (M2.7 lists pending comments in its Checks tab) · creating, renaming or deleting files from the tree · pull requests into another remote (forks) · everything about the pull request, which moved to M2.7.</p>
+    <p>Side-by-side diff · staging part of a file · resolving merge conflicts in Rocky (M2.7 sends them to the agent) · GitHub review threads inside the diff (M2.7 lists pending comments in its Checks tab) · creating, renaming or deleting files from the tree · Quick Open's "Actions… ⌘⇧A", its search buttons and a content preview pane · pull requests into another remote (forks) · everything about the pull request, which moved to M2.7.</p>
   </section>
 </aside>
 
@@ -747,6 +841,8 @@ Address each comment and say what you changed for each number.</pre>
 (() => {
   'use strict';
   const $ = (s) => document.querySelector(s);
+  const ZED_ICON = '<span class="app-ico" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 16 16"><rect x=".5" y=".5" width="15" height="15" rx="3.5" fill="#121316" stroke="rgba(255,255,255,.22)"/><path d="M4.8 5h6.4L4.8 11h6.4" fill="none" stroke="#E8E8E8" stroke-width="1.4" stroke-linejoin="round"/></svg></span>';   // demo stand-in for the default app's icon (M2.7 OPN-02)
+  const DEFAULT_APP = 'Zed';
   const win = $('#win');
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -785,6 +881,7 @@ Address each comment and say what you changed for each number.</pre>
     stopSq: '<svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="1.5" fill="currentColor"/></svg>',
     folder: svg(14, '<path d="M1.75 4.25a1.5 1.5 0 0 1 1.5-1.5h2.9l1.5 1.5h5.1a1.5 1.5 0 0 1 1.5 1.5v6a1.5 1.5 0 0 1-1.5 1.5h-9.5a1.5 1.5 0 0 1-1.5-1.5z" fill="currentColor" stroke="none"/>', 1.3),
     doc: svg(13, '<path d="M4 1.75h5.25L12.5 5v9.25H4z"/><path d="M9.25 1.75V5h3.25"/>', 1.4),
+    updown: svg(11, '<path d="M5 6l3-3 3 3M5 10l3 3 3-3"/>', 1.6),
     chevRight: svg(10, '<path d="M6 3.5l4.5 4.5L6 12.5"/>', 2),
     sidebarRight: svg(15, '<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2.25"/><path d="M9.75 2.75v10.5"/>', 1.3),
     terminal: svg(14, '<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2"/><path d="M4.5 6.5L6.5 8l-2 1.5M8 10h3"/>', 1.3),
@@ -944,8 +1041,8 @@ Use /v1/providers.xml for the list.
       pr: null,
       convs: [conv('c1', 'claude', 'OpenAPI export for providers', [
         it('user', 'Export the provider endpoints as an OpenAPI 3.1 document and add a test that validates the schema.'),
-        it('tool', '', { icon: 'edit', label: 'Edit', file: 'src/openapi.ts' }),
-        it('tool', '', { icon: 'edit', label: 'Edit', file: 'test/openapi.test.ts' }),
+        it('tool', '', { icon: 'edit', label: 'Edit', file: 'src/openapi.ts', stat: [20, 7] }),   // DIFF-06
+        it('tool', '', { icon: 'edit', label: 'Edit', file: 'test/openapi.test.ts', stat: [10, 0] }),
         it('agent', 'Done. `buildDocument()` now emits OpenAPI 3.1 with an operation per method, and the new test checks the version and that paths exist.'),
         it('footer', '', { agent: 'claude', duration: '1m 4s', time: '4:02 PM' }),
       ])] },
@@ -982,7 +1079,11 @@ Use /v1/providers.xml for the list.
       pr: { number: 88, state: 'merged', updated: Date.now() - 600000, checks: [{ name: 'test', state: 'success' }] },
       convs: [conv('c10', 'claude', 'Parse scanned invoices', [it('user', 'Parse the scanned invoices in fixtures/ and extract their totals.'), it('agent', 'Totals match for every fixture.')])] },
   ];
-  workspaces.forEach((w) => { w.tabs = []; w.plain = {}; w.active = { kind: 'conv', id: w.convs[0].id }; });
+  workspaces[0].convs.push(conv('c2', 'opencode', 'Review the schemas', [it('user', 'Check that every route has a schema.'), it('agent', 'All four routes have one.')]));
+  workspaces.forEach((w) => { w.tabs = []; w.plain = {}; w.recent = []; w.active = { kind: 'conv', id: w.convs[0].id }; });
+  // FIL-08: a few files opened earlier in tokyo, so Quick Open has recent files to show.
+  workspaces[0].recent = ['src/openapi.ts', 'test/openapi.test.ts', 'package.json'];
+  const touchRecent = (w, p) => { w.recent = [p, ...w.recent.filter((x) => x !== p)].slice(0, 20); };
 
   // ---------- FIL: each repository's worktree (the files that are not changes) ----------
   const REPO_FILES = {
@@ -1016,6 +1117,25 @@ Use /v1/providers.xml for the list.
   };
   // FileKind's colors (FileBadge.swift): code blue, data yellow, text grey, image green, PDF red, folder blue, other grey.
   const KIND_COLOR = { code: '#6BA3FA', data: '#F2C452', text: '#C7C7C7', image: '#4DC766', pdf: '#F0615A', folder: '#75B3FA', other: '#999999' };
+  // FIL-09: real Material Icon Theme 5.38.1 SVGs (MIT) for the files in this mock, and the slice of its manifest they need.
+  const MAT = {"nodejs": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\"><path fill=\"#8bc34a\" d=\"M16 20.003v2h4a2 2 0 0 0 2-2v-2a2 2 0 0 0-2-2h-2v-2h4v-2h-4a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2h2v2Z\"/><path fill=\"#8bc34a\" d=\"m16 3.003-12 7v14l4 2h6v-13.5a.5.5 0 0 0-.5-.5h-1a.5.5 0 0 0-.5.5v11.5H8l-2-1.034V11.15l10-5.833 10 5.833v11.703l-10 5.833-1.745-1.022L13 29.253l3 1.75 12-7v-14Z\"/></svg>", "tsconfig": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\"><path fill=\"#757575\" d=\"M15 2H6a2.006 2.006 0 0 0-2 2v22a2.006 2.006 0 0 0 2 2h6v-4H6v-2h6v-2H6v-2h6v-2H6v-2h6v-2h2V4l8 8h2v-1Z\" data-mit-no-recolor=\"true\"/><path fill=\"#0288d1\" d=\"M12 12v18h18V12Zm8 6h-2v8h-2v-8h-2v-2h6Zm8 0h-4v2h2a2.006 2.006 0 0 1 2 2v2a2.006 2.006 0 0 1-2 2h-4v-2h4v-2h-2a2.006 2.006 0 0 1-2-2v-2a2.006 2.006 0 0 1 2-2h4Z\"/></svg>", "git": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\"><path fill=\"#e64a19\" d=\"M13.172 2.828 11.78 4.22l1.91 1.91 2 2A2.986 2.986 0 0 1 20 10.81a3.25 3.25 0 0 1-.31 1.31l2.06 2a2.68 2.68 0 0 1 3.37.57 2.86 2.86 0 0 1 .88 2.117 3.02 3.02 0 0 1-.856 2.109A2.9 2.9 0 0 1 23 19.81a2.93 2.93 0 0 1-2.13-.87 2.694 2.694 0 0 1-.56-3.38l-2-2.06a3 3 0 0 1-.31.12V20a3 3 0 0 1 1.44 1.09 2.92 2.92 0 0 1 .56 1.72 2.88 2.88 0 0 1-.878 2.128 2.98 2.98 0 0 1-2.048.871 2.981 2.981 0 0 1-2.514-4.719A3 3 0 0 1 16 20v-6.38a2.96 2.96 0 0 1-1.44-1.09 2.9 2.9 0 0 1-.56-1.72 2.9 2.9 0 0 1 .31-1.31l-3.9-3.9-7.579 7.572a4 4 0 0 0-.001 5.658l10.342 10.342a4 4 0 0 0 5.656 0l10.344-10.344a4 4 0 0 0 0-5.656L18.828 2.828a4 4 0 0 0-5.656 0\"/></svg>", "readme": "<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 16 16\"><path d=\"M0 0h24v24H0z\"/><path fill=\"#42a5f5\" d=\"M8 1C4.136 1 1 4.136 1 8s3.136 7 7 7 7-3.136 7-7-3.136-7-7-7m1 11H7V7.5h2zm0-6H7V4h2z\"/></svg>", "yaml": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path fill=\"#ff5252\" d=\"M13 9h5.5L13 3.5zM6 2h8l6 6v12c0 1.1-.9 2-2 2H6c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2m12 16v-2H9v2zm-4-4v-2H6v2z\"/></svg>", "tune": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\"><path fill=\"#fbc02d\" d=\"M12 10h10v2H12z\"/><path fill=\"#fbc02d\" d=\"M16 4h2v8h-2zm4 18h10v2H20zm4 2h2v4h-2zm0-20h2v14h-2zM2 18h10v2H2z\"/><path fill=\"#fbc02d\" d=\"M6 18h2v10H6zM6 4h2v10H6zm10 12h2v12h-2z\"/></svg>", "typescript": "<svg xmlns=\"http://www.w3.org/2000/svg\" xml:space=\"preserve\" viewBox=\"0 0 16 16\"><path fill=\"#0288d1\" d=\"M2 2v12h12V2zm4 6h3v1H8v4H7V9H6zm5 0h2v1h-2v1h1a1.003 1.003 0 0 1 1 1v1a1.003 1.003 0 0 1-1 1h-2v-1h2v-1h-1a1.003 1.003 0 0 1-1-1V9a1.003 1.003 0 0 1 1-1\"/></svg>", "test-ts": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\"><path fill=\"#0288d1\" d=\"M20 4v2h-2v4.531l.264.461 7.473 13.078a2 2 0 0 1 .263.992V26a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-.938a2 2 0 0 1 .264-.992l7.473-13.078.263-.46V6h-2V4zm0-2h-8a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2v2L4.527 23.078A4 4 0 0 0 4 25.062V26a4 4 0 0 0 4 4h16a4 4 0 0 0 4-4v-.938a4 4 0 0 0-.527-1.984L20 10V8a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2\"/><circle cx=\"17\" cy=\"17\" r=\"1\" fill=\"#0288d1\"/><path fill=\"#0288d1\" d=\"M19.72 20.715a1 1 0 0 0-1.134-.318 5 5 0 0 1-1.18.262 3.95 3.95 0 0 1-1.862-.292 2.74 2.74 0 0 0-3.371.489 2 2 0 0 0-.237.35L10 24h12Z\"/></svg>", "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\"><path fill=\"#26a69a\" d=\"M8.5 6h4l-4-4zM3.875 1H9.5l4 4v8.6c0 .773-.616 1.4-1.375 1.4h-8.25c-.76 0-1.375-.627-1.375-1.4V2.4c0-.777.612-1.4 1.375-1.4M4 13.6h8V8l-2.625 2.8L8 9.4zm1.25-7.7c-.76 0-1.375.627-1.375 1.4s.616 1.4 1.375 1.4c.76 0 1.375-.627 1.375-1.4S6.009 5.9 5.25 5.9\"/></svg>", "font": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\"><path fill=\"#f44336\" d=\"M24 28h4L18 4h-4L4 28h4l8-19.422\"/><path fill=\"#f44336\" d=\"M8 20h16v4H8z\"/></svg>", "database": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\"><path fill=\"#ffca28\" d=\"M16 24c-5.525 0-10-.9-10-2v4c0 1.1 4.475 2 10 2s10-.9 10-2v-4c0 1.1-4.475 2-10 2m0-8c-5.525 0-10-.9-10-2v4c0 1.1 4.475 2 10 2s10-.9 10-2v-4c0 1.1-4.475 2-10 2m0-12C10.477 4 6 4.895 6 6v4c0 1.1 4.475 2 10 2s10-.9 10-2V6c0-1.105-4.477-2-10-2\"/></svg>", "markdown": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\"><path fill=\"#42a5f5\" d=\"m14 10-4 3.5L6 10H4v12h4v-6l2 2 2-2v6h4V10zm12 6v-6h-4v6h-4l6 8 6-8z\"/></svg>", "file": "<svg viewBox=\"0 0 16 16\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"m8.668 6h3.6641l-3.6641-3.668v3.668m-4.668-4.668h5.332l4 4v8c0 0.73828-0.59375 1.3359-1.332 1.3359h-8c-0.73828 0-1.332-0.59766-1.332-1.3359v-10.664c0-0.74219 0.59375-1.3359 1.332-1.3359m3.332 1.3359h-3.332v10.664h8v-6h-4.668z\" fill=\"#90a4ae\" /></svg>", "openapi": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path fill=\"#8bc34a\" d=\"M10.86 4.29h-.36a9 9 0 0 0-1.11.12h-.03l-.24.05-.09.02-.15.03h-.03a9 9 0 0 0-2.12.8l-.13.07-.16.09-.11.06h-.01l-.03.03.09.15 2.63 4.36.15-.09a4 4 0 0 1 .16-.08 3.6 3.6 0 0 1 1.18-.33 4 4 0 0 1 .36-.02V4.3zM5.98 5.75 5.61 6a9 9 0 0 0-.76.63l3.74 3.74.12-.1-.01-.02zm8.47 7.4-.01.17-.01.18a3.57 3.57 0 0 1-.8 1.92l-.11.13c-.04.04-.08.1-.13.13l3.73 3.73.24-.26a9 9 0 0 0 .76-.94l.03-.03.15-.23.03-.06a8.83 8.83 0 0 0 1.37-4.39v-.18l.01-.18h-5.26zM2 13.5v.08l.01.15.02.23V14l.02.19v.02l.03.2c.06.42.15.84.27 1.25l.07.2v.01l.06.19.02.04.05.15.03.07.04.12.04.1.04.09.05.12.04.07.06.14.1.2.01.03.1.17.02.04 4.5-2.71.03-.01a3.6 3.6 0 0 1-.33-1.18zM7.78 15l-4.51 2.7.21.34.01.01.01.02.02.03.24.34h.01v.01l.11.15.02.02.12.14.02.03.11.13.05.06.1.1.05.06.02.02.07.08.03.03.12.13 3.73-3.73a4 4 0 0 1-.13-.13l-.11-.13-.1-.13-.1-.14-.1-.15zm4.93 1.22-.16.08a3.6 3.6 0 0 1-1.7.43 3.6 3.6 0 0 1-1.03-.15l-.16-.05a3 3 0 0 1-.17-.07L7.62 21l-.07.18-.07.15h.02l.01.01.14.05.17.07c.03 0 .05.02.08.03a9 9 0 0 0 1.8.43l.16.02.14.02h.04a9 9 0 0 0 .38.03h.44a9 9 0 0 0 1.47-.11h.02l.15-.04.1-.01.23-.05a9 9 0 0 0 2.15-.8l.14-.08.15-.08.1-.06h.01l.01-.01.04-.02-.1-.15-.09-.16z\"/><path fill=\"#689f38\" d=\"M11.21 4.3v5.27a3.7 3.7 0 0 1 .8.17l3.89-3.88a9 9 0 0 0-.44-.29h-.02l-.14-.1-.09-.04-.08-.05-.14-.07-.02-.02a9 9 0 0 0-.95-.42l-.03-.01-.21-.08A9 9 0 0 0 12 4.36l-.08-.01h-.07l-.14-.02h-.05l-.17-.02h-.06l-.15-.01zM4.6 6.87 4.47 7l-.12.13a9 9 0 0 0-.75.93l-.04.05a6 6 0 0 0-.15.23l-.03.04a8.83 8.83 0 0 0-1.37 4.4v.17l-.01.18h5.26l.01-.18.01-.17a3.57 3.57 0 0 1 .8-1.92c.03-.05.08-.09.12-.13.04-.05.07-.1.12-.14L4.6 6.88zM18.14 8.1l-3.89 3.89c.1.26.15.52.18.8h5.28v-.08l-.02-.14v-.07l-.01-.17v-.04l-.03-.2v-.01l-.03-.21a9 9 0 0 0-.27-1.24v-.01l-.06-.2-.07-.19-.01-.04a6 6 0 0 0-.08-.22l-.05-.12-.08-.2-.05-.11-.1-.21-.02-.04-.08-.17V9.1l-.1-.17v-.01a9 9 0 0 0-.5-.82zm-5.01 7.82-.13.1.01.01 2.72 4.5.37-.25a9 9 0 0 0 .76-.63l-3.72-3.71zm-4.55 0-.01.02-3.72 3.71.16.16c.02 0 .04.02.06.04l.13.1.03.03.15.12.01.02.16.12a9 9 0 0 0 .7.47l.03.02a9 9 0 0 0 .45.25l.02.01a8 8 0 0 0 .4.2l.14-.32 1.87-4.54v-.02a3.6 3.6 0 0 1-.58-.39\"/><path fill=\"#e0e0e0\" d=\"M19.53 2a2.46 2.46 0 0 0-1.74.72 2.47 2.47 0 0 0-.47 2.84l-5.37 5.37a2.47 2.47 0 1 0 1.12 1.12l5.37-5.37a2.47 2.47 0 0 0 2.84-3.96A2.46 2.46 0 0 0 19.53 2\"/></svg>", "python": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path fill=\"#0288d1\" d=\"M9.86 2A2.86 2.86 0 0 0 7 4.86v1.68h4.29c.39 0 .71.57.71.96H4.86A2.86 2.86 0 0 0 2 10.36v3.781a2.86 2.86 0 0 0 2.86 2.86h1.18v-2.68a2.85 2.85 0 0 1 2.85-2.86h5.25c1.58 0 2.86-1.271 2.86-2.851V4.86A2.86 2.86 0 0 0 14.14 2zm-.72 1.61c.4 0 .72.12.72.71s-.32.891-.72.891c-.39 0-.71-.3-.71-.89s.32-.711.71-.711\"/><path fill=\"#fdd835\" d=\"M17.959 7v2.68a2.85 2.85 0 0 1-2.85 2.859H9.86A2.85 2.85 0 0 0 7 15.389v3.75a2.86 2.86 0 0 0 2.86 2.86h4.28A2.86 2.86 0 0 0 17 19.14v-1.68h-4.291c-.39 0-.709-.57-.709-.96h7.14A2.86 2.86 0 0 0 22 13.64V9.86A2.86 2.86 0 0 0 19.14 7zM8.32 11.513l-.004.004.038-.004zm6.54 7.276c.39 0 .71.3.71.89a.71.71 0 0 1-.71.71c-.4 0-.72-.12-.72-.71s.32-.89.72-.89\"/></svg>", "python-misc": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\"><path fill=\"#757575\" d=\"M15 2H6a2.006 2.006 0 0 0-2 2v22a2.006 2.006 0 0 0 2 2h16a2 2 0 0 0 2-2V11Zm3 22H6v-2h12Zm0-4H6v-2h12Zm0-4H6v-2h12Zm-4-4V4l8 8Z\"/><path fill=\"#fbc02d\" d=\"M30.714 16H28v5h-9v7.714A1.286 1.286 0 0 0 20.286 30h6.428A1.286 1.286 0 0 0 28 28.714V26h-6v-1h8.714A1.286 1.286 0 0 0 32 23.714v-6.428A1.286 1.286 0 0 0 30.714 16M24 28h3v1h-3Z\" style=\"isolation:isolate\"/><path fill=\"#0288d1\" d=\"M25.714 12h-6.428A1.286 1.286 0 0 0 18 13.286V16h6v1h-8.714A1.286 1.286 0 0 0 14 18.286v6.428A1.286 1.286 0 0 0 15.286 26H18v-6h9v-6.714A1.286 1.286 0 0 0 25.714 12M22 14h-3v-1h3Z\" style=\"isolation:isolate\"/></svg>", "pdf": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path fill=\"#ef5350\" d=\"M13 9h5.5L13 3.5zM6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2m4.93 10.44c.41.9.93 1.64 1.53 2.15l.41.32c-.87.16-2.07.44-3.34.93l-.11.04.5-1.04c.45-.87.78-1.66 1.01-2.4m6.48 3.81c.18-.18.27-.41.28-.66.03-.2-.02-.39-.12-.55-.29-.47-1.04-.69-2.28-.69l-1.29.07-.87-.58c-.63-.52-1.2-1.43-1.6-2.56l.04-.14c.33-1.33.64-2.94-.02-3.6a.85.85 0 0 0-.61-.24h-.24c-.37 0-.7.39-.79.77-.37 1.33-.15 2.06.22 3.27v.01c-.25.88-.57 1.9-1.08 2.93l-.96 1.8-.89.49c-1.2.75-1.77 1.59-1.88 2.12-.04.19-.02.36.05.54l.03.05.48.31.44.11c.81 0 1.73-.95 2.97-3.07l.18-.07c1.03-.33 2.31-.56 4.03-.75 1.03.51 2.24.74 3 .74.44 0 .74-.11.91-.3m-.41-.71.09.11c-.01.1-.04.11-.09.13h-.04l-.19.02c-.46 0-1.17-.19-1.9-.51.09-.1.13-.1.23-.1 1.4 0 1.8.25 1.9.35M7.83 17c-.65 1.19-1.24 1.85-1.69 2 .05-.38.5-1.04 1.21-1.69zm3.02-6.91c-.23-.9-.24-1.63-.07-2.05l.07-.12.15.05c.17.24.19.56.09 1.1l-.03.16-.16.82z\"/></svg>", "github-actions-workflow": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\"><path fill=\"#78909c\" d=\"M26 18h-6a2 2 0 0 0-2 2v2h-6a2 2 0 0 1-2-2v-6h2a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2v6a4 4 0 0 0 4 4h6v2a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2M6.5 12a.5.5 0 0 1-.5-.5v-5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 .5.5v5a.5.5 0 0 1-.5.5ZM26 25.5a.5.5 0 0 1-.5.5h-5a.5.5 0 0 1-.5-.5v-5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 .5.5Z\"/></svg>"};
+  const MAT_NAMES = { 'package.json': 'nodejs', 'package-lock.json': 'nodejs', 'tsconfig.json': 'tsconfig', '.gitignore': 'git', 'readme.md': 'readme', 'openapi.json': 'openapi', 'pyproject.toml': 'python-misc' };
+  const MAT_EXTS = { 'test.ts': 'test-ts', ts: 'typescript', yml: 'yaml', yaml: 'yaml', env: 'tune', png: 'image', woff2: 'font', sqlite: 'database', md: 'markdown', py: 'python', pdf: 'pdf' };
+  function matId(p) {
+    const lower = p.toLowerCase(); const name = lower.split('/').pop();
+    if (/^\.github\/workflows\/.+\.ya?ml$/.test(lower)) return 'github-actions-workflow';   // the one languageIds rule
+    if (MAT_NAMES[name]) return MAT_NAMES[name];
+    const parts = name.split('.');
+    for (let i = 1; i < parts.length; i++) { const ext = parts.slice(i).join('.'); if (MAT_EXTS[ext]) return MAT_EXTS[ext]; }
+    return 'file';
+  }
+  const matIcon = (p, size, cls = '') => `<span class="ficon mat ${cls}" style="width:${size}px;height:${size}px">${MAT[matId(p)]}</span>`;
+  // DIFF-01 Path: a chip that opens the file in the default app (M2.7 OPN-02); a deleted file is not on disk, so plain text.
+  function pathChip(f) {
+    const inner = `${matIcon(f.path, 14)}<span class="dv-path"><span class="dir">${esc(dirName(f.path))}</span>${esc(baseName(f.path))}</span>`;
+    return f.status === 'D' ? `<span class="path-chip plain">${inner}</span>`
+      : `<button class="path-chip" data-action="toast" data-msg="Opens ${esc(f.path)} in ${DEFAULT_APP}." title="Open in ${DEFAULT_APP}">${inner}</button>`;
+  }
   const fmtSize = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)} MB` : `${Math.round(n / 1e3)} KB`);
 
   // comments: {id, ws, path, side, start, end, snippet[], body, state}
@@ -1023,7 +1143,7 @@ Use /v1/providers.xml for the list.
     { id: uid(), ws: 'w1', path: 'src/routes/providers.ts', side: 'new', start: 2, end: 3, snippet: ['  { name: "listProviders", method: "GET", path: "/providers" },', '  { name: "createProvider", method: "POST", path: "/providers" },'], body: 'Use the handler names here so the operationIds match the code.', state: 'sent', time: '20m ago' },
   ];
 
-  const state = { selected: 'w1', panelOpen: true, running: false, expanded: {}, filter: {}, cursor: {}, rows: {}, preview: {}, showIgnored: {}, tab: {}, mode: {}, buffers: {}, loaded: {}, conflict: {}, keepMine: {}, reloadedAt: {}, dismissed: {}, sel: null, composer: null, expanded: new Set(), sheet: null, working: false };
+  const state = { selected: 'w1', panelOpen: true, running: false, qo: null, lastConv: {}, expanded: {}, filter: {}, cursor: {}, rows: {}, preview: {}, showIgnored: {}, tab: {}, mode: {}, buffers: {}, loaded: {}, conflict: {}, keepMine: {}, reloadedAt: {}, dismissed: {}, sel: null, composer: null, expanded: new Set(), sheet: null, working: false };
   const wsOf = (id) => workspaces.find((w) => w.id === id);
   const W = () => wsOf(state.selected);
   const fileOf = (w, path) => w.files.find((f) => f.path === path) || w.plain[path];
@@ -1092,7 +1212,8 @@ Use /v1/providers.xml for the list.
     // M2.7 LAY-01: the top bar covers the conversation only; the panel toggle ends the title bar row (PNL-02).
     $('#topbar').innerHTML = `<span class="crumb-repo">${esc(r.name)}</span><span class="crumb-sep">/</span>` +
       `<button class="branch" title="Copy branch name"><span class="b-icon">${I.branch(13)}</span>${esc(w.branch)}</button><span class="grow"></span>` +
-      `<button class="icon-btn" title="Open in Finder or Terminal" aria-label="Open in">${I.open}</button>` + (state.panelOpen ? '' : panelToggleHTML());
+      `<span class="open-split"><button class="os-main" data-action="toast" data-msg="Opens the worktree in Zed, the default app (⌘O, M2.7 OPN-02)." aria-label="Open in Zed" title="Open in Zed (⌘O)">${ZED_ICON}</button>` +
+      `<span class="os-sep" aria-hidden="true"></span><button class="os-chev" data-action="toast" data-msg="Opens the Open menu: Finder, the editors, New Terminal, Copy Path (M2.5 TB-03)." aria-label="Open in…" title="Open in Finder, an editor or Terminal">${I.chevDown}</button></span>` + (state.panelOpen ? '' : panelToggleHTML());
     $('#pbar').innerHTML = `<button class="run-mini" data-action="run">${state.running ? I.stopSq : I.play}<span>${state.running ? 'Stop' : 'Run'}</span></button><span class="sep"></span>` +
       `<span class="term-tab"><span class="sdot done"></span>Setup</span><span class="term-tab"><span class="sdot run"></span>Terminal 1</span><span class="grow"></span>${I.chevUp}`;
     win.classList.toggle('pnl-closed', !state.panelOpen);
@@ -1116,7 +1237,7 @@ Use /v1/providers.xml for the list.
       const f = fileOf(w, path);
       const sel = w.active.kind === 'diff' && w.active.path === path;
       const dirty = isDirty(w, path);
-      html += `<div class="tab-wrap${sel ? ' selected' : ''}${state.preview[w.id] === path ? ' preview' : ''}"${i === 0 ? ' data-req="DIFF-01"' : ''}><button class="tab" data-action="diff-tab" data-path="${esc(path)}" title="${esc(path)}">${f && f.status ? `<span class="status-letter st-${f.status}">${f.status}</span>` : `<span class="ft" style="color:${KIND_COLOR[kindOf(path)]}">${I.doc}</span>`}<span class="t-label">${esc(baseName(path))}</span></button>` +
+      html += `<div class="tab-wrap${sel ? ' selected' : ''}${state.preview[w.id] === path ? ' preview' : ''}"${i === 0 ? ' data-req="DIFF-01"' : ''}><button class="tab" data-action="diff-tab" data-path="${esc(path)}" title="${esc(path)}">${f && f.status ? `<span class="status-letter st-${f.status}">${f.status}</span>` : `<span class="ft">${matIcon(path, 12)}</span>`}<span class="t-label">${esc(baseName(path))}</span></button>` +
         (dirty ? '<span class="tab-dirty" aria-label="Unsaved edits"></span>' : '') +
         `<button class="tab-close${dirty ? ' dirty-hidden' : ''}" data-action="close-diff" data-path="${esc(path)}" aria-label="Close tab">${I.close}</button></div>`;
     });
@@ -1136,6 +1257,7 @@ Use /v1/providers.xml for the list.
   function itemHTML(item, fresh) {
     const enter = fresh ? ' enter' : '';
     if (item.kind === 'user') {
+      if (item.chip) return `<div class="msg-user${item.queued ? ' queued' : ''}${enter}" title="The agent received the lines' code with this comment (CMT-05)">${chipHTML(item.chip.path, item.chip.side, item.chip.start, item.chip.end, true)}<div>${esc(item.text)}</div>${item.queued ? '<span class="qcap">Queued</span>' : ''}</div>`;   // CMT-06
       const body = esc(item.text).replace(/```(\w*)\n([\s\S]*?)```/g, (m, lang, code) => `<pre>${code}</pre>`);
       return `<div class="msg-user${enter}">${body}</div>`;
     }
@@ -1143,7 +1265,7 @@ Use /v1/providers.xml for the list.
     if (item.kind === 'footer') return `<div class="turn-footer${enter}">${agentTile(item.agent)}<span>Claude Code · ${item.duration} · ${item.time}</span></div>`;
     if (item.kind === 'tool') {
       const inChanges = fileOf(W(), item.file);
-      return `<div class="tool${enter}" data-item="${item.id}"><span class="tool-icon">${I[item.icon] || I.edit}</span><span class="tool-label${item.live ? ' shimmer' : ''}">${esc(item.label)}</span><button class="file-badge" data-action="badge" data-path="${esc(item.file)}"${inChanges ? ' data-req="DIFF-05"' : ''} title="${esc(item.file)}">${I.file}<span>${esc(baseName(item.file))}</span></button></div>`;
+      return `<div class="tool${enter}" data-item="${item.id}"><span class="tool-icon">${I[item.icon] || I.edit}</span><span class="tool-label${item.live ? ' shimmer' : ''}">${esc(item.label)}</span><button class="file-badge" data-action="badge" data-path="${esc(item.file)}"${inChanges ? ' data-req="DIFF-05"' : ''} title="${esc(item.file)}">${I.file}<span>${esc(baseName(item.file))}</span></button>${item.stat && (item.stat[0] || item.stat[1]) ? `<span data-req="DIFF-06" style="margin-left:-2px">${statHTML(item.stat)}</span>` : ''}</div>`;
     }
     return '';
   }
@@ -1171,7 +1293,7 @@ Use /v1/providers.xml for the list.
     if (mode === 'diff' && dirty) banners += `<div class="banner info" data-req="EDIT-02"><span class="grow">Unsaved edits · Save to see them here.</span><button class="fill-btn" data-action="save">Save</button></div>`;
     const reloaded = state.reloadedAt[k] && Date.now() - state.reloadedAt[k] < 2000;
     $('#content').innerHTML = `<div class="dv">` +
-      `<div class="dv-head"><span class="dv-path"><span class="dir">${esc(dirName(f.path))}</span>${esc(baseName(f.path))}</span>${f.plain ? '' : statHTML([a, d])}${f.status === 'A' ? '<span class="muted">New file</span>' : ''}<span class="grow"></span>` +
+      `<div class="dv-head">${pathChip(f)}${f.plain ? '' : statHTML([a, d])}${f.status === 'A' ? '<span class="muted">New file</span>' : ''}<span class="grow"></span>` +
       (reloaded ? '<span class="dv-edited">Reloaded</span>' : '') +
       (dirty ? `<span class="dv-edited">Edited</span><button class="fill-btn" data-action="save" title="Save (⌘S)">Save</button>` : '') +
       (f.plain ? `<span class="muted" data-req="FIL-05">Unchanged</span>` : '') +
@@ -1185,25 +1307,28 @@ Use /v1/providers.xml for the list.
     const side = op.t === 'del' ? 'old' : 'new';
     const line = side === 'new' ? op.n : op.o;
     return `<div class="dl ${op.t}${selected ? ' sel' : ''}" data-side="${side}" data-line="${line}">` +
-      `<span class="ln" data-line="${line}" data-side="${side}">${op.o || ''}</span><span class="ln" data-line="${line}" data-side="${side}">${op.n || ''}</span>` +
-      `<button class="cadd${side === 'old' ? ' old' : ''}" data-line="${line}" data-side="${side}" aria-label="Comment on line ${line}">${I.plus}</button>` +
+      `<span class="ln" data-line="${line}" data-side="${side}">${line || ''}</span>` +   // DIFF-02: one column
+      `<button class="cadd" data-line="${line}" data-side="${side}" aria-label="Comment on line ${line}">${I.plus}</button>` +
       `<span class="mk">${op.t === 'add' ? '+' : op.t === 'del' ? '−' : ''}</span><span class="src">${hl(op.s, path)}</span></div>`;
   }
   const inSel = (path, side, line) => state.sel && state.sel.path === path && state.sel.side === side && line >= state.sel.start && line <= state.sel.end;
   function commentsAfter(w, f, side, line) {
-    let html = '';
-    comments.filter((c) => c.ws === w.id && c.path === f.path && c.side === side && c.end === line && c.state !== 'outdated').forEach((c) => { html += cardHTML(c); });
+    let html = '';   // CMT-05: sent comments are not drawn; only the open box is
     const cm = state.composer;
     if (cm && cm.path === f.path && cm.side === side && cm.end === line) html += composerHTML(cm);
     return html ? `<div class="cmt-slot">${html}</div>` : '';
   }
-  function cardHTML(c) {
-    const chip = c.state === 'pending' ? '<span class="cstate pending">Pending</span>' : c.state === 'sent' ? `<span class="cstate sent">${I.check(10)}Sent</span>` : '<span class="cstate outdated" title="The commented lines changed">Outdated</span>';
-    return `<div class="ccard" data-req="CMT-02"><div class="ccard-head"><span class="who">You</span><span>${esc(c.time || 'just now')}</span>${chip}<span class="grow"></span><span class="ccard-actions"><button class="icon-btn xs" data-action="edit-comment" data-cid="${c.id}" aria-label="Edit comment">${I.pencil}</button><button class="icon-btn xs" data-action="delete-comment" data-cid="${c.id}" aria-label="Delete comment">${I.trash}</button></span></div><div class="cbody">${esc(c.body)}</div></div>`;
+  function chipHTML(path, side, start, end, asButton) {
+    const range = `${side === 'old' ? '−' : '+'}${start}${end !== start ? `–${end}` : ''}`;
+    const tag = asButton ? 'button' : 'span';
+    return `<${tag} class="lchip" data-req="CMT-06"${asButton ? ` data-action="chip" data-path="${esc(path)}" data-line="${start}"` : ''} title="${esc(path)} ${range}"><span class="li">${matIcon(path, 12)}</span><span class="lt">${esc(baseName(path))}<span class="lr">${range}</span></span></${tag}>`;
   }
   function composerHTML(cm) {
-    const label = cm.start === cm.end ? `Comment on line ${cm.start}` : `Comment on lines ${cm.start}–${cm.end}`;
-    return `<div class="ccomposer"><div class="cc-head">${label}${cm.side === 'old' ? ' (removed)' : ''}</div><textarea id="cmtInput" placeholder="Leave a comment for the agent">${esc(cm.text || '')}</textarea><div class="cc-actions"><span class="cc-hint">⌘Return to comment</span><button class="text-btn" data-action="cancel-comment">Cancel</button><button class="fill-btn primary" data-action="save-comment">Comment</button></div></div>`;
+    const w = W(); const to = w.convs.find((c) => c.id === cm.to) || w.convs[0];
+    const busy = Boolean(w.turn);
+    return `<div class="cbox" data-req="CMT-02"><div class="cbox-head">Sending to<button class="cbox-to" data-action="send-to">${agentTile(to.agent)}<span>${esc(to.title || 'New conversation')}</span>${I.updown}</button></div>` +
+      `<div class="cbox-body">${chipHTML(cm.path, cm.side, cm.start, cm.end, false)}<textarea id="cmtInput" placeholder="Ask about these lines…">${esc(cm.text || '')}</textarea></div>` +
+      `<div class="cc-actions"><span class="cc-hint">⌘Return to send</span><span class="grow"></span><button class="text-btn" data-action="cancel-comment">Cancel</button><button class="fill-btn primary" data-action="save-comment" id="cmtSend" ${busy ? 'title="Claude Code is working; this goes out when its turn ends"' : ''} disabled>${busy ? 'Queue' : 'Send'}</button></div></div>`;
   }
   function renderDiff(w, f) {
     const body = $('#dvBody');
@@ -1211,15 +1336,12 @@ Use /v1/providers.xml for the list.
     const ops = opsOf(f);
     const { hunks, trailing } = hunksOf(ops);
     let html = '<div class="diff" id="diffRoot" data-req="DIFF-02">';
-    const outdated = comments.filter((c) => c.ws === w.id && c.path === f.path && c.state === 'outdated');
-    if (outdated.length) html += `<details class="outdated-box" data-req="CMT-04"><summary>${outdated.length} outdated comment${outdated.length > 1 ? 's' : ''}</summary>${outdated.map(cardHTML).join('')}</details>`;
     hunks.forEach((h, hi) => {
       const gk = `${key(w, f.path)}:${hi}`;
       if (h.gap.length) {
         if (state.expanded.has(gk)) h.gap.forEach((op) => { html += lineRow(op, f.path, inSel(f.path, 'new', op.n)) + commentsAfter(w, f, 'new', op.n); });
         else html += `<button class="gap" data-action="expand" data-gap="${gk}">${I.chevDown}${h.gap.length} unchanged lines</button>`;
       }
-      html += `<div class="hunk">${esc(h.header)}</div>`;
       h.lines.forEach((op) => {
         const side = op.t === 'del' ? 'old' : 'new';
         const line = side === 'new' ? op.n : op.o;
@@ -1234,7 +1356,11 @@ Use /v1/providers.xml for the list.
     html += '</div>';
     body.innerHTML = html;
     const input = $('#cmtInput');
-    if (input) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
+    if (input) {
+      input.focus(); input.setSelectionRange(input.value.length, input.value.length);
+      const send = $('#cmtSend'); const sync = () => { state.composer.text = input.value; send.disabled = !input.value.trim(); }; sync();
+      input.addEventListener('input', sync);
+    }
   }
 
   // ---------- CMT-01 selection ----------
@@ -1268,35 +1394,34 @@ Use /v1/providers.xml for the list.
   }
   function openComposer() {
     const s = state.sel;
-    state.composer = { path: s.path, side: s.side, start: s.start, end: s.end, text: state.composer && state.composer.path === s.path ? ($('#cmtInput') || {}).value || '' : '', editing: null };
+    const w = W();
+    state.composer = { path: s.path, side: s.side, start: s.start, end: s.end, text: state.composer && state.composer.path === s.path ? ($('#cmtInput') || {}).value || '' : '', to: (state.composer && state.composer.to) || state.lastConv[w.id] || w.convs[0].id };
     renderContent();
   }
+  // CMT-05: one message to the chosen conversation, right away; the diff stays on screen.
   function saveComment() {
-    const w = W(); const f = fileOf(w, state.composer.path);
+    const w = W(); const cm = state.composer; const f = fileOf(w, cm.path);
     const text = ($('#cmtInput').value || '').trim();
     if (!text) return;
-    const cm = state.composer;
-    const src = splitLines(cm.side === 'new' ? f.current : f.base);
-    if (cm.editing) { const c = comments.find((x) => x.id === cm.editing); c.body = text; }
-    else comments.push({ id: uid(), ws: w.id, path: f.path, side: cm.side, start: cm.start, end: cm.end, snippet: src.slice(cm.start - 1, cm.end), body: text, state: 'pending', time: 'just now' });
+    const conv = w.convs.find((c) => c.id === cm.to) || w.convs[0];
+    const code = splitLines(cm.side === 'new' ? f.current : f.base).slice(cm.start - 1, cm.end).join('\n');
+    const lines = cm.start === cm.end ? `line ${cm.start}` : `lines ${cm.start}–${cm.end}`;
+    const prompt = `Comment on ${cm.path}, ${cm.side === 'old' ? 'removed ' : ''}${lines}${cm.side === 'old' ? ' (from the base)' : ''}:\n\`\`\`ts\n${code}\n\`\`\`\n${text}`;
+    const item = it('user', text, { chip: { path: cm.path, side: cm.side, start: cm.start, end: cm.end }, prompt, queued: Boolean(w.turn) });
+    conv.items.push(item);
     state.composer = null; state.sel = null;
-    renderContent(); renderPanel();
+    renderContent(); renderTabs();
+    toast(w.turn ? `Queued in “${conv.title}” · Show` : `Sent to “${conv.title}” · Show`);   // CMT-05: both toasts carry Show
+    if (!w.turn) runReply(w, conv);
   }
-
-  // ---------- CMT-04 re-anchoring ----------
-  function relocate(c, text) {
-    const ls = splitLines(text); const n = c.snippet.length;
-    const at = (i) => c.snippet.every((s, k) => ls[i + k] === s);
-    if (at(c.start - 1)) return { start: c.start, end: c.end };
-    let best = -1; let bestD = Infinity;
-    for (let i = 0; i + n <= ls.length; i++) if (at(i)) { const dd = Math.abs(i - (c.start - 1)); if (dd < bestD) { bestD = dd; best = i; } }
-    return best >= 0 ? { start: best + 1, end: best + n } : null;
-  }
-  function reanchor(w, f) {
-    comments.filter((c) => c.ws === w.id && c.path === f.path && c.side === 'new' && c.state !== 'outdated').forEach((c) => {
-      const r = relocate(c, f.current);
-      if (r) { c.start = r.start; c.end = r.end; } else c.state = 'outdated';
-    });
+  async function runReply(w, conv) {
+    w.turn = Date.now(); renderTabs();
+    await wait(1600);
+    conv.items.push(it('agent', 'Makes sense: operationId now comes from `uniqueId(route)`, so two routes can share a name without a collision.'));
+    conv.items.push(it('footer', '', { agent: conv.agent, duration: `${Math.floor((Date.now() - w.turn) / 1000)}s`, time: clock() }));
+    w.turn = null;
+    const queued = conv.items.find((x) => x.queued); if (queued) { queued.queued = false; runReply(w, conv); }   // M2.5 queue: the next one goes out
+    renderTabs(); if (w.active.kind === 'conv') renderContent();
   }
 
   // ---------- EDIT ----------
@@ -1314,7 +1439,7 @@ Use /v1/providers.xml for the list.
     const body = f.cat === 'preview' ? `<div class="img">Quick Look preview · ${fmtSize(f.size)}</div><span class="sub">Images and PDFs show as today (FileTabView).</span>`
       : f.cat === 'huge' ? `<span>Too large to open in Rocky · ${fmtSize(f.size)}</span><span style="display:flex;gap:8px"><button class="fill-btn" data-action="toast" data-msg="Reveals the file in Finder.">Open in Finder</button><button class="fill-btn" data-action="toast" data-msg="Opens it in Zed (M2.7 OPN-01).">Open in Zed</button></span>`
       : `<span>Binary file · ${fmtSize(f.size)}</span><button class="fill-btn" data-action="toast" data-msg="Reveals the file in Finder.">Open in Finder</button>`;
-    $('#content').innerHTML = `<div class="dv"><div class="dv-head"><span class="dv-path"><span class="dir">${esc(dirName(f.path))}</span>${esc(baseName(f.path))}</span><span class="muted">${fmtSize(f.size)}</span><span class="grow"></span><button class="icon-btn sm" data-action="file-menu" data-path="${esc(f.path)}" aria-label="More">${I.ellipsis}</button></div><div class="dv-blank" data-req="FIL-06">${body}</div></div>`;
+    $('#content').innerHTML = `<div class="dv"><div class="dv-head">${pathChip(f)}<span class="muted">${fmtSize(f.size)}</span><span class="grow"></span><button class="icon-btn sm" data-action="file-menu" data-path="${esc(f.path)}" aria-label="More">${I.ellipsis}</button></div><div class="dv-blank" data-req="FIL-06">${body}</div></div>`;
   }
   function renderEditor(w, f) {
     const k = key(w, f.path);
@@ -1363,7 +1488,6 @@ Use /v1/providers.xml for the list.
     if (f.current !== state.loaded[k] && !state.keepMine[k]) { state.conflict[k] = true; renderContent(); return; }
     f.current = state.buffers[k]; state.loaded[k] = f.current; state.keepMine[k] = false; state.conflict[k] = false;
     if (f.plain && f.current !== f.base) { delete f.plain; f.status = 'M'; f.committed = false; w.files.push(f); delete w.plain[f.path]; }   // FIL-05: it joins Changes
-    reanchor(w, f);
     toast(`Saved ${baseName(f.path)}`);
     renderAll();
   }
@@ -1375,7 +1499,6 @@ Use /v1/providers.xml for the list.
       if (state.buffers[k] === state.loaded[k]) { state.buffers[k] = text; state.loaded[k] = text; state.reloadedAt[k] = Date.now(); setTimeout(() => { if (W() === w) renderContent(); }, 2100); }
       else state.conflict[k] = true;
     }
-    reanchor(w, f);
     const editing = W() === w && w.active.kind === 'diff' && w.active.path === f.path && state.mode[k] === 'edit';
     if (editing && !state.conflict[k] && state.buffers[k] === text) { const input = $('#edInput'); const pos = input.selectionStart; input.value = text; input.setSelectionRange(pos, pos); paintEditor(w, f); renderFileHeaderOnly(); }
     else if (W() === w) renderContent();
@@ -1386,8 +1509,7 @@ Use /v1/providers.xml for the list.
   // ---------- CHG panel ----------
   function fileRow(w, f) {
     const sel = w.active.kind === 'diff' && w.active.path === f.path;
-    const n = comments.filter((c) => c.ws === w.id && c.path === f.path).length;
-    return `<div class="frow${sel ? ' selected' : ''}"><button class="frow-main" data-action="open-diff" data-path="${esc(f.path)}" title="${esc(f.path)}"><span class="status-letter st-${f.status}">${f.status}</span><span class="fname">${esc(baseName(f.path))}</span><span class="fdir"><bdi>${esc(dirName(f.path))}</bdi></span><span class="frow-trail">${n ? `<span class="ccount">${I.bubble}${n}</span>` : ''}${statHTML(statOf(f))}</span></button>` +
+    return `<div class="frow${sel ? ' selected' : ''}"><button class="frow-main" data-action="open-diff" data-path="${esc(f.path)}" title="${esc(f.path)}"><span class="status-letter st-${f.status}">${f.status}</span>${matIcon(f.path, 14)}<span class="fname">${esc(baseName(f.path))}</span><span class="fdir"><bdi>${esc(dirName(f.path))}</bdi></span><span class="frow-trail">${statHTML(statOf(f))}</span></button>` +
       `<span class="frow-actions">${f.status !== 'D' ? `<button class="icon-btn sm" data-action="edit-file" data-path="${esc(f.path)}" aria-label="Edit" title="Edit">${I.pencil}</button>` : ''}${!f.committed ? `<button class="icon-btn sm" data-action="discard" data-path="${esc(f.path)}" aria-label="Discard changes" title="Discard changes…">${I.discard}</button>` : ''}</span></div>`;
   }
   // M2.7's header, simplified: its HDR-02 decides the real states.
@@ -1419,8 +1541,7 @@ Use /v1/providers.xml for the list.
     if (!w.files.length) list = '<div class="chg-empty">No changes yet<p>Changes the agent makes in this workspace show up here.</p></div>';
     if (unc.length) list += `<div class="chg-sec" data-req="CHG-03">Uncommitted · ${unc.length}<span class="grow"></span><button class="fill-btn" data-action="commit" data-req="GIT-04">Commit…</button></div>` + unc.map((f) => fileRow(w, f)).join('');
     if (com.length) list += `<div class="chg-sec">Committed · ${com.length}</div>` + com.map((f) => fileRow(w, f)).join('');
-    const pending = comments.filter((c) => c.ws === w.id && c.state === 'pending');
-    const cmtBar = pending.length ? `<div class="chg-foot"><div class="cmt-bar" data-req="CMT-05"><span class="note">${pending.length} comment${pending.length > 1 ? 's' : ''} ready</span><span class="grow"></span><button class="fill-btn primary" data-action="send-comments" ${w.turn ? 'disabled title="The agent is working"' : ''}>Send to agent</button></div></div>` : '';
+    const cmtBar = '';   // CMT-05: no comments bar; comments go out as they are written
     const head = n ? `<div class="chg-head" data-req="CHG-02"><span class="chg-files">${n} file${n > 1 ? 's' : ''}</span>${statHTML(wsStat(w))}<span class="grow"></span><button class="icon-btn sm" data-action="panel-menu" aria-label="More">${I.ellipsis}</button></div>` : '';
     $('#changes').innerHTML = hdr + tabs + head + `<div class="chg-list">${list}</div>` + cmtBar;
   }
@@ -1446,7 +1567,7 @@ Use /v1/providers.xml for the list.
   }
   const cmp = (a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });   // Finder's order
   function changedIn(w, dirPath) { return w.files.some((f) => f.status !== 'D' && f.path.startsWith(dirPath + '/')); }
-  function fileIcon(p) { const k = kindOf(p); return `<span class="ficon" style="color:${KIND_COLOR[k]}">${I.doc}</span>`; }
+  function fileIcon(p) { return matIcon(p, 14); }   // FIL-09
   function statusMark(w, p) { const f = w.files.find((x) => x.path === p); return f ? `<span class="tmark"><span class="status-letter st-${f.status}">${f.status}</span></span>` : ''; }
   function treeRows(w) {
     const rows = []; const open = expandedOf(w); const active = w.active.kind === 'diff' ? w.active.path : null;
@@ -1464,7 +1585,7 @@ Use /v1/providers.xml for the list.
     return rows;
   }
   // FIL-04: name prefix, name contains, path contains, then the characters in order.
-  function filterRows(w, q) {
+  function rankPaths(w, q) {
     const ql = q.toLowerCase(); const scored = [];
     worktreePaths(w).forEach((p) => {
       const pl = p.toLowerCase(); const cut = p.lastIndexOf('/') + 1; const name = pl.slice(cut);
@@ -1480,8 +1601,14 @@ Use /v1/providers.xml for the list.
       }
       if (tier >= 0) scored.push({ p, tier, hit: new Set(hit), cut });
     });
-    scored.sort((a, b) => a.tier - b.tier || cmp(a.p, b.p));
-    const marked = (p, hit, from, to) => [...p.slice(from, to)].map((ch, k) => (hit.has(from + k) ? `<mark>${esc(ch)}</mark>` : esc(ch))).join('');
+    const rec = (p) => { const i = w.recent.indexOf(p); return i < 0 ? 99 : i; };
+    scored.sort((a, b) => a.tier - b.tier || rec(a.p) - rec(b.p) || cmp(a.p, b.p));   // FIL-08: recent first inside a tier
+    return scored;
+  }
+  const marked = (p, hit, from, to) => [...p.slice(from, to)].map((ch, k) => (hit.has(from + k) ? `<mark>${esc(ch)}</mark>` : esc(ch))).join('');
+  function filterRows(w, q) {
+    const scored = rankPaths(w, q);
+    const unusedMarked = (p, hit, from, to) => [...p.slice(from, to)].map((ch, k) => (hit.has(from + k) ? `<mark>${esc(ch)}</mark>` : esc(ch))).join('');
     return scored.map(({ p, hit, cut }, i) => ({
       html: `<button class="trow${i === (state.cursor[w.id] || 0) ? ' cursor' : ''}" data-action="tree-file" data-path="${esc(p)}" style="padding-left:8px" title="${esc(p)}">${fileIcon(p)}<span class="tname">${marked(p, hit, cut, p.length)}</span><span class="tdir">${marked(p, hit, 0, cut)}</span>${statusMark(w, p)}</button>`,
       path: p,
@@ -1492,7 +1619,7 @@ Use /v1/providers.xml for the list.
     const rows = q ? filterRows(w, q) : treeRows(w);
     state.rows[w.id] = rows;
     const list = rows.length ? rows.map((r) => r.html).join('') : `<div class="fil-empty">No file matches “${esc(q)}”</div>`;
-    return `<div class="fil-head" data-req="FIL-04"><label class="fil-search">${I.search}<input id="fileFilter" placeholder="Filter files" value="${esc(q)}" aria-label="Filter files" autocomplete="off"><span class="kbd">⌘P</span></label><button class="icon-btn sm" data-action="files-menu" aria-label="More">${I.ellipsis}</button></div>` +
+    return `<div class="fil-head" data-req="FIL-04"><label class="fil-search">${I.search}<input id="fileFilter" placeholder="Filter files" value="${esc(q)}" aria-label="Filter files" autocomplete="off"></label><button class="icon-btn sm" data-action="files-menu" aria-label="More">${I.ellipsis}</button></div>` +
       `<div class="fil-list" id="filList" tabindex="0" role="tree" aria-label="All files" data-req="FIL-02">${list}</div>`;
   }
   function wireFilesTab(w) {
@@ -1522,16 +1649,66 @@ Use /v1/providers.xml for the list.
   // FIL-05: a changed file opens its diff; any other file opens in Edit. A single click opens a preview tab.
   function openFromTree(path, pin) {
     const w = W(); const pv = state.preview[w.id];
+    touchRecent(w, path);
     if (!w.files.some((f) => f.path === path)) plainFile(w, path);
     if (!w.tabs.includes(path)) {
-      if (pv && pv !== path && w.tabs.includes(pv) && !isDirty(w, pv)) w.tabs.splice(w.tabs.indexOf(pv), 1, path); else w.tabs.push(path);
-      state.preview[w.id] = pin ? null : path;
+      if (!pin && pv && pv !== path && w.tabs.includes(pv) && !isDirty(w, pv)) w.tabs.splice(w.tabs.indexOf(pv), 1, path); else w.tabs.push(path);   // only a new preview replaces the preview
+      if (!pin) state.preview[w.id] = path;
     } else if (pin && pv === path) state.preview[w.id] = null;
     const changed = w.files.some((f) => f.path === path);
     const k = key(w, path); state.mode[k] = changed ? (state.mode[k] || 'diff') : 'edit';
     w.active = { kind: 'diff', path }; state.sel = null; state.composer = null;
     renderTabs(); renderContent(); renderPanel();
   }
+  // ---------- FIL-08: Quick Open ----------
+  function quickOpenRows(w, q) {
+    const clock = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-label="Recent"><circle cx="8" cy="8" r="5.75"/><path d="M8 4.75V8l2.25 1.5"/></svg>';
+    const all = worktreePaths(w);
+    let items;
+    if (q) items = rankPaths(w, q).map((x) => ({ p: x.p, hit: x.hit, cut: x.cut }));
+    else {
+      const recent = w.recent.filter((p) => all.includes(p));
+      const changed = w.files.filter((f) => f.status !== 'D' && !recent.includes(f.path)).map((f) => f.path);
+      const rest = all.filter((p) => !recent.includes(p) && !changed.includes(p)).sort(cmp);
+      items = [...recent, ...changed, ...rest].map((p) => ({ p, hit: new Set(), cut: p.lastIndexOf('/') + 1 }));
+    }
+    return items.map(({ p, hit, cut }) => ({
+      p,
+      html: `${matIcon(p, 14)}<span class="qn">${marked(p, hit, cut, p.length)}</span><span class="qd">${marked(p, hit, 0, Math.max(0, cut - 1))}</span><span class="qr">${(w.files.find((f) => f.path === p) ? `<span class="status-letter st-${w.files.find((f) => f.path === p).status}">${w.files.find((f) => f.path === p).status}</span>` : '')}${w.recent.includes(p) ? clock : ''}</span>`,
+    }));
+  }
+  // The panel and its field are built once, when Quick Open opens; typing and the arrows update the list in place.
+  function mountQuickOpen() {
+    win.insertAdjacentHTML('beforeend', `<div class="qo-scrim"></div><div class="qo" role="dialog" aria-label="Quick Open" data-req="FIL-08">` +
+      `<label class="qo-search">${I.search}<input id="qoInput" placeholder="Search project files…" autocomplete="off" role="combobox" aria-expanded="true" aria-label="Search project files"></label>` +
+      `<div class="qo-list" id="qoList" role="listbox"></div>` +
+      `<div class="qo-foot"><button data-qo="open">Open <kbd>↩</kbd></button><button data-qo="preview">Open as preview <kbd>⌥↩</kbd></button></div></div>`);
+    const qo = state.qo; const input = $('#qoInput'); const list = $('#qoList');
+    input.focus();
+    input.addEventListener('input', () => { qo.q = input.value; qo.sel = 0; renderQoList(); list.scrollTop = 0; });
+    input.addEventListener('keydown', (e) => {
+      const n = qo.rows.length;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); if (n) { qo.sel = (qo.sel + (e.key === 'ArrowDown' ? 1 : -1) + n) % n; markQoSel(); list.querySelector('.sel')?.scrollIntoView({ block: 'nearest' }); } }
+      if (e.key === 'Enter' && n) { e.preventDefault(); quickOpen(qo.rows[qo.sel].p, e.altKey); }
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeQuickOpen(); }
+    });
+    list.addEventListener('mousemove', (e) => { const b = e.target.closest('[data-qo-i]'); if (b && Number(b.dataset.qoI) !== qo.sel) { qo.sel = Number(b.dataset.qoI); markQoSel(); } });
+    list.addEventListener('click', (e) => { const b = e.target.closest('[data-qo-i]'); if (b) quickOpen(qo.rows[Number(b.dataset.qoI)].p, e.altKey); });
+    win.querySelector('.qo-foot').addEventListener('click', (e) => { const b = e.target.closest('[data-qo]'); if (b && qo.rows.length) quickOpen(qo.rows[qo.sel].p, b.dataset.qo === 'preview'); });
+    win.querySelector('.qo-scrim').addEventListener('mousedown', () => closeQuickOpen());
+    renderQoList();
+  }
+  function renderQoList() {
+    const qo = state.qo; const w = W(); const rows = quickOpenRows(w, qo.q); qo.rows = rows;
+    if (qo.sel >= rows.length) qo.sel = 0;
+    $('#qoList').innerHTML = rows.length ? rows.map((r, i) => `<button class="qo-row${i === qo.sel ? ' sel' : ''}" data-qo-i="${i}" role="option" aria-selected="${i === qo.sel}" title="${esc(r.p)}">${r.html}</button>`).join('') : `<div class="qo-empty">No file matches “${esc(qo.q)}”</div>`;
+    win.querySelectorAll('.qo-foot button').forEach((b) => { b.disabled = !rows.length; });
+  }
+  function markQoSel() { $('#qoList').querySelectorAll('.qo-row').forEach((r, i) => { r.classList.toggle('sel', i === state.qo.sel); r.setAttribute('aria-selected', String(i === state.qo.sel)); }); }
+  function toggleQuickOpen() { if (state.qo) closeQuickOpen(); else { state.qo = { q: '', sel: 0, rows: [] }; mountQuickOpen(); } }
+  function closeQuickOpen() { state.qo = null; win.querySelectorAll('.qo, .qo-scrim').forEach((e) => e.remove()); }
+  function quickOpen(path, asPreview) { closeQuickOpen(); openFromTree(path, !asPreview); }   // FIL-05: Return keeps the tab, ⌥Return previews
+
   function reveal(path) {
     const w = W(); const open = expandedOf(w);
     path.split('/').slice(0, -1).reduce((acc, d) => { const p = acc ? `${acc}/${d}` : d; open.add(p); return p; }, '');
@@ -1584,6 +1761,7 @@ Use /v1/providers.xml for the list.
   function renderAll() { renderSidebar(); renderTopbar(); renderTabs(); renderContent(); renderPanel(); renderSheet(); }
   function openDiff(path, mode) {
     const w = W();
+    touchRecent(w, path);
     if (!w.tabs.includes(path)) w.tabs.push(path);
     w.active = { kind: 'diff', path };
     if (mode) state.mode[key(w, path)] = mode;
@@ -1606,34 +1784,6 @@ Use /v1/providers.xml for the list.
       { label: 'Cancel', cls: 'text-btn', run: () => { state.sheet = null; renderSheet(); } },
       { label: 'Discard', cls: 'fill-btn confirm', run: () => { w.files = w.files.filter((x) => x !== f); w.tabs = w.tabs.filter((p) => p !== path); if (w.active.kind === 'diff' && w.active.path === path) w.active = { kind: 'conv', id: w.convs[0].id }; state.sheet = null; toast(`Discarded ${baseName(path)}`); renderAll(); } },
     ]);
-  }
-  async function sendComments() {
-    const w = W();
-    const pending = comments.filter((c) => c.ws === w.id && c.state === 'pending');
-    if (!pending.length || w.turn) return;
-    let text = `Review comments on ${w.branch}:\n`;
-    pending.forEach((c, i) => {
-      const lines = c.start === c.end ? `line ${c.start}` : `lines ${c.start}–${c.end}`;
-      text += `\n${i + 1}. ${c.path}, ${lines}${c.side === 'old' ? ' (removed)' : ''}\n\`\`\`ts\n${c.snippet.join('\n')}\n\`\`\`\n${c.body}\n`;
-      c.state = 'sent';
-    });
-    text += '\nAddress each comment and say what you changed for each number.';
-    const conv = w.convs[0];
-    conv.items.push(it('user', text));
-    w.active = { kind: 'conv', id: conv.id };
-    w.turn = Date.now();
-    renderAll();
-    await wait(1500);
-    const tool = it('tool', '', { icon: 'edit', label: 'Edit', file: 'src/openapi.ts', live: true });
-    conv.items.push(tool); if (W() === w && w.active.kind === 'conv') renderContent();
-    await wait(1800);
-    const f = fileOf(w, 'src/openapi.ts');
-    if (f) externalChange(w, f, f.current === OPENAPI_AGENT ? OPENAPI_V1 : OPENAPI_AGENT);
-    tool.live = false;
-    conv.items.push(it('agent', '1. `operation()` now uses `uniqueId(route)` for operationId, and adds a summary. Nothing else changed.'));
-    conv.items.push(it('footer', '', { agent: 'claude', duration: `${Math.floor((Date.now() - w.turn) / 1000)}s`, time: clock() }));
-    w.turn = null;
-    renderAll();
   }
   async function doCommit() {
     const w = W();
@@ -1660,7 +1810,7 @@ Use /v1/providers.xml for the list.
       case 'toast': toast(b.dataset.msg); break;
       case 'ptab': state.tab[w.id] = b.dataset.tab; renderPanel(); break;
       case 'hdr-action': toast(`M2.7: "${b.textContent}" (its HDR-02 and AGT actions).`); break;
-      case 'conv-tab': w.active = { kind: 'conv', id: b.dataset.conv }; renderTabs(); renderContent(); renderPanel(); break;
+      case 'conv-tab': w.active = { kind: 'conv', id: b.dataset.conv }; state.lastConv[w.id] = b.dataset.conv; renderTabs(); renderContent(); renderPanel(); break;
       case 'diff-tab': openDiff(b.dataset.path); break;
       case 'close-diff': closeDiff(b.dataset.path); break;
       case 'open-diff': openDiff(b.dataset.path); break;
@@ -1670,9 +1820,8 @@ Use /v1/providers.xml for the list.
       case 'expand': state.expanded.add(b.dataset.gap); renderContent(); break;
       case 'cancel-comment': state.composer = null; state.sel = null; renderContent(); break;
       case 'save-comment': saveComment(); break;
-      case 'edit-comment': { const c = comments.find((x) => x.id === b.dataset.cid); state.composer = { path: c.path, side: c.side, start: c.start, end: c.end, text: c.body, editing: c.id }; renderContent(); break; }
-      case 'delete-comment': { const i = comments.findIndex((x) => x.id === b.dataset.cid); comments.splice(i, 1); renderContent(); renderPanel(); break; }
-      case 'send-comments': sendComments(); break;
+      case 'send-to': openMenu(b, w.convs.map((c) => ({ label: c.title || 'New conversation', check: c.id === state.composer.to, run: () => { state.composer.to = c.id; state.composer.text = ($('#cmtInput') || {}).value || state.composer.text; renderContent(); } }))); break;
+      case 'chip': { const p = b.dataset.path; if (w.files.some((x) => x.path === p)) openDiff(p, 'diff'); else openFromTree(p, true); break; }
       case 'save': save(); break;
       case 'reload': { const f = fileOf(w, w.active.path); const k = key(w, f.path); state.buffers[k] = f.current; state.loaded[k] = f.current; state.conflict[k] = false; renderAll(); break; }
       case 'keep-mine': { const f = fileOf(w, w.active.path); const k = key(w, f.path); state.keepMine[k] = true; state.loaded[k] = f.current; state.conflict[k] = false; renderContent(); toast('Your next save overwrites the file on disk.'); break; }
@@ -1704,7 +1853,7 @@ Use /v1/providers.xml for the list.
       renderTopbar(); renderPanel();
     }
     if (e.metaKey && e.altKey && e.code === 'KeyB') { e.preventDefault(); state.panelOpen = !state.panelOpen; renderTopbar(); renderPanel(); }   // M2.7 KBD-03
-    if (e.metaKey && !e.shiftKey && !e.altKey && e.code === 'KeyP') { e.preventDefault(); const w = W(); state.panelOpen = true; state.tab[w.id] = 'files'; renderTopbar(); renderPanel(); const n = $('#fileFilter'); n.focus(); n.select(); }   // FIL-04: Go to File
+    if (e.metaKey && !e.shiftKey && !e.altKey && e.code === 'KeyP') { e.preventDefault(); toggleQuickOpen(); }   // FIL-08: Quick Open
     if (e.metaKey && e.key === 'Enter' && state.sheet && state.sheet.kind === 'commit') { e.preventDefault(); doCommit(); }
     if (e.metaKey && e.altKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
       e.preventDefault();
@@ -1730,6 +1879,7 @@ Use /v1/providers.xml for the list.
   // demo controls
   $('#demoAgentEdit').addEventListener('click', () => { const w = wsOf('w1'); const f = fileOf(w, 'src/openapi.ts'); if (!f) { toast('openapi.ts was discarded; reload the page.'); return; } externalChange(w, f, f.current === OPENAPI_AGENT ? OPENAPI_V1 : OPENAPI_AGENT); toast('The agent changed src/openapi.ts on disk.'); });
   $('#demoWorking').addEventListener('click', (e) => { const w = W(); w.turn = w.turn ? null : Date.now(); e.currentTarget.setAttribute('aria-pressed', String(Boolean(w.turn))); renderAll(); });
+  $('#demoQuickOpen').addEventListener('click', () => toggleQuickOpen());
   $('#demoPins').addEventListener('click', (e) => { e.currentTarget.setAttribute('aria-pressed', String(document.body.classList.toggle('spec-on'))); });
   document.addEventListener('click', (e) => {
     if (!document.body.classList.contains('spec-on')) return;

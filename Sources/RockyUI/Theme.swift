@@ -71,8 +71,6 @@ enum Theme {
     /// Removed diff rows: `danger` at 12 %, their number columns at 20 %.
     static let diffDeleteLine = danger.opacity(0.12)
     static let diffDeleteGutter = danger.opacity(0.20)
-    /// Hunk header rows: `accent` at 6 %.
-    static let diffHunk = accent.opacity(0.06)
     /// Lines selected for a comment (CMT-01): `accent` at 14 %, with a 3-point `accent` bar at their left edge.
     static let commentRange = accent.opacity(0.14)
     /// The editor's caret line (EDIT-01): white at 3 %.

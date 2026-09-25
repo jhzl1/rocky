@@ -80,12 +80,6 @@ struct FilesTab: View {
         }
         .onChange(of: focus == .filter, initial: true) { _, isFocused in FileFilterFocus.isFocused = isFocused }
         .onDisappear { FileFilterFocus.isFocused = false }
-        // FIL-04's Go to File, also when this tab appears for it (the panel was closed, or on another tab).
-        .onChange(of: model.goToFileRequest, initial: true) { _, request in
-            guard request == workspace.id else { return }
-            focusFilter()
-            model.goToFileHandled(workspaceId: workspace.id)
-        }
     }
 
     // MARK: Head (FIL-01, FIL-04)
@@ -116,28 +110,25 @@ struct FilesTab: View {
         .frame(height: Zoom.shared(38))
     }
 
-    /// FIL-01's field: 26 points, radius 6, `fillControl`, "Filter files", and "⌘P" at its right end; an `accent`
-    /// border while it has the keyboard. ↓ / ↑ move through the matches, Return opens one as a preview, Esc clears the
-    /// query and a second Esc leaves the field (FIL-04).
+    /// FIL-01's field: 26 points, radius 6, `fillControl`, "Filter files", no shortcut hint (⌘P is Quick Open, FIL-08);
+    /// an `accent` border while it has the keyboard. ↓ / ↑ move through the matches, Return opens one as a preview, Esc
+    /// clears the query and a second Esc leaves the field (FIL-04).
     private var filterField: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
                 .font(.rocky(11.5))
                 .foregroundStyle(Theme.textTertiary)
                 .accessibilityHidden(true)
-            TextField("Filter files", text: $query, prompt: Text("Filter files").foregroundStyle(Theme.textTertiary))
+            TextField("Filter files", text: $query, prompt: Text(verbatim: ""))
                 .textFieldStyle(.plain)
                 .font(.rocky(12.5))
+                .stablePlaceholder("Filter files", isVisible: query.isEmpty)
                 .foregroundStyle(Theme.textPrimary)
                 .focused($focus, equals: .filter)
                 .onKeyPress(.downArrow) { moveResult(by: 1) }
                 .onKeyPress(.upArrow) { moveResult(by: -1) }
                 .onSubmit(openResult)
                 .onExitCommand(perform: escape)
-            Text(verbatim: "⌘P")
-                .font(.rocky(11))
-                .foregroundStyle(Theme.textTertiary)
-                .accessibilityHidden(true)
         }
         .padding(.horizontal, 8)
         .frame(height: Zoom.shared(26))
@@ -149,16 +140,6 @@ struct FilesTab: View {
                 .allowsHitTesting(false)
         }
         .animation(Theme.Motion.hover, value: focus == .filter)
-    }
-
-    /// Go to File: the field takes the keyboard and its text is selected, so typing replaces the last query.
-    private func focusFilter() {
-        // On the next turn of the main actor, once the field is in the window: the tab may have just appeared.
-        Task { @MainActor in
-            focus = .filter
-            try? await Task.sleep(for: .milliseconds(20))
-            NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
-        }
     }
 
     private func escape() {
@@ -367,7 +348,8 @@ struct FilesTab: View {
 
 /// FIL-02's marks from Changes: each changed file's status letter, and for each folder the number of changed files
 /// it holds (its dot, and "2 changed files" for VoiceOver). A deleted file is not in the tree, so it marks nothing.
-private struct FileMarks {
+/// Quick Open's rows take their letters from it too (FIL-08).
+struct FileMarks {
     var statuses: [String: FileDiff.Status] = [:]
     var folders: [String: Int] = [:]
 
@@ -382,9 +364,9 @@ private struct FileMarks {
 }
 
 /// FIL-02's row: 26 points, radius 6, indented 12 points per level from an 8-point inset. A folder's 12-point chevron
-/// turns 90° in `Theme.Motion.hover` (at once with Reduce Motion); then the 14-point icon, the name (13, cut at its
-/// end), and at the right end the file's status letter or, for a folder holding changed files, a 5-point
-/// `textSecondary` dot. Hover `fillHover`; the file whose tab shows `fillSelected`; the keyboard's row ringed in
+/// turns 90° in `Theme.Motion.hover` (at once with Reduce Motion); then the 14-point icon (`FileTreeIcon`: the blue
+/// folder, or the file's Material icon, FIL-09), the name (13, cut at its end), and at the right end the file's status
+/// letter or, for a folder holding changed files, a 5-point `textSecondary` dot. Hover `fillHover`; the file whose tab shows `fillSelected`; the keyboard's row ringed in
 /// `accent`. An ignored entry is dimmed: its name in `textTertiary`, its icon at 50 % (FIL-03).
 private struct FileTreeRowView: View {
     let row: FileTreeRow
@@ -411,7 +393,7 @@ private struct FileTreeRowView: View {
                     .animation(reduceMotion ? nil : Theme.Motion.hover, value: row.isExpanded)
                     .frame(width: Zoom.shared(12))
             }
-            FileTreeIcon(name: row.name, isDirectory: row.isDirectory)
+            FileTreeIcon(path: row.path, isDirectory: row.isDirectory)
                 .opacity(row.isIgnored ? 0.5 : 1)
             Text(verbatim: row.name)
                 .font(.rocky(13))
@@ -469,7 +451,7 @@ private struct FileTreeRowView: View {
 
 /// FIL-04's match row: the icon, the name and the folder with the matched characters in `accent`, and the status
 /// letter; the cursor's row ringed in `accent`. A click opens the preview, a double-click keeps it (FIL-05).
-private struct FileMatchRow: View {
+struct FileMatchRow: View {
     let path: String
     let query: String
     let status: FileDiff.Status?
@@ -481,7 +463,7 @@ private struct FileMatchRow: View {
         let nameStart = path.lastIndex(of: "/").map { path.index(after: $0) } ?? path.startIndex
         let matches = FileTree.matches(query, in: path)
         HStack(spacing: 6) {
-            FileTreeIcon(name: String(path[nameStart...]), isDirectory: false)
+            FileTreeIcon(path: path, isDirectory: false)
             Text(Self.highlighted(path, nameStart..<path.endIndex, matches: matches))
                 .font(.rocky(13))
                 .foregroundStyle(Theme.textPrimary)
@@ -517,8 +499,8 @@ private struct FileMatchRow: View {
         .accessibilityAction { click(1) }
     }
 
-    /// `path[range]`, its characters inside `matches` in `accent`.
-    private static func highlighted(_ path: String, _ range: Range<String.Index>, matches: [Range<String.Index>]) -> AttributedString {
+    /// `path[range]`, its characters inside `matches` in `accent`. Quick Open's rows draw theirs with it (FIL-08).
+    static func highlighted(_ path: String, _ range: Range<String.Index>, matches: [Range<String.Index>]) -> AttributedString {
         var text = AttributedString()
         var position = range.lowerBound
         for match in matches {
@@ -536,19 +518,24 @@ private struct FileMatchRow: View {
     }
 }
 
-/// A tree or match row's 14-point icon: `folder.fill` in the folder color, else the file's kind from its name
-/// (`FileKind(path:isDirectory:)`, no disk), as badges and file tabs draw it.
-private struct FileTreeIcon: View {
-    let name: String
+/// A tree, match or Quick Open row's 14-point icon: `folder.fill` in the folder color (FIL-02), else the file's
+/// Material icon (`FileIcon`, FIL-09), which takes the worktree-relative path for the theme's path tails and the
+/// workflow rule. Neither reads the disk.
+struct FileTreeIcon: View {
+    /// Worktree-relative.
+    let path: String
     let isDirectory: Bool
 
     var body: some View {
-        let kind = FileKind(path: name, isDirectory: isDirectory)
-        Image(systemName: kind.symbol)
-            .font(.rocky(11))
-            .foregroundStyle(kind.color)
-            .frame(width: Zoom.shared(14))
-            .accessibilityHidden(true)
+        if isDirectory {
+            Image(systemName: FileKind.folder.symbol)
+                .font(.rocky(11))
+                .foregroundStyle(FileKind.folder.color)
+                .frame(width: Zoom.shared(14))
+                .accessibilityHidden(true)
+        } else {
+            FileIcon(path: path, size: 14)
+        }
     }
 }
 

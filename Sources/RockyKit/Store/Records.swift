@@ -222,74 +222,6 @@ public struct ChatSessionRecord: Codable, Sendable, Equatable, Identifiable, Fet
     }
 }
 
-/// A review comment on a range of a diff tab's lines (`CMT-03`), which the user sends to the agent (`CMT-05`). It goes
-/// with its workspace.
-public struct DiffCommentRecord: Codable, Sendable, Equatable, Identifiable, FetchableRecord, PersistableRecord {
-    public static let databaseTableName = "diffComment"
-
-    /// The side of the diff a comment's lines are on (`CMT-01`): the worktree file's lines, which added and context rows
-    /// show, or the base's, which removed rows show. A range never mixes them.
-    public enum Side: String, Codable, Sendable, DatabaseValueConvertible {
-        case new, old
-    }
-
-    /// `CMT-02`'s chips. A pending comment waits for Send to agent; an outdated one lost its lines (`CMT-04`).
-    public enum State: String, Codable, Sendable, DatabaseValueConvertible {
-        case pending, sent, outdated
-    }
-
-    public var id: String
-    public var workspaceId: String
-    /// Worktree-relative, like the diff tab's path.
-    public var path: String
-    public var side: Side
-    /// 1-based and inclusive, numbered on `side`. `CommentAnchor` moves them as the worktree file changes (`CMT-04`);
-    /// an outdated comment keeps its last ones.
-    public var startLine: Int
-    public var endLine: Int
-    /// The commented lines as they were when the comment was written: what `CommentAnchor` looks for after each change,
-    /// and the code block of the review prompt. A CRLF file's lines keep their `\r`, as the diff's do.
-    public var snippet: [String]
-    /// Up to `CommentAnchor.contextLineCount` lines above and below the snippet, kept with it (`CMT-03`).
-    public var contextBefore: [String]
-    public var contextAfter: [String]
-    public var body: String
-    public var state: State
-    public var createdAt: Date
-    /// When Send to agent sent it; nil while it has not been sent.
-    public var sentAt: Date?
-
-    public init(
-        id: String = UUID().uuidString,
-        workspaceId: String,
-        path: String,
-        side: Side,
-        startLine: Int,
-        endLine: Int,
-        snippet: [String],
-        contextBefore: [String] = [],
-        contextAfter: [String] = [],
-        body: String,
-        state: State = .pending,
-        createdAt: Date = Date(),
-        sentAt: Date? = nil
-    ) {
-        self.id = id
-        self.workspaceId = workspaceId
-        self.path = path
-        self.side = side
-        self.startLine = startLine
-        self.endLine = endLine
-        self.snippet = snippet
-        self.contextBefore = contextBefore
-        self.contextAfter = contextAfter
-        self.body = body
-        self.state = state
-        self.createdAt = createdAt
-        self.sentAt = sentAt
-    }
-}
-
 public struct ChatMessageRecord: Codable, Sendable, Equatable, Identifiable, FetchableRecord, PersistableRecord {
     public static let databaseTableName = "chatMessage"
 
@@ -305,6 +237,10 @@ public struct ChatMessageRecord: Codable, Sendable, Equatable, Identifiable, Fet
     public var createdAt: Date
     /// A user message's turn end; see `ChatItem.completedAt`.
     public var completedAt: Date?
+    /// A tool call's added and removed lines (`DIFF-06`), both set or both nil; see `ChatItem.diffStat`. nil for rows
+    /// saved before v13.
+    public var additions: Int?
+    public var deletions: Int?
 
     public init(
         id: String,
@@ -316,7 +252,9 @@ public struct ChatMessageRecord: Codable, Sendable, Equatable, Identifiable, Fet
         attachments: [String]? = nil,
         toolKind: String? = nil,
         createdAt: Date = Date(),
-        completedAt: Date? = nil
+        completedAt: Date? = nil,
+        additions: Int? = nil,
+        deletions: Int? = nil
     ) {
         self.id = id
         self.sessionId = sessionId
@@ -328,5 +266,7 @@ public struct ChatMessageRecord: Codable, Sendable, Equatable, Identifiable, Fet
         self.toolKind = toolKind
         self.createdAt = createdAt
         self.completedAt = completedAt
+        self.additions = additions
+        self.deletions = deletions
     }
 }

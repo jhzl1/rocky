@@ -45,15 +45,6 @@ struct ChangesTab: View {
                 }
             }
             .frame(maxHeight: .infinity)
-            // CMT-05: pinned under the list while comments wait to be sent, whether or not the diff is read.
-            let ready = model.readyComments(workspaceId: workspace.id).count
-            if ready > 0 {
-                ReviewBar(count: ready, disabledReason: model.agentActionAvailability(workspaceId: workspace.id).reason) {
-                    let model = self.model
-                    let workspaceId = workspace.id
-                    Task { await model.sendReview(workspaceId: workspaceId) }
-                }
-            }
         }
         .confirmationDialog(
             discardRequest?.title ?? "",
@@ -113,7 +104,6 @@ struct ChangesTab: View {
     private func row(_ file: FileDiff, isSelected: Bool) -> some View {
         ChangedFileRow(
             file: file,
-            commentCount: model.comments(onFile: file.path, workspaceId: workspace.id).count,
             isSelected: isSelected,
             // CHG-03: the click selects the file's diff tab as it was left; Edit opens it on the editor (EDIT-01).
             open: { model.openDiff(workspaceId: workspace.id, path: file.path) },
@@ -208,12 +198,12 @@ private struct ChangesSectionHeader: View {
     }
 }
 
-/// CHG-03's row: 28 points, radius 7; the status letter, the name (13), its folder (11 `textTertiary`, cut at its
-/// start), then the comment count (a bubble and n, 11 mono `textSecondary`, when the file has comments) and `+a −d`. On
-/// hover, Edit and, for uncommitted files, Discard take the counts' place. Selected, its tab on screen: `fillSelected`.
+/// CHG-03's row: 28 points, radius 7; the status letter, the file's Material icon (FIL-09, 14 points), the name (13),
+/// its folder (11 `textTertiary`, cut at its start), then `+a −d`. On hover, Edit and, for uncommitted files, Discard
+/// take its place. Selected, its tab on screen: `fillSelected`. Comments go to a conversation as they are written
+/// (CMT-05), so a row counts none.
 private struct ChangedFileRow: View {
     let file: FileDiff
-    let commentCount: Int
     let isSelected: Bool
     let open: () -> Void
     let edit: () -> Void
@@ -222,7 +212,7 @@ private struct ChangedFileRow: View {
 
     private var canEdit: Bool { file.status != .deleted }
 
-    /// The counts stay while there is no action to take their place.
+    /// `+a −d` stays while there is no action to take its place.
     private var showsActions: Bool { hovering && (canEdit || file.isUncommitted) }
 
     private var name: String { (file.path as NSString).lastPathComponent }
@@ -237,6 +227,7 @@ private struct ChangedFileRow: View {
         Button(action: open) {
             HStack(spacing: 8) {
                 ChangeStatusLetter(status: file.status)
+                FileIcon(path: file.path, size: 14)
                 Text(verbatim: name)
                     .font(.rocky(13))
                     .foregroundStyle(Theme.textPrimary)
@@ -248,13 +239,8 @@ private struct ChangedFileRow: View {
                     .lineLimit(1)
                     .truncationMode(.head)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                HStack(spacing: 8) {
-                    if commentCount > 0 {
-                        CommentCountLabel(count: commentCount)
-                    }
-                    DiffStatLabel(stat: DiffStat(additions: file.additions, deletions: file.deletions))
-                }
-                .opacity(showsActions ? 0 : 1)
+                DiffStatLabel(stat: DiffStat(additions: file.additions, deletions: file.deletions))
+                    .opacity(showsActions ? 0 : 1)
             }
             .padding(.horizontal, 8)
             .frame(height: Zoom.shared(28))
@@ -272,7 +258,7 @@ private struct ChangedFileRow: View {
         .onHover { inside in withAnimation(Theme.Motion.hover) { hovering = inside } }
         .help(tooltip)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(name), \(file.status.accessibilityName)\(folder.isEmpty ? "" : ", in \(folder)")\(commentText)")
+        .accessibilityLabel("\(name), \(file.status.accessibilityName)\(folder.isEmpty ? "" : ", in \(folder)")")
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction(.default, open)
         .accessibilityActions {
@@ -305,61 +291,6 @@ private struct ChangedFileRow: View {
     private var tooltip: String {
         if let oldPath = file.oldPath { return "\(oldPath) → \(file.path)" }
         return file.path
-    }
-
-    private var commentText: String {
-        switch commentCount {
-        case 0: ""
-        case 1: ", 1 comment"
-        default: ", \(commentCount) comments"
-        }
-    }
-}
-
-/// CHG-03's comment count: a speech bubble and the number, 11 mono `textSecondary`.
-private struct CommentCountLabel: View {
-    let count: Int
-
-    var body: some View {
-        HStack(spacing: 3) {
-            Image(systemName: "bubble.left")
-                .font(.rocky(10))
-            Text(verbatim: "\(count)")
-                .font(.rocky(11, design: .monospaced))
-                .monospacedDigit()
-        }
-        .foregroundStyle(Theme.textSecondary)
-        .fixedSize()
-        .accessibilityHidden(true)
-    }
-}
-
-/// CMT-05's comments bar, pinned at the bottom of the tab while comments wait: "2 comments ready" (12.5
-/// `textSecondary`) and Send to agent (white filled), disabled with AGT-00's reason ("The agent is working") while the
-/// selected conversation cannot take a prompt. A hairline above it.
-private struct ReviewBar: View {
-    let count: Int
-    let disabledReason: String?
-    let send: () -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Rectangle().fill(Theme.hairline).frame(height: 1)
-            HStack(spacing: 8) {
-                Text(verbatim: count == 1 ? "1 comment ready" : "\(count) comments ready")
-                    .font(.rocky(12.5))
-                    .foregroundStyle(Theme.textSecondary)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-                Button("Send to agent", action: send)
-                    .font(.rocky(12.5, weight: .medium))
-                    .buttonStyle(RockyPrimaryButtonStyle())
-                    .disabled(disabledReason != nil)
-                    .optionalHelp(disabledReason)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-        }
     }
 }
 

@@ -14,6 +14,9 @@ struct ChatView: View {
     var commandsConfirmed = false
     /// The conversation's embedded terminal, for Claude Code's terminal commands (CMD-08).
     let terminal: EmbeddedTerminalHost
+    /// A message sent with a line chip, as its comment again, its block read from the lines as they are now
+    /// (`AppModel.lineComment(for:comment:files:workspaceId:)`, CMT-05 Resend).
+    let lineComment: @MainActor (LineRangeAttachment, String, [URL]) async -> LineComment
     @State private var composerText = ComposerController()
     /// CMD-08's strip over the message box. In this view only, as in Conductor: nothing is stored.
     @State private var terminalCommand: TerminalCommandState?
@@ -43,13 +46,15 @@ struct ChatView: View {
         chat: ChatSessionModel,
         isActive: Bool = true,
         commands: (commands: [SlashCommand], confirmed: Bool) = ([], false),
-        terminal: EmbeddedTerminalHost
+        terminal: EmbeddedTerminalHost,
+        lineComment: @escaping @MainActor (LineRangeAttachment, String, [URL]) async -> LineComment
     ) {
         self.chat = chat
         self.isActive = isActive
         self.commands = commands.commands
         self.commandsConfirmed = commands.confirmed
         self.terminal = terminal
+        self.lineComment = lineComment
         // Before the first frame: a conversation that opens (or a tab or workspace switched to) never animates.
         _settledKeys = State(initialValue: Set(ChatLayout.rows(chat.items).map(\.entranceKey)))
     }
@@ -87,7 +92,7 @@ struct ChatView: View {
                                     QueuedMessageRow(
                                         message: message,
                                         isAgentWorking: chat.state == .running,
-                                        canEdit: !composerText.hasContent,
+                                        canEdit: !composerText.hasContent && !composerText.hasLineChip,
                                         onSendNow: { Task { await chat.sendQueuedNow(id: message.id) } },
                                         onEdit: { edit(message) },
                                         onDelete: { chat.removeQueued(id: message.id) }
@@ -270,7 +275,8 @@ struct ChatView: View {
             ComposerEditor(
                 controller: composerText,
                 zoom: Zoom.shared.scale,
-                history: chat.items.filter { $0.kind == .user }.map { MessageHistory.Entry(text: $0.text, files: $0.attachments) },
+                // CMT-05 History: a line comment comes back with its chip.
+                history: MessageHistory.entries(from: chat.items),
                 onSubmit: send,
                 onBacktab: { Task { await chat.setPlanMode(!chat.isPlanMode) } },
                 openFile: openFile
@@ -329,6 +335,11 @@ struct ChatView: View {
         guard canSend else { return }
         // The box empties, files included, also for a terminal command.
         let message = composerText.takeMessage()
+        // CMT-05 Resend: with its chip, the message is a line comment again. Its text is the comment, never a command.
+        if let range = message.lineRange {
+            resend(range, comment: message.text, files: message.files)
+            return
+        }
         // CMD-08: one of Claude Code's terminal commands never reaches the agent, idle, starting or working, and is
         // never queued; the strip offers the embedded terminal instead. A pick in the popup comes through here too.
         if let command = chat.terminalCommand(in: message.text) {
@@ -340,6 +351,17 @@ struct ChatView: View {
             chat.enqueue(message.text, attachments: message.files)
         } else {
             Task { await chat.send(message.text, attachments: message.files) }
+        }
+    }
+
+    /// CMT-05 Resend: the comment goes as the comment box's do, its block built now from the chip's lines; while the
+    /// agent works it waits in the queue with its chip (`ChatSessionModel.send(_:)`).
+    private func resend(_ range: LineRangeAttachment, comment: String, files: [URL]) {
+        let chat = self.chat
+        let build = lineComment
+        Task {
+            let built = await build(range, comment, files)
+            await chat.send(built)
         }
     }
 
@@ -403,16 +425,21 @@ struct ChatView: View {
         terminalCommand = TerminalCommandState(command: command, stage: session.state.isRunning ? .running : .done)
     }
 
-    /// Takes a queued message back into the empty message box.
+    /// Takes a queued message back into the empty message box. A line comment comes back with its chip, as ↑ brings
+    /// one, and without the code it was queued with: the next Send reads the lines again (CMT-05 Running, designer's
+    /// update, 2026-09-25).
     private func edit(_ message: QueuedMessage) {
-        guard !composerText.hasContent, chat.removeQueued(id: message.id) != nil else { return }
-        composerText.load(text: message.text, files: message.attachments.map(\.path))
+        guard !composerText.hasContent, !composerText.hasLineChip, chat.removeQueued(id: message.id) != nil else { return }
+        composerText.load(text: message.text, files: message.attachments.map(\.path), lineRange: message.lineComment?.range)
         composerText.focus()
     }
 
     /// Esc stops the agent's turn, as in Claude Code; ⌘U attaches files. The message box handles its own keys
     /// (`ComposerTextView`).
     private func handleKey(_ event: NSEvent) -> NSEvent? {
+        // Quick Open takes Esc and the arrows while it shows, and ⌘U attaches nothing behind it (FIL-08). Its state is
+        // read from its presenter, a reference, at the key's time.
+        if QuickOpenPresenter.shared.isShown { return event }
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         guard liveActive.value, let window = event.window, window.isKeyWindow else { return event }
         // A sheet (a permission request, an alert, the commit sheet, GIT-04) types in a window of its own, whose parent
@@ -429,8 +456,8 @@ struct ChatView: View {
         // The All files filter with the keyboard gets its keys too: its Esc clears the query, then leaves the field,
         // and never stops the agent's turn (FIL-04). Its focus is read through a reference, at the key's time.
         if FileFilterFocus.hasKeyboard(in: window) { return event }
-        // A diff comment's composer with the keyboard gets its keys too: its Esc closes it, or asks first with text
-        // (CMT-02). KBD-02's order for Esc: an open menu, the settings, a sheet, the composer, the filter, then the turn.
+        // A diff's comment box with the keyboard gets its keys too: its Esc closes it, or asks first with text (CMT-02).
+        // KBD-02's order for Esc: an open menu, the settings, a sheet, the comment box, the filter, then the turn.
         if CommentComposerFocus.hasKeyboard(in: window) { return event }
         // An open menu, the settings, a repository's settings, sheets (a permission request, an alert) and the slash
         // command popup keep Esc for closing themselves (CMD-03). The popup's state is read from the controller, a
@@ -467,8 +494,8 @@ private final class LiveFlag {
 
 /// A new chat row fading in while it rises 6 points, 220 ms (MOT-02); with Reduce Motion it only fades, 150 ms.
 /// `settle` records the row as seen as the animation starts, so it never plays twice for that row, even when a lone
-/// tool call becomes a group. The embedded terminal (CMD-08) enters the same way.
-private struct Entrance: ViewModifier {
+/// tool call becomes a group. The embedded terminal (CMD-08) and a new conversation's tab (CNV-01) enter the same way.
+struct Entrance: ViewModifier {
     let isNew: Bool
     let settle: () -> Void
     @State private var shown: Bool

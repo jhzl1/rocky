@@ -35,8 +35,8 @@ struct PullRequestHeaderTests {
         PullRequestCheck(name: name, state: state, url: url.flatMap { URL(string: $0) })
     }
 
-    private func state(_ pr: PullRequestInfo?, _ local: LocalGitStatus?, working: Bool = false) -> HeaderState {
-        PullRequestHeader.state(pr: pr, local: local, agentWorking: working)
+    private func state(_ pr: PullRequestInfo?, _ local: LocalGitStatus?) -> HeaderState {
+        PullRequestHeader.state(pr: pr, local: local)
     }
 
     private func label(_ state: HeaderState, _ pr: PullRequestInfo?, _ local: LocalGitStatus?) -> String {
@@ -46,13 +46,13 @@ struct PullRequestHeaderTests {
     // MARK: One per row
 
     @Test func merged() {
-        #expect(state(pr(isMerged: true, mergeStateStatus: "DIRTY"), clean, working: true) == .merged)
+        #expect(state(pr(isMerged: true, mergeStateStatus: "DIRTY"), clean) == .merged)
         #expect(PullRequestHeader.presentation(.merged, pr: pr(isMerged: true), local: clean)
             == HeaderPresentation(group: .merged, label: "Merged", action: .archive))
     }
 
     @Test func queuedToMerge() {
-        #expect(state(pr(mergeQueueState: "QUEUED"), clean, working: true) == .queuedToMerge)
+        #expect(state(pr(mergeQueueState: "QUEUED"), clean) == .queuedToMerge)
         let labels = ["AWAITING_CHECKS", "UNMERGEABLE", "LOCKED", "QUEUED", "MERGEABLE"].map { queue in
             PullRequestHeader.presentation(.queuedToMerge, pr: pr(mergeQueueState: queue), local: clean)
         }
@@ -64,13 +64,6 @@ struct PullRequestHeaderTests {
         var auto = pr()
         auto.autoMergeEnabled = true
         #expect(state(auto, clean) == .readyToMerge)
-    }
-
-    @Test func working() {
-        #expect(state(pr(mergeStateStatus: "DIRTY"), clean, working: true) == .working)
-        #expect(state(nil, clean, working: true) == .working)
-        #expect(PullRequestHeader.presentation(.working, pr: nil, local: clean)
-            == HeaderPresentation(group: .loading, label: "Working…", spins: true))
     }
 
     @Test func createPRWithChangesElseNoChangesYet() {

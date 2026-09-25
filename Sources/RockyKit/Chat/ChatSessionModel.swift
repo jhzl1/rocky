@@ -13,13 +13,18 @@ public struct ChatItem: Identifiable, Equatable, Sendable {
     public var text: String
     public var status: String?
     /// Files shown as badges: what the user attached to a message, or what a tool call reads or edits. A user
-    /// message's `text` marks where each one sits with `PromptAttachment.marker`, in this order.
+    /// message's `text` marks where each one sits with `PromptAttachment.marker`, in this order. A line comment's first
+    /// entry is its range instead (`lineRange`, `CMT-05`), drawn as its chip; its files follow it.
     public var attachments: [String]
     /// A tool call's ACP kind (read, edit, execute, search, think…), which picks its icon.
     public var toolKind: String?
     public let createdAt: Date
     /// Set on a user message when the agent finishes the turn it started (the reply footer's duration and time).
     public var completedAt: Date?
+    /// `DIFF-06`: the lines a completed tool call added and removed, from the `diff` entries of its latest content
+    /// (`ToolDiffStats.count`). nil while it runs, when it failed or was rejected, when its content holds no diff or
+    /// one that cannot be counted, and on rows saved before the counts were stored. `files` stays 0.
+    public var diffStat: DiffStat?
 
     public init(
         id: UUID = UUID(),
@@ -29,7 +34,8 @@ public struct ChatItem: Identifiable, Equatable, Sendable {
         attachments: [String] = [],
         toolKind: String? = nil,
         createdAt: Date = Date(),
-        completedAt: Date? = nil
+        completedAt: Date? = nil,
+        diffStat: DiffStat? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -39,6 +45,7 @@ public struct ChatItem: Identifiable, Equatable, Sendable {
         self.toolKind = toolKind
         self.createdAt = createdAt
         self.completedAt = completedAt
+        self.diffStat = diffStat
     }
 }
 
@@ -58,6 +65,26 @@ public struct QueuedMessage: Identifiable, Sendable, Equatable {
     public let id: UUID
     public let text: String
     public let attachments: [URL]
+    /// A comment on a diff's lines (`CMT-05`), whose `text` is the comment and `attachments` its files: its row shows
+    /// the chip over them, and it goes out as the prompt built when it was written. nil for a typed message.
+    public let lineComment: LineComment?
+
+    init(text: String, attachments: [URL] = [], lineComment: LineComment? = nil) {
+        self.id = UUID()
+        self.text = text
+        self.attachments = attachments
+        self.lineComment = lineComment
+    }
+
+    fileprivate var outgoing: OutgoingMessage {
+        lineComment.map(OutgoingMessage.lineComment) ?? .message(text, files: attachments)
+    }
+}
+
+/// What `ChatSessionModel` sends: a typed message and its files, or a line comment (`CMT-05`).
+private enum OutgoingMessage {
+    case message(String, files: [URL])
+    case lineComment(LineComment)
 }
 
 /// One agent session in one workspace: starts the ACP process, streams its updates into `items`,
@@ -129,6 +156,16 @@ public final class ChatSessionModel {
     @ObservationIgnored private var openTextItem: UUID?
     @ObservationIgnored private var toolItems: [String: UUID] = [:]
     @ObservationIgnored private var turnItems: [UUID] = []
+    /// From a turn's start until it saves `turnItems`, as it ends. A tool call's counts that land before then go with
+    /// them: saving the call earlier would give it its place in the transcript before the items ahead of it.
+    @ObservationIgnored private var isTurnUnsaved = false
+    /// `DIFF-06`: the latest `diff` entries of each tool call that has not completed, counted when it does. A turn
+    /// that ends drops the entries of the calls that never completed.
+    @ObservationIgnored private var pendingDiffs: [UUID: [ToolCallDiff]] = [:]
+    /// `DIFF-06`: the count each tool call waits for, by serial. A later update replaces or removes it, and a count that
+    /// ends after that is dropped.
+    @ObservationIgnored private var diffCounts: [UUID: Int] = [:]
+    @ObservationIgnored private var lastDiffCount = 0
     @ObservationIgnored private var permissionContinuation: CheckedContinuation<String?, Never>?
     @ObservationIgnored private var questionContinuation: CheckedContinuation<AgentQuestionAnswer, Never>?
     /// The mode plan mode was switched on from, so switching it off goes back there.
@@ -315,10 +352,35 @@ public final class ChatSessionModel {
     /// A terminal command (CMD-08) never goes out: see `terminalCommand(in:)`.
     public func send(_ text: String, attachments: [URL] = []) async {
         guard terminalCommand(in: text) == nil else { return }
+        await deliver(.message(text, files: attachments))
+    }
+
+    /// `CMT-05`: a comment on a diff's lines, first starting the agent if needed. The transcript keeps the comment and
+    /// its range's entry, the chip; the agent gets `comment.prompt` as one text block, with a `resource_link` only for
+    /// each file attached next to the chip, after it. A turn that started since the caller looked, or while the agent
+    /// started, queues it instead, so it is never lost. Its text is a comment, never a command (CMD-08).
+    public func send(_ comment: LineComment) async {
+        guard state != .running else { return enqueue(comment) }
+        await deliver(.lineComment(comment))
+    }
+
+    private func deliver(_ outgoing: OutgoingMessage) async {
         if state == .idle || state == .starting { await start() }
+        if state == .running, case .lineComment(let comment) = outgoing { return enqueue(comment) }
         guard state == .ready, let connection, let sessionId else { return }
-        let promptAttachments = attachments.map { PromptAttachment.make(for: $0, imagesAllowed: capabilities.promptImages) }
-        let userItem = ChatItem(kind: .user, text: text, attachments: attachments.map(\.path))
+        let userItem: ChatItem
+        let prompt: JSONValue
+        switch outgoing {
+        case .message(let text, let files):
+            let promptAttachments = files.map { PromptAttachment.make(for: $0, imagesAllowed: capabilities.promptImages) }
+            userItem = ChatItem(kind: .user, text: text, attachments: files.map(\.path))
+            prompt = ACPProtocol.promptParams(sessionId: sessionId, text: text, attachments: promptAttachments)
+        case .lineComment(let comment):
+            // Files attached next to the chip (CMT-05's Resend) go as links after the block, like a message's.
+            let files = comment.files.map { PromptAttachment.make(for: $0, imagesAllowed: capabilities.promptImages) }
+            userItem = ChatItem(kind: .user, text: comment.text, attachments: [comment.range.entry] + comment.files.map(\.path))
+            prompt = ACPProtocol.promptParams(sessionId: sessionId, text: "", attachments: [.text(comment.prompt)] + files)
+        }
         items.append(userItem)
         onPersist(userItem)
         state = .running
@@ -328,11 +390,9 @@ public final class ChatSessionModel {
         turnStartedAt = userItem.createdAt
         openTextItem = nil
         turnItems = []
+        isTurnUnsaved = true
         do {
-            _ = try await connection.call(
-                "session/prompt",
-                ACPProtocol.promptParams(sessionId: sessionId, text: text, attachments: promptAttachments)
-            )
+            _ = try await connection.call("session/prompt", prompt)
             flush()
             if interrupted { appendTurnItem(Self.interruptedItem()) }
             endTurn()
@@ -350,6 +410,9 @@ public final class ChatSessionModel {
         for id in turnItems {
             if let item = items.first(where: { $0.id == id }) { onPersist(item) }
         }
+        isTurnUnsaved = false
+        // A call still pending after its turn never completes.
+        pendingDiffs.removeAll()
         if let index = items.firstIndex(where: { $0.id == userItem.id }) {
             items[index].completedAt = Date()
             onPersist(items[index])
@@ -374,7 +437,12 @@ public final class ChatSessionModel {
     /// Keeps a message for when the agent's turn ends. A terminal command (CMD-08) is never queued.
     public func enqueue(_ text: String, attachments: [URL] = []) {
         guard terminalCommand(in: text) == nil else { return }
-        queue.append(QueuedMessage(id: UUID(), text: text, attachments: attachments))
+        queue.append(QueuedMessage(text: text, attachments: attachments))
+    }
+
+    /// `CMT-05`: a line comment kept for when the turn ends, with the prompt it was written with.
+    public func enqueue(_ comment: LineComment) {
+        queue.append(QueuedMessage(text: comment.text, attachments: comment.files, lineComment: comment))
     }
 
     /// The Claude Code terminal command a message runs (CMD-08), which the message box turns into the embedded
@@ -402,7 +470,7 @@ public final class ChatSessionModel {
             return
         }
         if case .stopped = state { await start() }
-        await send(message.text, attachments: message.attachments)
+        await deliver(message.outgoing)
     }
 
     /// The queue's next message, once `send` has finished the turn before it. A message the user sent in between
@@ -412,7 +480,7 @@ public final class ChatSessionModel {
             queue.insert(message, at: 0)
             return
         }
-        await send(message.text, attachments: message.attachments)
+        await deliver(message.outgoing)
     }
 
     public func answerPermission(optionId: String?) {
@@ -477,16 +545,18 @@ public final class ChatSessionModel {
             appendText(text, kind: .agent)
         case .agentThought(let text):
             appendText(text, kind: .thought)
-        case let .toolCall(id, title, status, kind, paths):
+        case let .toolCall(id, title, status, kind, paths, diffs):
             let item = ChatItem(kind: .tool, text: title, status: status, attachments: paths, toolKind: kind)
             toolItems[id] = item.id
             appendTurnItem(item)
-        case let .toolCallUpdate(id, status, title, kind, paths):
+            updateDiffStat(at: items.count - 1, diffs: diffs)
+        case let .toolCallUpdate(id, status, title, kind, paths, diffs):
             guard let itemId = toolItems[id], let index = items.firstIndex(where: { $0.id == itemId }) else { return }
             if let status { items[index].status = status }
             if let title { items[index].text = title }
             if let kind { items[index].toolKind = kind }
             if let paths { items[index].attachments = paths }
+            updateDiffStat(at: index, diffs: diffs)
         case .configOptions(let options):
             if !options.isEmpty { configOptions = options }
         case .currentMode(let mode):
@@ -514,6 +584,53 @@ public final class ChatSessionModel {
         openTextItem = nil
         items.append(item)
         turnItems.append(item.id)
+    }
+
+    // MARK: Line counts (DIFF-06)
+
+    /// A tool call's counts are those of its latest `diff` entries, and only while it is completed. An update with
+    /// `content` replaces the entries, as ACP replaces the content, and one without keeps them: Claude's first
+    /// `tool_call` carries an optimistic diff (a Write reads as a new file), and the update after the tool ran brings
+    /// the real hunks. A call pending, in progress, failed or rejected shows none, since the file has not changed.
+    private func updateDiffStat(at index: Int, diffs: [ToolCallDiff]?) {
+        let itemId = items[index].id
+        if let diffs { pendingDiffs[itemId] = diffs }
+        guard items[index].status == "completed" else {
+            // A count still running belongs to a completion this update takes back.
+            diffCounts[itemId] = nil
+            if items[index].diffStat != nil { items[index].diffStat = nil }
+            if items[index].status == "failed" { pendingDiffs[itemId] = nil }
+            return
+        }
+        // Completed, and no entries since the last count: its counts stand.
+        guard let latest = pendingDiffs.removeValue(forKey: itemId) else { return }
+        guard !latest.isEmpty else {
+            diffCounts[itemId] = nil
+            return setDiffStat(nil, of: itemId)
+        }
+        count(latest, for: itemId)
+    }
+
+    /// Counts off the main actor, as the All files filter ranks: a line diff of up to `ToolDiffStats.lineDiffLimit`
+    /// lines is CPU work.
+    private func count(_ diffs: [ToolCallDiff], for itemId: UUID) {
+        lastDiffCount += 1
+        let serial = lastDiffCount
+        diffCounts[itemId] = serial
+        Task { [weak self] in
+            let stat = await Task.detached(priority: .userInitiated) { ToolDiffStats.count(diffs) }.value
+            guard let self, self.diffCounts[itemId] == serial else { return }
+            self.diffCounts[itemId] = nil
+            self.setDiffStat(stat, of: itemId)
+        }
+    }
+
+    /// A turn saves its items when it ends, so only a call saved already is saved again: a count can land after its
+    /// turn ended.
+    private func setDiffStat(_ stat: DiffStat?, of itemId: UUID) {
+        guard let index = items.firstIndex(where: { $0.id == itemId }), items[index].diffStat != stat else { return }
+        items[index].diffStat = stat
+        if !(isTurnUnsaved && turnItems.contains(itemId)) { onPersist(items[index]) }
     }
 
     public func answerQuestion(_ answer: AgentQuestionAnswer) {

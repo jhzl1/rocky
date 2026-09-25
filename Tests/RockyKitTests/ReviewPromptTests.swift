@@ -2,99 +2,112 @@ import Foundation
 import Testing
 @testable import RockyKit
 
-/// CMT-05 (Review Focus 4): the review prompt has exactly its format.
+/// CMT-05 (Review Focus 4): the agent's text for a line comment has exactly its format, on each side.
 struct ReviewPromptTests {
-    private static func comment(
-        path: String,
-        side: DiffCommentRecord.Side = .new,
-        lines: ClosedRange<Int>,
-        snippet: [String],
-        body: String
-    ) -> DiffCommentRecord {
-        DiffCommentRecord(
-            workspaceId: "w1",
-            path: path,
-            side: side,
-            startLine: lines.lowerBound,
-            endLine: lines.upperBound,
-            snippet: snippet,
-            body: body,
-            createdAt: Date(timeIntervalSince1970: 1_790_000_000)
+    @Test func newSideLines() {
+        let text = ReviewPrompt.single(
+            path: "src/openapi.ts",
+            side: .new,
+            start: 18,
+            end: 25,
+            code: ["function operation(route: Route) {", "  …"],
+            language: "ts",
+            comment: "Use the route's name as operationId only when it is unique."
         )
+        #expect(text == """
+            Comment on src/openapi.ts, lines 18–25:
+            ```ts
+            function operation(route: Route) {
+              …
+            ```
+            Use the route's name as operationId only when it is unique.
+            """)
     }
 
-    @Test func formatForOneAndSeveralComments() {
-        let operation = Self.comment(
-            path: "src/openapi.ts",
-            lines: 18...25,
-            snippet: ["function operation(route: Route) {", "  …"],
-            body: "Use the route's name as operationId only when it is unique."
+    /// One line says "line", and a file Rocky does not highlight gets a bare fence; the comment keeps its lines.
+    @Test func oneLineOfAPlainFile() {
+        let text = ReviewPrompt.single(
+            path: "Makefile",
+            side: .new,
+            start: 2,
+            end: 2,
+            code: ["\tswift test"],
+            language: nil,
+            comment: "Add a lint target.\nRun it in CI too."
         )
-        #expect(ReviewPrompt.build(branch: "jhzl/openapi-export", comments: [operation]) == """
-            Review comments on jhzl/openapi-export:
-
-            1. src/openapi.ts, lines 18–25
-            ```ts
-            function operation(route: Route) {
-              …
+        #expect(text == """
+            Comment on Makefile, line 2:
             ```
-            Use the route's name as operationId only when it is unique.
-
-            Address each comment and say what you changed for each number.
-            """)
-
-        let removed = Self.comment(
-            path: "Sources/App.swift",
-            side: .old,
-            lines: 7...7,
-            snippet: ["    retry(times: 3)"],
-            body: "Why did the retry go?\nIt covered flaky uploads."
-        )
-        let makefile = Self.comment(path: "Makefile", lines: 2...3, snippet: ["test:", "\tswift test"], body: "Add a lint target.")
-        #expect(ReviewPrompt.build(branch: "rocky/lisbon", comments: [operation, removed, makefile]) == """
-            Review comments on rocky/lisbon:
-
-            1. src/openapi.ts, lines 18–25
-            ```ts
-            function operation(route: Route) {
-              …
-            ```
-            Use the route's name as operationId only when it is unique.
-
-            2. Sources/App.swift, line 7 (removed)
-            ```swift
-                retry(times: 3)
-            ```
-            Why did the retry go?
-            It covered flaky uploads.
-
-            3. Makefile, lines 2–3
-            ```
-            test:
             \tswift test
             ```
             Add a lint target.
-
-            Address each comment and say what you changed for each number.
+            Run it in CI too.
             """)
     }
 
-    /// A CRLF file's snippet loses its "\r"; a snippet with a fence of its own gets a longer one.
-    @Test func carriageReturnsGoAndAFenceInTheSnippetGetsALongerOne() {
-        let readme = Self.comment(path: "README.md", lines: 3...5, snippet: ["```swift\r", "let a = 1\r", "```\r"], body: "Show the output too.")
-        #expect(ReviewPrompt.build(branch: "main", comments: [readme]) == """
-            Review comments on main:
+    @Test func removedSideLines() {
+        let text = ReviewPrompt.single(
+            path: "src/openapi.ts",
+            side: .old,
+            start: 12,
+            end: 13,
+            code: ["  retry(times: 3)", "  log(route)"],
+            language: "ts",
+            comment: "Why did the retry go?"
+        )
+        #expect(text == """
+            Comment on src/openapi.ts, removed lines 12–13 (from the base):
+            ```ts
+              retry(times: 3)
+              log(route)
+            ```
+            Why did the retry go?
+            """)
+        #expect(ReviewPrompt.single(path: "a.swift", side: .old, start: 7, end: 7, code: ["x"], language: "swift", comment: "Gone?")
+            .hasPrefix("Comment on a.swift, removed line 7 (from the base):\n"))
+    }
 
-            1. README.md, lines 3–5
+    /// A CRLF file's lines lose their "\r"; code with a fence of its own gets a longer one.
+    @Test func carriageReturnsGoAndAFenceInTheCodeGetsALongerOne() {
+        let text = ReviewPrompt.single(
+            path: "README.md",
+            side: .new,
+            start: 3,
+            end: 5,
+            code: ["```swift\r", "let a = 1\r", "```\r"],
+            language: "md",
+            comment: "Show the output too."
+        )
+        #expect(text == """
+            Comment on README.md, lines 3–5:
             ````md
             ```swift
             let a = 1
             ```
             ````
             Show the output too.
-
-            Address each comment and say what you changed for each number.
             """)
+    }
+
+    /// CMT-05's Resend, all or nothing: lines that cannot be read give the block without code, on each side.
+    @Test func noCodeOnTheNewSideGivesTheHeaderAndTheComment() {
+        let text = ReviewPrompt.single(path: "src/openapi.ts", side: .new, start: 18, end: 25, code: nil, language: "ts", comment: "Still needed?")
+        #expect(text == "Comment on src/openapi.ts, lines 18–25:\nStill needed?")
+        #expect(ReviewPrompt.single(path: "a.swift", side: .new, start: 3, end: 3, code: nil, language: nil, comment: "Why?")
+            == "Comment on a.swift, line 3:\nWhy?")
+    }
+
+    @Test func noCodeOnTheRemovedSideGivesTheHeaderAndTheComment() {
+        let text = ReviewPrompt.single(path: "src/openapi.ts", side: .old, start: 12, end: 13, code: nil, language: "ts", comment: "Why did the retry go?")
+        #expect(text == "Comment on src/openapi.ts, removed lines 12–13 (from the base):\nWhy did the retry go?")
+    }
+
+    /// Files attached next to a chip go as links after the block: in it, each one's marker reads as its name.
+    @Test func filesInACommentReadAsTheirNames() {
+        let marker = PromptAttachment.marker
+        #expect(ReviewPrompt.comment("Like \(marker) and \(marker)?", naming: ["/tmp/a/shot.png", "/tmp/b.ts"]) == "Like shot.png and b.ts?")
+        #expect(ReviewPrompt.comment("No files", naming: []) == "No files")
+        #expect(ReviewPrompt.comment("\(marker) extra", naming: []) == " extra")
     }
 
     @Test func fenceLanguageIsTheExtensionOfAHighlightedFile() {

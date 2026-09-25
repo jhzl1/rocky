@@ -13,12 +13,14 @@ final class DiffScrollOffset {
 /// DIFF-02's measures at 100 % zoom, through `Zoom.shared` where they are drawn.
 enum DiffMetrics {
     static let lineHeight: CGFloat = 20
-    /// Hunk headers and collapsed runs.
+    /// Collapsed runs and captions.
     static let barHeight: CGFloat = 26
-    static let numberWidth: CGFloat = 40
+    /// One number column, as Conductor draws it (user request, 2026-09-24: the old and new columns read as the number
+    /// twice): five digits and their 8-point trailing padding.
+    static let numberWidth: CGFloat = 48
     static let markerWidth: CGFloat = 16
-    /// Both number columns and the marker: where the code, a hunk header and a collapsed run start.
-    static var gutterWidth: CGFloat { numberWidth * 2 + markerWidth }
+    /// The number column and the marker: where the code and a collapsed run start.
+    static var gutterWidth: CGFloat { numberWidth + markerWidth }
     static let codeTrailingPadding: CGFloat = 24
     static let fontSize: CGFloat = 12
 
@@ -46,7 +48,7 @@ enum DiffMetrics {
 }
 
 /// Moves its content by the horizontal scroll position, so it stays at the left edge of the viewport while the row
-/// under it scrolls. Only this view reads the position. Comment cards use it too (`DiffCommentSlot`).
+/// under it scrolls. Only this view reads the position. The comment box uses it too (`UnifiedDiffView.commentBox`).
 struct Sticky<Content: View>: View {
     let scroll: DiffScrollOffset
     let content: Content
@@ -61,14 +63,17 @@ struct Sticky<Content: View>: View {
     }
 }
 
-/// One line of the unified diff (DIFF-02): 20 points, 12 mono. The old and new numbers (40 each, right-aligned,
-/// `textTertiary`) and the + / − marker (16) stay put on an opaque background while the code scrolls under them; the
-/// code carries its tokens' colors (DIFF-04). Added rows fill with `diffAddLine` and their numbers with
-/// `diffAddGutter`, removed ones with the delete tokens; context rows have no fill.
+/// One line of the unified diff (DIFF-02): 20 points, 12 mono. One number (48, right-aligned: the new number, the old
+/// one on a removed row, in `success` on an added row, `danger` on a removed one and `textTertiary` otherwise) and the
+/// + / − marker (16) stay put on an opaque background while the code scrolls under them; the code carries its tokens'
+/// colors (DIFF-04). Added rows fill with `diffAddLine` and their number with `diffAddGutter`, removed ones with the
+/// delete tokens; context rows have no fill.
 ///
-/// With `commenting`, CMT-01: hovering shows the "+" over the new number (the old one on a removed row), and a press on
-/// the numbers comments on the line, a drag across rows makes a range, and Shift extends the last one. Selected rows
-/// fill with `commentRange` and a 3-point `accent` bar at their left edge.
+/// With `commenting`, CMT-01: hovering shows the "+" over the one number, and a press on it comments on the line: a
+/// removed row's number is the old one, so its comment is on the removed side, and any other row's is on the new side
+/// (`DiffLine.commentLine`). A drag across rows makes a range on the pressed row's side, and Shift extends the last
+/// one. Selected rows, and the rows of an open comment box (CMT-02), fill with `commentRange` and a 3-point `accent`
+/// bar at their left edge.
 struct DiffLineRow: View {
     let line: DiffLine
     let tokens: [SyntaxToken]
@@ -116,7 +121,8 @@ struct DiffLineRow: View {
         }
     }
 
-    /// The press is the first change, with nothing dragged yet; a Shift-press extends the last range.
+    /// The press is the first change, with nothing dragged yet; a Shift-press extends the last range. The release opens
+    /// the comment box (CMT-02).
     private func commentGesture(_ target: CommentLine?) -> some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .named(DiffCommentState.space))
             .onChanged { value in
@@ -139,8 +145,8 @@ struct DiffLineRow: View {
     }
 }
 
-/// The number columns and the marker of a diff line, opaque so the code can pass under them. Selected for a comment,
-/// they take `commentRange` and the `accent` bar; `showsAdd` puts CMT-01's "+" over the number of the row's side.
+/// The number and the marker of a diff line, opaque so the code can pass under them. Selected for a comment, they take
+/// `commentRange` and the `accent` bar; `showsAdd` puts CMT-01's "+" over the number.
 private struct DiffLineGutter: View {
     let line: DiffLine
     var isSelected = false
@@ -148,11 +154,8 @@ private struct DiffLineGutter: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            HStack(spacing: 0) {
-                number(line.oldNumber, showsAdd: showsAdd && line.kind == .removed)
-                number(line.newNumber, showsAdd: showsAdd && line.kind != .removed)
-            }
-            .background(isSelected ? Color.clear : (line.kind.gutterFill ?? Color.clear))
+            number(line.kind == .removed ? line.oldNumber : line.newNumber)
+                .background(isSelected ? Color.clear : (line.kind.gutterFill ?? Color.clear))
             Text(verbatim: line.kind.marker)
                 .foregroundStyle(line.kind.markerColor)
                 .frame(width: Zoom.shared(DiffMetrics.markerWidth))
@@ -168,10 +171,10 @@ private struct DiffLineGutter: View {
         }
     }
 
-    private func number(_ value: Int?, showsAdd: Bool) -> some View {
+    private func number(_ value: Int?) -> some View {
         Text(verbatim: value.map(String.init) ?? "")
             .monospacedDigit()
-            .foregroundStyle(Theme.textTertiary)
+            .foregroundStyle(line.kind.numberColor)
             .lineLimit(1)
             .padding(.trailing, 8)
             .frame(width: Zoom.shared(DiffMetrics.numberWidth), alignment: .trailing)
@@ -181,28 +184,6 @@ private struct DiffLineGutter: View {
                         .padding(.trailing, 2)
                 }
             }
-    }
-}
-
-/// A hunk's header row (DIFF-02): 26 points, git's whole `@@` line in 11.5 mono `textTertiary` on `diffHunk`, starting
-/// where the code does and staying in view while long lines scroll.
-struct DiffHunkRow: View {
-    let header: String
-    let width: CGFloat
-    let scroll: DiffScrollOffset
-
-    var body: some View {
-        Sticky(scroll: scroll) {
-            Text(verbatim: header)
-                .font(.rocky(11.5, design: .monospaced))
-                .foregroundStyle(Theme.textTertiary)
-                .lineLimit(1)
-                .fixedSize()
-                .padding(.leading, Zoom.shared(DiffMetrics.gutterWidth))
-        }
-        .frame(width: width, height: Zoom.shared(DiffMetrics.barHeight), alignment: .leading)
-        .background(Theme.diffHunk)
-        .accessibilityAddTraits(.isHeader)
     }
 }
 
@@ -268,12 +249,21 @@ extension DiffLine.Kind {
         }
     }
 
-    /// The number columns' fill, over the row's.
+    /// The number column's fill, over the row's.
     var gutterFill: Color? {
         switch self {
         case .added: Theme.diffAddGutter
         case .removed: Theme.diffDeleteGutter
         case .context: nil
+        }
+    }
+
+    /// The line number's color: the side it counts on, as Conductor colors it.
+    var numberColor: Color {
+        switch self {
+        case .added: Theme.success
+        case .removed: Theme.danger
+        case .context: Theme.textTertiary
         }
     }
 

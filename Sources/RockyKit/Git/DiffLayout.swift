@@ -10,10 +10,10 @@ public struct DiffGap: Hashable, Sendable {
     }
 }
 
-/// One row of a diff tab's unified diff (`DIFF-02`), in the order it is drawn.
+/// One row of a diff tab's unified diff (`DIFF-02`), in the order it is drawn. No row shows git's `@@` line, as in
+/// Conductor (user decision, 2026-09-24): the collapsed run before a hunk already separates it from the previous one,
+/// since git merges hunks with no unchanged line between them.
 public enum DiffRow: Equatable, Sendable, Identifiable {
-    /// A hunk's whole `@@` line.
-    case hunk(index: Int, header: String)
     /// A line of a hunk, or of an expanded unchanged run (a context line).
     case line(DiffLine)
     /// A collapsed unchanged run of `count` lines.
@@ -22,14 +22,10 @@ public enum DiffRow: Equatable, Sendable, Identifiable {
     /// Unique within a file: new numbers never repeat among the lines that have one, nor old numbers among theirs.
     public var id: String {
         switch self {
-        case .hunk(let index, _): "h\(index)"
         case .line(let line): "l\(line.oldNumber ?? 0):\(line.newNumber ?? 0)"
         case .gap(let gap, _): "g\(gap.hunkIndex)"
         }
     }
-
-    /// The id of the first hunk's header row, where `DIFF-05` scrolls a diff opened from a badge.
-    public static let firstHunkId = "h0"
 }
 
 extension FileDiff {
@@ -50,8 +46,8 @@ public enum DiffLayout {
     /// Worktree files larger than this are not read for their unchanged runs: they would be read on every refresh.
     public static let maxReadBytes = 20_000_000
 
-    /// The rows of `file`: before each hunk the unchanged run since the previous one, then its header and its lines,
-    /// then the run after the last hunk. A run is one gap row unless `expanded` holds it.
+    /// The rows of `file`: before each hunk the unchanged run since the previous one, then its lines, then the run after
+    /// the last hunk. A run is one gap row unless `expanded` holds it.
     ///
     /// `newLines` is the worktree file, which is the diff's new side (`git diff <base>` compares the base with the
     /// worktree), split like the patch; nil while it is not read. Without it the runs between hunks still show their
@@ -63,7 +59,7 @@ public enum DiffLayout {
             return newLines.enumerated().map { .line(DiffLine(kind: .added, oldNumber: nil, newNumber: $0.offset + 1, text: $0.element)) }
         }
         var rows: [DiffRow] = []
-        rows.reserveCapacity(file.hunks.reduce(0) { $0 + $1.lines.count + 2 })
+        rows.reserveCapacity(file.hunks.reduce(0) { $0 + $1.lines.count + 1 })
         // The first new-side and old-side lines no row shows yet.
         var nextNew = 1
         var nextOld = 1
@@ -75,7 +71,6 @@ public enum DiffLayout {
                 // The run ends right above the hunk on both sides, so its old numbers count back from the hunk's.
                 appendRun(DiffGap(hunkIndex: index), newFrom: nextNew, oldFrom: oldStart - count, count: count, newLines: newLines, expanded: expanded, to: &rows)
             }
-            rows.append(.hunk(index: index, header: hunk.header))
             rows.append(contentsOf: hunk.lines.map(DiffRow.line))
             nextNew = newStart + hunk.newCount
             nextOld = oldStart + hunk.oldCount
@@ -87,6 +82,11 @@ public enum DiffLayout {
             }
         }
         return rows
+    }
+
+    /// The row of the first hunk's first line, where `DIFF-05` scrolls a diff opened from a badge.
+    public static func firstHunkRowId(in file: FileDiff) -> String? {
+        file.hunks.first?.lines.first.map { DiffRow.line($0).id }
     }
 
     /// Where a side of a hunk starts. An empty side (`+0,0` of a deleted file, `-5,0` of lines inserted after line 5)
@@ -116,9 +116,9 @@ public enum DiffLayout {
         }
     }
 
-    /// The unchanged runs of `file` that hold any of `lines`, so a comment on a line that is not near a change any more
-    /// is drawn with its run open (`CMT-02`). The new side counts runs as `rows` does; the old side numbers each run
-    /// back from the hunk after it. The run after the last hunk needs the file's line count.
+    /// The unchanged runs of `file` that hold any of `lines`, so a comment box or a chip's line (`CMT-02`, `CMT-06`)
+    /// in a run shows with its run open. The new side counts runs as `rows` does; the old side numbers each run back
+    /// from the hunk after it. The run after the last hunk needs the file's line count.
     public static func gaps(holding lines: Set<CommentLine>, in file: FileDiff, lineCount: Int?) -> Set<DiffGap> {
         guard !lines.isEmpty, !file.hunks.isEmpty else { return [] }
         var gaps: Set<DiffGap> = []
@@ -145,6 +145,37 @@ public enum DiffLayout {
             check(DiffGap(hunkIndex: file.hunks.count), newFrom: nextNew, oldFrom: nextOld, count: lineCount - nextNew + 1)
         }
         return gaps
+    }
+
+    /// The row of `line` among `rows`: where a comment box on a range ending there opens (`CMT-02`) and where a chip's
+    /// click scrolls (`CMT-06`). An old-side line whose removed row is gone (the line came back since the range was
+    /// picked) falls back to that line's context row; nil when no row shows the line.
+    public static func rowId(for line: CommentLine, in rows: [DiffRow]) -> String? {
+        var restored: String?
+        for row in rows {
+            guard case .line(let diffLine) = row else { continue }
+            if diffLine.commentLine == line { return row.id }
+            if line.side == .old, restored == nil, diffLine.kind == .context, diffLine.oldNumber == line.number {
+                restored = row.id
+            }
+        }
+        return restored
+    }
+
+    /// The text of `range` on `side`, for a comment's code (`CMT-05`). The new side reads the worktree file when it is
+    /// loaded (`newLines`), so a range across a collapsed run keeps every line; otherwise, and on the removed side, it
+    /// reads the rows' lines, and a line no row shows is left out.
+    public static func lines(in range: ClosedRange<Int>, side: CommentLine.Side, rows: [DiffRow], newLines: [String]?) -> [String] {
+        if side == .new, let newLines {
+            return range.compactMap { $0 >= 1 && $0 <= newLines.count ? newLines[$0 - 1] : nil }
+        }
+        var byNumber: [Int: String] = [:]
+        for row in rows {
+            guard case .line(let line) = row, let number = side == .new ? line.newNumber : line.oldNumber,
+                  range.contains(number), byNumber[number] == nil else { continue }
+            byNumber[number] = line.text
+        }
+        return range.compactMap { byNumber[$0] }
     }
 
     /// Whether the diff tab needs the worktree file: a changed file with hunks has unchanged runs to count and expand

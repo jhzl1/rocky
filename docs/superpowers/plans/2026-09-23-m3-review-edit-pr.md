@@ -1116,3 +1116,839 @@ Record here anything that differs from this plan, with the date and the reason.
   equivalents (a repository's settings' Save, the text view's ⌘L); `ProcessRunner.stream` ending when git exits (a hook
   that leaves a background process holding the pipe would keep it open); the sheet's Esc and ⌘Return while its
   description's text view has the keyboard; and `NSAlert.runModal` inside `applicationShouldTerminate`.
+
+### After the merge (2026-09-24, branch `fix/m3-editor-and-quick-open`)
+
+- **The editor broke the window's drawing (user reports).** Opening a file first left the sidebar, the top bar and the
+  tabs undrawn; once `.clipped()` contained that, the text itself stayed blank and the gutter's numbers ran over the
+  terminal bar. The cause was `CodeGutterView.draw(_:)` filling `dirtyRect`: since macOS 14 a view does not clip its
+  drawing to its bounds and `dirtyRect` can be larger than them, so the gutter painted its background over the text
+  and past the editor. It now fills `bounds ∩ dirtyRect` and sets `clipsToBounds`. Found by hosting the real
+  `CodeEditor` in a throwaway window: with the ruler hidden the text drew, and a red text-view background never showed
+  with it. A first guess (the text view's `greatestFiniteMagnitude` sizes, then `.clipped()`) was wrong and was reverted.
+- **Placeholders jumped 1 point on focus (user report).** A plain `TextField`'s `prompt` is drawn by the cell at rest
+  and by the field editor while editing, 1 point higher. The All files filter and the sidebar search now draw their
+  placeholder with `stablePlaceholder(_:isVisible:)` (`ButtonStyles.swift`) over an empty prompt.
+- **The diff draws one line-number column (user request).** "Tenemos un duplicado en el número de líneas, mira cómo
+  lo hace conductor": the old and new columns (40 each) read as the number twice. `DiffLineGutter` now draws one
+  48-point column, as Conductor does: the new number, the old one on a removed row, in `success` on an added row,
+  `danger` on a removed one and `textTertiary` on context; the marker stays, so `DiffMetrics.gutterWidth` is 48 + 16.
+  UI only, no test. The designer is updating `DIFF-02` and `CMT-01`.
+- **Review comments reach the chat as Conductor's do (user decision, pending design).** The user disliked the whole
+  `ReviewPrompt` as the message bubble and chose Conductor's flow: commenting on lines opens a box "Sending to
+  <conversation>" with a "<file> +<start>-<end>" chip, the comment goes at once, and the transcript shows the chip and
+  the text. The designer rewrote `CMT-02` and `CMT-05`, added `CMT-06`, and removed `CMT-03` and `CMT-04`. Tasks 23–27
+  below.
+- **A short diff sat in the middle of its tab (user report).** "Conductor muestra de primero solo las líneas
+  modificadas; nosotros estamos centrando en la pantalla las líneas modificadas": a two-axis `ScrollView` centers
+  content shorter than itself, and a diff whose unchanged runs are collapsed is short. `UnifiedDiffView` now sets
+  `.defaultScrollAnchor(.topLeading, for: .alignment)`. UI only, no test.
+- **No `@@` rows (user decision).** Asked whether to drop git's hunk header lines as Conductor does, the user said yes.
+  `DiffRow.hunk`, `DiffHunkRow` and `Theme.diffHunk` are gone: a collapsed run already separates two hunks, since git
+  merges hunks with no unchanged line between them. `DIFF-05`'s scroll goes to the first hunk's first line
+  (`DiffLayout.firstHunkRowId(in:)`). `DiffLayoutTests.aRunBeforeTheFirstHunkStartsAtLineOne` and
+  `anAddedOrDeletedFileHasNoRuns` now expect no header row, and so does `theRunBetweenHunksCollapsesToItsCount`, which
+  still listed the headers' ids (`h0`, `h1`) until Task 30's first test run failed on it.
+- **A simpler Open menu (user request).** "El menú de abrir creo que puede ser más sencillo, solo mostrar el logo del
+  app y el nombre, como en Conductor". `TB-03`/`OPN-01`'s menu (`WorkspaceDetailView.openMenu`) loses its path header
+  and the "Open in" prefix: Finder (with Finder's own icon) and each installed editor as its icon and name, then a
+  divider, New Terminal and Copy Path; 200 wide. `OpenMenuPathHeader` is gone. UI only, no test.
+- **No "Working…" in the pull request header (user decision, 2026-09-25).** "No me parece que si el agente está
+  pensando en el panel de la derecha también haya un loader… ya tenemos suficientes": M2.7's `HDR-02` row "Working…"
+  is gone. `HeaderState.working` and `PullRequestHeader.state`'s `agentWorking` parameter are removed, so the header
+  always shows the pull request's state; its agent actions stay disabled with `AGT-00`'s reason while a turn runs.
+  `PullRequestHeaderTests.working` is gone and the other tests call the new signatures.
+- **⌘P becomes Quick Open (user request).** "Pensé que haríamos como un command palette que tendría todos los archivos
+  y un buscador", with Zed's quick open as the reference. The designer added it as `FIL-08`, fixed `FIL-05` (only a new
+  preview replaces the preview tab) and updated `FIL-04`, `KBD-02` and `OUT-10`. Tasks 19–22 below.
+- **2026-09-24, Tasks 19–22 (Quick Open), what the tasks did not settle:**
+  - Quick Open keeps the full diff computed while it shows (`showsChanges`), and `quickOpenWillShow` computes it when it
+    is missing or stale. Without it, with the panel closed or on Checks, `changes` is nil and FIL-08's status letters
+    and "then the changed files" were missing. The Decisions' "`changes` follows what is on screen" covers it: events
+    already run git for the stats, so an open Quick Open costs a full diff instead of a shortstat, and one run at
+    opening. Pinned by `AppModelTests.eventsWhileQuickOpenIsOpenReadNothing`.
+  - Quick Open's keys (↑ / ↓, Return, ⌥Return, Esc) are taken by `QuickOpenPresenter`'s local key monitor, not by the
+    field's `onKeyPress`: FIL-08 asks for Esc and the arrows before `ChatView`'s monitor, and the field editor would
+    have taken ⌥Return as a line break. Return and Esc are left to an input method's composition.
+  - Esc, a click outside and ⌘P give the keyboard back to what had it (the message box, the editor, a terminal); a
+    text field's field editor is not kept. Opening a file leaves it to the tab. Another selected workspace, an open
+    settings panel (`RootView`) and closing the window (`QuickOpenHost`) close Quick Open.
+  - Hover selects only after the pointer moves, as in the slash command popup, so a list the keyboard scrolls under a
+    still pointer keeps its row.
+  - `FileList.position(of:)` finds a recent file by binary search in Finder's order (`FileTree.pathPrecedes`), so the
+    recent files need no index of every path. With 20 of them, `rank` takes about 1 ms more (17.5–18.5 ms alone, debug
+    build). `ranks100000PathsInUnder50ms` counts the best of three runs, after one parallel run measured 58 ms under
+    the other suites' load; the bound stays 50 ms (`m3-verification.md`).
+  - The store replaces a recent file's row (delete, insert) instead of updating it, so opens in the same millisecond
+    keep their order by rowid. Raw SQL like `expandedFolder`: no record type in `Records.swift`. Pinned by
+    `RockyStoreTests.recentFilesKeepTheNewest20AndGoWithTheWorkspace`.
+  - `FIL-05`'s fix changed `aDoubleClickKeepsThePreview`: a double-click on another row is its first click, then its
+    second, as the tree sends them; a lone `keep: true` now keeps its own tab (`openingToKeepLeavesThePreviewTabAlone`).
+  - A worktree with no files and an empty query shows "No files" (no copy in the design for it). The folder of a row
+    shows without its trailing "/", as in the mock.
+- **2026-09-24, Tasks 23–27 (comments like Conductor), what the tasks did not settle:**
+  - The prompt is one text block through a new `PromptAttachment.text` case (the plan's "or equivalent"), never split
+    at the file marker, so code holding U+FFFC reaches the agent whole. Pinned by
+    `ACPProtocolTests.aTextAttachmentIsOneTextBlockAsItIs`.
+  - `ChatSessionModel.send(_: LineComment)` queues the comment when a turn is running, also one that began while the
+    agent started, so a comment is never dropped. `AppModel.sendLineComment` returns once the comment is on its way
+    (the send runs in a task) or queued, not when the turn ends, so the toast shows at once. Pinned by
+    `ChatSessionModelTests.aQueuedLineCommentGoesOutWithThePromptBuiltBefore` and `AppModelTests.aLineComment…`.
+  - `makeChat` returns the conversation's chat when another caller made it while it waited (a comment sent to a
+    conversation whose tab opens meanwhile), so a conversation never runs two agents. Not pinned: it is a race.
+  - The box's draft is an `@Observable` class the model keeps (`CommentDraft`, `AppModel.commentDrafts`), so typing
+    redraws the box and not the diff's rows. Its conversation resolves as picked while that one is open, else the one
+    the workspace shows, else its newest (`commentConversation(for:workspaceId:)`). Opening a box keeps a preview tab
+    (FIL-05), as the first edit does, so a click in the tree never drops a comment being written. Pinned by
+    `AppModelTests.aCommentBoxStaysWithItsTabAndGoesWhenItCloses`.
+  - `.unavailable` (the conversation closed, or its agent did not start) puts the comment back in its box and shows
+    "Couldn’t send to “<title>”" with Show; the design has no copy for it. UI only.
+  - Once the tab has scrolled to a chip's line, the model keeps that request's serial (`AppModel.lineScrollHandled`,
+    `handledLineScrolls`), so showing the tab again starts at its top. The request itself keeps its line: a request
+    rewritten without it would read as a badge's first-hunk request, which keeps its rule (only on a change). Pinned
+    by `AppModelTests.aChipOpensTheDiffAtItsLineOrTheUnchangedFilesTab`.
+  - The code capture is `DiffLayout.lines(in:side:rows:newLines:)` (`CommentAnchor.capture` without the context lines)
+    and the box's row `DiffLayout.rowId(for:in:)`. Pinned by `DiffLayoutTests.aCommentsCodeComesFromTheFileOrTheRows`
+    and `theBoxOpensUnderTheRowOfItsLastLineOnItsSide`.
+  - Send is drawn with `RockyPrimaryButtonStyle`, Rocky's white filled button, not the gray `RockyFilledButtonStyle`
+    Task 24 names: `CMT-02` says "white filled". UI only.
+  - The chip is `FileBadgeLook(range:)`; its tooltip is the absolute path (with "~") and the range, since the
+    transcript keeps the absolute entry. A queued comment's delete button reads "Remove" ("Remove this queued
+    comment"). The box's text is a `TextEditor` sized by a hidden copy of its text, since a `TextEditor` does not grow;
+    its 22-point lines come from `lineSpacing`. UI only, on the manual checklist.
+  - `LineRangeAttachment(entry:)` takes the last "#" and only ASCII digits from 1, with the end not before the start.
+    A user message whose one attached file's name itself ends in "#L<n>" would read as a line comment. Pinned by
+    `LineRangeAttachmentTests`.
+  - Still to tell the designer, as the Decisions ask: the entry is an absolute path, and ↑ history and a queued
+    comment's Edit skip comments.
+- **2026-09-24, Tasks 28–30 (file icons), what the tasks did not settle:**
+  - **587 SVGs, not 586.** `github-actions-workflow`, the workflow rule's icon, is one of the 9 icons reached only
+    through `languageIds`, so the 586 that `fileNames`, `fileExtensions` and `file` reference leave it out. The script
+    adds it (`LANGUAGE_ID_ICONS`) and stops if no language id uses it any more. 493,218 bytes of SVG. Tell the
+    designer (FIL-09 says 586). Pinned by `FileIconsTests.everyIconTheVendoredManifestNamesShips`.
+  - The script checks npm's `sha512` integrity of the tarball as well as its name and version, and names each SVG by
+    its icon id, since 20 definitions point at `<id>.clone.svg` files. It stops on two keys equal but for case. The
+    manifest keeps the theme's keys as they are, sorted, one per line, so a version bump reads as a diff.
+    `FileIconManifest` lowercases them when it is made, and keeps the path tails apart, keyed by their components, so
+    a lookup builds only its own path's tails (all 204 have two components today). Pinned by
+    `theManifestIgnoresCaseInItsKeys` and `aPathTailMatchesOnWholeComponents`.
+  - The workflow rule is checked first, as in the mock: otherwise `yml` → yaml (step 4) would always win. It matches
+    anywhere under a `.github/workflows/` folder, subfolders included, as the GitHub Actions extension's
+    `**/.github/workflows/**/*.yml` does. Pinned by `workflowsUnderGitHubWorkflowsGetTheActionsIcon`.
+  - Steps 3 and 4 are one pass, as in VS Code: the name after each of its dots, from the first, so the longest
+    extension is tried first. A dotfile's name after its dot counts as an extension (`.env` → tune, FIL-09's example).
+    Pinned by `theLongestCompoundExtensionWins` and `theExtensionComesNext`.
+  - RockyKitTests cannot see RockyUI's bundle, so two tests read the vendored manifest from the source tree
+    (`#filePath`): FIL-09's examples, and an SVG for every id it can return. Pinned by
+    `theVendoredManifestGivesTheRequirementsExamples`.
+  - `FileTreeIcon` takes the row's worktree-relative path instead of its name, so the path tails and the workflow rule
+    work in the tree, the filter and Quick Open.
+  - Two places beyond Task 29's list draw the icon, since FIL-09 says "everywhere a file's icon is drawn": the tabs
+    of files outside the worktree (`WorkspaceDetailView`, 12 points) and the hover preview's card for a file with no
+    preview (`FilePreviewContent`, 22 points). A folder keeps the blue folder there and in `FileBadgeLook`. UI only.
+  - If an SVG fails to load, the fallback symbol is drawn at 80 % of the icon's size. All 587 load in `NSImage`
+    (checked once with a throwaway script, not committed). `bithound.svg` (`.bithoundrc`) draws almost blank in
+    AppKit: its root sets `fill-opacity=".05"`. The icons are vendored as the theme ships them, so it stays. UI only.
+  - Not observed: the app was not built with `scripts/make-app.sh` or launched. Task 30's manual checks are open in
+    `m3-verification.md`.
+- **2026-09-24, Tasks 31–34 (the default app, the path chip and "+"), what the tasks did not settle:**
+  - The kit's side is `OpenApp` (`.finder`, `.editor(ExternalEditor)`, with its `bundleIdentifier` and
+    `displayName`) and `DefaultOpenApp` (`storageKey`, `resolve`), in `RockyKit/App/DefaultOpenApp.swift` beside
+    `ExternalEditor`. A stored id Rocky does not know falls back like an uninstalled editor. Pinned by
+    `DefaultOpenAppTests`.
+  - RockyUI's `InstalledApp` pairs an `OpenApp` with its bundle on this Mac, for the icon and for opening. It is public
+    because ⌘O's command lives in the `Rocky` target. The split button resolves the default when it draws and again on
+    each click, the menu its apps when it opens, the chip when it draws and on its click, and ⌘O its title when the
+    menu bar reads it and again when it runs. An editor removed while Rocky runs can leave the button's icon stale
+    until it redraws; the click still resolves afresh. UI only.
+  - Finder opens the worktree with `NSWorkspace.open(_:)` as before, with no toast on failure, as before. A file goes
+    to `activateFileViewerSelecting`. ⌘O's command has no `ToastPresenter`, so its failure goes through
+    `AppModel.onToast`; `ExternalEditorOpener.open` gained a variant that takes the toast as a closure.
+  - ⌘O is not disabled while a settings panel is open, unlike ⌘S and ⌘P: OPN-02 names only "no workspace selected".
+    The split button's left part shows `fillPressed` while pressed, like `RockyIconButtonStyle`; TB-03 names only the
+    hover. UI only.
+  - `PathChip` (`DiffTabView.swift`) also replaces the path of a file tab opened from a badge outside the worktree
+    (`FileTabView`), where OPN-02 says "the diff and file tab headers". There it shows the full path with "~" instead
+    of the absolute path as selectable text, keeps the "Show in Finder" and "Open in its app" buttons, and the header
+    is now 34 tall like a diff tab's (it was 8 points of padding around its content), so the chip sits the same in
+    both. A folder a badge opened keeps the blue folder in the chip. The chip does not check the disk, so a file tab
+    whose file is gone still opens. UI only.
+  - The chip's tooltip ("Open in Zed", "Reveal in Finder") replaces the header's path tooltip; the tab keeps the path
+    as its tooltip, and a rename's "old → new" is in the chip's text. VoiceOver reads the path, with the tooltip as the
+    hint. A deleted file's plain path has no padding either, as the mock's `.path-chip.plain`. UI only.
+  - `AppModel.defaultAgent(repoId:)` (internal) falls back to Claude Code when the store read fails, without an error:
+    a new conversation must not wait on it. `lastUsedAgent` breaks a tie in `createdAt` by rowid, and an agent this
+    build does not know in the newest message reads as nil, so Claude Code, rather than an older message's agent.
+    Pinned by `RockyStoreTests.lastUsedAgentFollowsTheNewestUserMessageAcrossTheRepository` and
+    `AppModelTests.theDefaultAgentFollowsTheLastUserMessageInTheRepository`.
+  - CNV-01's Motion, which Task 33 does not list: a conversation tab that joins after the strip's first load enters
+    with `ChatView`'s `Entrance` (now internal), tracked in `ConversationTabs.drawnConversationIds`, so switching
+    workspaces plays nothing. UI only.
+  - "+" takes no second `.clickable()`: `RockyIconButtonStyle` already sets it. The bridge keeps the old menu's width,
+    280. `MenuIconButtonLabel` had no user left and is gone.
+  - Not observed: the app was not built with `scripts/make-app.sh` or launched, so OPN-02's unknown (whether Zed reuses
+    the worktree's window for the chip's file) is still open. Task 34's manual checks are open in `m3-verification.md`.
+- **2026-09-25, the designer's update to Tasks 35–36 (`CMT-05` History, Resend, Running and Kit; `CMT-06` In the
+  box).** It supersedes Task 35 where they differ:
+  1. **A queued comment has Edit again**, offered only while the message box is empty, like any queued row. It puts
+     the chip and the text back in the box through ↑'s path (`ComposerController.load(text:files:lineRange:)`), drops
+     the code captured at Send, and the next Send reads the lines again. Task 35's "A queued comment row still has no
+     Edit" and the Decisions' "queued Edit skip comments" no longer hold. The kit side is the queued message keeping
+     the comment's range and files: pinned by `ChatSessionModelTests.aLineCommentWithFilesSendsTheBlockThenTheirLinks`
+     (its queued row); the box itself is UI, on the manual checklist.
+  2. **All or nothing.** If any line of the range cannot be read, the block goes with no code, never part of it.
+     `ReviewPrompt.single`'s `code` is optional, and nil gives the header and the comment. Pinned by
+     `ReviewPromptTests.noCodeOnTheNewSideGivesTheHeaderAndTheComment`,
+     `noCodeOnTheRemovedSideGivesTheHeaderAndTheComment` and `AppModelTests.aRangePastTheEndOfTheFileGivesTheBlockWithoutCode`.
+  3. **The caret and edits.** The caret and every selection start after the chip (`ComposerTextView.setSelectedRanges`),
+     Backspace at the start of the text removes it (`deleteBackward`), and a drop before it is refused
+     (`shouldChangeText(inRanges:replacementStrings:)`). Since no selection holds the chip, copying and dragging never
+     write it, so it cannot be pasted twice or into the middle of the text. UI only, on the manual checklist.
+  4. **Slash commands.** With the chip first, a "/" at the start of the text is not a command (CMD-01): the chip is an
+     attachment at the start, so the popup stays closed (`SlashQuery.parse`'s `firstIsAttachment`), "+" ▸ Commands does
+     nothing, and the message goes as a line comment, never through CMD-08's terminal commands. Pinned by
+     `ChatSessionModelTests.aLineCommentStartingWithASlashIsNoCommand` and the existing
+     `SlashCommandTests` case of a badge before the "/".
+  5. **The history test**: `MessageHistoryTests.upStopsOnALineComment`.
+- **2026-09-25, Tasks 35–36 (↑ brings a line comment back), what the tasks did not settle:**
+  - The history is built in RockyKit, `MessageHistory.entries(from:)`, so "history entries keep their line range" is a
+    test (`MessageHistoryTests.historyEntriesKeepTheirLineRange`); `ChatView` used to build it inline.
+  - Files next to a chip travel in `LineComment.files`. The transcript keeps the chip's entry first and the files after
+    it, so `ChatItem.lineRange` is now "the first attachment is an entry and no other one is" (it was "the one
+    attachment"), and `ChatItem.attachedFiles` gives the files without the chip. Two entries still make no line
+    comment. A queued comment keeps its files as the row's attachments, for its badges and its Edit. Pinned by
+    `LineRangeAttachmentTests.aUserMessageStartingWithOneEntryIsALineComment` and
+    `ChatSessionModelTests.aLineCommentWithFilesSendsTheBlockThenTheirLinks`.
+  - In the block, each file's marker reads as the file's name (`ReviewPrompt.comment(_:naming:)`): the block is one
+    text block never split at a marker, so a marker would have reached the agent as U+FFFC. Pinned by
+    `ReviewPromptTests.filesInACommentReadAsTheirNames` and
+    `AppModelTests.aResentCommentReadsTheNewSideFromTheWorktreeAndTheRemovedSideFromTheBase`.
+  - The removed side uses the base commit and a rename's old path the diff uses while the changes are read
+    (`editorBaseKey`), and otherwise finds the base then (`GitChangesService.base`, one `git merge-base` per resend of
+    a removed-side comment, on the user's Send only), at the chip's path: a renamed file whose changes are not read
+    gives no code. The base's text is split as the patch splits the removed rows (`DiffParser.lines`), and a binary
+    base gives no code. A chip outside the worktree keeps its absolute path in the block and has no removed side. Both
+    paths are pinned by `aResentCommentReadsTheNewSideFromTheWorktreeAndTheRemovedSideFromTheBase`.
+  - A comment needs words: with the chip in the box, Send and Return do nothing until there is text other than spaces,
+    as the comment box's Send (CMT-02). The chip alone, or with only files, does not send. A queued row's Edit is off
+    while the box holds a chip, since loading would replace it. UI only.
+  - The chip in the box is `LineChipAttachment`, an image of `FileBadgeLook(range:)` with a 6-point gap after it in its
+    own bounds, so the text starts clear of it with no space character to delete. It has no hover, X, preview or click,
+    unlike a file badge: `CMT-06` names only Backspace. UI only.
+  - `AppModel.lineComment(for:comment:files:workspaceId:)` takes `files` (default none) beside the plan's signature.
+    The message box sends through the conversation's own chat (`ChatSessionModel.send(_:)`, which queues during a
+    turn), not `sendLineComment`: the chat is on screen, so no toast is needed. The block is built before the send,
+    after a file read, so a typed message sent in that instant can reach the queue first. Not pinned: it is a race.
+  - Not observed: the app was not built with `scripts/make-app.sh` or launched. Task 36's manual checks are open in
+    `m3-verification.md`.
+- **2026-09-25, Tasks 37–38 (line counts on edit rows), what the tasks did not settle:**
+  - The events are `SessionEvent.toolCall` and `.toolCallUpdate`; `ACPUpdate` does not exist. Both gained `diffs`.
+    The installed adapter is claude-agent-acp 0.81.2, whose `dist/diff.js` has 0.81.0's shape.
+  - The whole count runs off the main actor, in a detached task as the All files filter ranks, rules 1 and 2 included,
+    so there is one path; the label shows a moment after the completion. Each call keeps the serial of its latest
+    count, and a newer update drops a count still running.
+  - A count that lands during its turn is saved with the turn's items; one that lands after is saved at once. Saving
+    it earlier would give the row its `seq` ahead of the items before it, since `upsert` numbers a row on its first
+    write. Pinned by `ChatSessionModelTests.editCountsAppearOnCompletionFromTheLatestContent` and
+    `anUpdateWithContentReplacesTheCountsAndOneWithoutKeepsThem`.
+  - An update whose content holds no diff (text, a terminal) is no longer `.ignored` when it carries nothing else: its
+    `diffs` is empty, and it takes a completed call's counts away, as it replaces the content. Pinned by
+    `ACPProtocolTests.anUpdateWithContentButNoDiffReplacesTheEntries` and `ChatSessionModelTests.aRejectedEditHasNoCounts`.
+  - The entries wait only until their call completes. A failed call drops them at once, and a turn that ends drops
+    those of calls that never completed.
+  - Lines split on the "\n" scalar, not on `Character`, since "\r\n" is one `Character`: a file with Windows line
+    endings counts its lines. OpenCode sends "" as a new file's `oldText`, and rule 3 adds all its lines. Pinned by
+    `ToolDiffStatsTests.aFinalNewlineStartsNoLine` and `aNewFileAddsEveryLine`.
+  - An entry without a string `path` and `newText` is left out. `_meta`'s counts must be whole and non-negative, read
+    without `JSONValue.intValue`, which traps on a number past `Int`'s range. Pinned by
+    `ACPProtocolTests.readsCountsOnlyInTheirKnownShape`.
+  - Rule 3 numbers each distinct line and diffs the integers. At the cap, two unrelated sides of 2,500 lines take about
+    0.1 s (release, measured once with a throwaway script).
+  - `ToolDiffStats.label(for:)` (kit) gives the row's label and the group's, hidden at 0, so both are tests
+    (`theLabelSumsTheRowsAndHidesAtZero`). The row's gap of 6 is its spacing of 8 less 2, as the mock's
+    `margin-left: -2px`. The group's label sits after its title at the row's spacing, folded or expanded: `DIFF-06` gives
+    it no gap and the mock draws no group. UI only.
+  - Not observed: the app was not built with `scripts/make-app.sh` or launched. Task 38's manual checks are open in
+    `m3-verification.md`.
+
+## Quick Open (FIL-08), after the merge
+
+> Same execution rules as Tasks 1–18: task by task on `fix/m3-editor-and-quick-open`, tests written with each change and
+> run once in Task 22, one build at the end, commits only when the user asks. Read `FIL-08`, `FIL-05`, `FIL-04`,
+> `KBD-02` and `OUT-10` in the M3 HTML first, and try the mock's "Quick Open (⌘P)" button (the browser prints on ⌘P).
+
+**What exists (checked with `rg` on 2026-09-24; symbols are authoritative, lines are not):**
+- `FileTree.rank(_:in:) -> [String]` (`RockyKit/Files/FileTree.swift`): `FIL-04`'s five tiers, stable inside a tier,
+  every match (no limit), `list.paths` for an empty query. `FileTree.matches(_:in:)` gives the highlight ranges.
+  `FileList.paths` is in Finder's order and never holds ignored or deleted files.
+- The list lives in `AppModel.fileTrees[workspaceId]` (`FileTreeState`), made by `prepareFileTree` for the selected
+  workspace only and dropped when another is selected. `readFilesOnce` and `refreshShownFilesIfNeeded` run only while
+  `showsFiles` (the All files tab on screen). `fileTreeChanged` marks `staleFileTrees[id].list` on FSEvents, and does
+  nothing while `fileTrees[id]` is nil.
+- `openFromTree(workspaceId:path:keep:)` replaces the preview tab even when `keep` is true; `openDiff` does not.
+- ⌘P today: `GoToFileCommand` (`Rocky/RockyApp.swift`, `CommandGroup(replacing: .printItem)`) calls
+  `AppModel.goToFile`, which turns the panel to All files and sets `goToFileRequest`; `FilesTab` focuses its filter
+  and shows a "⌘P" hint in it.
+- Overlays: `RootView` stacks `SettingsModal`, `RepoSettingsModal`, `MenuHost`, `ToastHost`. `MenuPanel`
+  (`RockyMenu.swift`): `Theme.panel` at radius 12, a `Theme.hairline` ring, `shadow(.black 0.45, radius 18, y 10)`.
+  `MenuHost` catches outside clicks with `Color.black.opacity(0.001)`. `SettingsPresenter` is an `@Observable`
+  singleton with its own Esc monitor that yields to `MenuPresenter.isAnyMenuOpen`.
+- `ChatView.handleKey` passes events through for a terminal, the editor, `FileFilterFocus`, `CommentComposerFocus`,
+  sheets and modal windows; Esc stops the turn otherwise.
+- Nothing stores recent files or open tabs. The store's last migration is `v10`.
+
+**Decisions:**
+- The panel's radius is 12, `MenuPanel`'s, not the 10 the requirement text says: `FIL-08` asks for "MenuPresenter's
+  menu style", and Rocky's menus are drawn at 12. The designer confirmed it and fixed `FIL-08` (2026-09-24).
+- Recent files are stored (`v11`), because `FIL-08` keeps them across relaunches. A worktree tab records its file each
+  time it is shown by an open (`openDiff`, `openFromTree`, `openBadgeFile`), not by selecting a tab that is already on
+  screen. The last 20 per workspace, trimmed on write.
+- Quick Open reads git's list itself, at most once per opening, and only when there is no list or an event marked it
+  stale. It never makes `showsFiles` true, so events while it is open only mark the list stale: nothing reads while
+  typing, and nothing reads per keystroke.
+- ⌘P is disabled while a settings panel is open (as ⌘S is, `isAnySettingsPanelOpen`) and with no selected workspace.
+
+### Task 19: Ranking with recent files, and their storage
+
+**Files:** `RockyKit/Files/FileTree.swift` (or a new `RockyKit/Files/QuickOpen.swift`), `RockyKit/Store/RockyStore.swift`,
+`RockyKit/Store/Records.swift`; tests in `Tests/RockyKitTests/FileTreeTests.swift` and the store's tests.
+
+- `rank` takes the recent files: `rank(_ query:, in list:, recent: [String] = [])`. Inside each tier the recent files
+  come first, newest first, then the rest in Finder's order. The default keeps `FilesTab`'s behavior.
+- An empty query's order (`FIL-08`): the recent files still in the list, newest first; then the changed files (the
+  order of `WorkspaceChanges`, deleted ones left out) that are not recent; then every other file in Finder's order. A
+  pure function in RockyKit, e.g. `QuickOpen.results(query:list:recent:changed:) -> [String]`, which calls `rank` for a
+  query.
+- Store `v11`: `recentFile(workspaceId TEXT NOT NULL REFERENCES workspace ON DELETE CASCADE, path TEXT NOT NULL,
+  openedAt DATETIME NOT NULL, PRIMARY KEY (workspaceId, path))`. `recordRecentFile(path:workspaceId:at:)` upserts and
+  keeps the newest 20 of the workspace in the same transaction; `recentFiles(workspaceId:) -> [String]` newest first.
+- Tests:
+  - A recent file ranks first inside its tier, never above a better tier.
+  - The empty query's order, with a recent file that is also changed listed once, as recent.
+  - A recent file no longer in the list is left out.
+  - `ranks100000PathsInUnder50ms` passes with 20 recent files.
+  - The store keeps 20, drops the oldest, moves a reopened file to the front, and deletes with the workspace.
+
+Commit: `feat(kit): rank recent files first and store the last 20 per workspace`
+
+### Task 20: The model: the list for Quick Open, recent files, and the preview fix
+
+**Files:** `RockyKit/App/AppModel.swift`; tests in `Tests/RockyKitTests/AppModelTests.swift`.
+
+- `public func quickOpenWillShow(workspaceId:)`: makes the workspace's `FileTreeState` if needed, loads its recent files
+  from the store once per session (`recentFiles[workspaceId]`, public read), and reads git's list only when there is
+  none or `staleFileTrees[workspaceId]?.list` is true. The read goes through the same serialized `refreshFiles` path,
+  with a gate that admits it (for example a `quickOpenWorkspaceId` checked beside `showsFiles` in `readFilesOnce`), and
+  reads only the list, no folder listings. `quickOpenDidHide()` clears the gate.
+- Every open of a worktree tab records the file in `recentFiles` and in the store (the decision above). A store failure
+  sets `errorMessage` and changes nothing else.
+- `FIL-05`'s fix: `openFromTree` with `keep: true` on a file with no tab appends a kept tab and leaves the preview tab
+  as it is; only `keep: false` replaces the preview. An open tab is only shown, as today.
+- Remove `goToFile`, `goToFileRequest` and `goToFileHandled` (and their use in `removeWorkspace`).
+- Tests (with `FakeWorktreeFiles`' `listCount`):
+  - `quickOpenReadsTheListOnceWhileItIsCurrent`: two openings with no event in between list once.
+  - `quickOpenReadsAgainAfterAnEvent`: an FSEvents batch between openings makes the next one list again.
+  - `eventsWhileQuickOpenIsOpenReadNothing`: events while it is open only mark the list stale.
+  - `openingToKeepLeavesThePreviewTabAlone`: preview A open, keep-open B, then A is still the preview and B is kept.
+  - `openingRecordsARecentFile`: newest first, capped at 20, and back after a new model on the same store.
+  - Update or remove `goToFileSelectsTheAllFilesTab`.
+
+Commit: `feat(kit): read the file list for quick open and record recent files`
+
+### Task 21: The Quick Open panel
+
+**Files:** new `RockyUI/QuickOpen.swift` (`QuickOpenPresenter`, `QuickOpenPanel`, its row), `RockyUI/RootView.swift`,
+`RockyUI/ChatView.swift`, `RockyUI/FilesTab.swift`, `Rocky/RockyApp.swift`.
+
+- `QuickOpenPresenter`: an `@Observable` singleton like `SettingsPresenter`, with `workspaceId: String?`, `toggle(for:)`,
+  `dismiss()`, and a local keyDown monitor while shown that closes on Esc unless `MenuPresenter.isAnyMenuOpen`. Showing
+  it calls `model.quickOpenWillShow`, hiding it `model.quickOpenDidHide()`.
+- The overlay goes in `RootView` after `RepoSettingsModal` and before `MenuHost`: a full-window click catcher
+  (`Color.black.opacity(0.001)`, no dimming) and the panel, 440 wide, centered, `WindowMetrics.titleRowHeight + 12`
+  from the top, in `MenuPanel`'s fill, radius (12), ring and shadow. It works with the right panel open or closed and
+  never changes it.
+- **The entrance runs once** (user report, 2026-09-24: in the mock every keystroke hid and reopened the panel). The
+  120 ms fade and 4 pt drop is the transition of the `if` that shows the panel, keyed on the presenter's
+  `workspaceId`. Typing, the arrows and hover change only the list's rows and the selection, under no animation (no
+  `.id` on the panel, no `withAnimation` around the query). Check it by typing fast in the built app.
+- Search: 40 pt, `magnifyingglass`, the field at 14 pt with `stablePlaceholder("Search project files…")` over an empty
+  prompt, focused when it opens, a hairline under it.
+- Rows: 28 pt, radius 6, 11 visible, then the list scrolls (316 pt tall at most with its 4 pt padding). A row holds the
+  `FileKind` icon, the name 13 semibold, the folder 12 `textTertiary` truncated from the head, then at the right end
+  the status letter (`ChangeStatusLetter`) and a `clock` glyph on recent files. `FileTree.matches` in `accent`: share
+  `FilesTab`'s highlighting code instead of copying it. The first row is selected (`fillSelected`); hover selects;
+  the selection scrolls into view.
+- Keys, in the field: ↓ / ↑ move and wrap; Return opens with `keep: true`; ⌥Return opens as a preview (`keep: false`);
+  Esc closes. A click opens, ⌥-click previews. Opening closes the panel and calls `model.openFromTree`.
+- Footer: 32 pt, a hairline on top, "Open ↩" left and "Open as preview ⌥↩" right, 11.5 `textSecondary` text buttons on
+  the selected row, disabled with no rows. The shortcut glyphs are 11 mono `textTertiary`.
+- States: "No file matches “…”" (12.5 `textTertiary`, centered, 20 pt padding); while there is no list yet, a
+  `ProgressLabel` "Reading files…"; a list failure shows its message in the same place.
+- Ranking runs off the main actor as in `FilesTab` (cancelled by the next keystroke), with the recent files and the
+  changes' paths.
+- `ChatView.handleKey`: `return event` while Quick Open is shown, before any other check, so Esc and ⌘U stay with it.
+- ⌘P: `GoToFileCommand` becomes File ▸ Go to File… calling `QuickOpenPresenter.shared.toggle(for:)`; it no longer
+  opens the right panel. Disabled as decided above.
+- `FilesTab`: remove the "⌘P" hint from the filter and the `goToFileRequest` handling (`FIL-04`).
+- A11y: the panel is a dialog "Quick Open", the field "Search project files", and a row reads "openapi.ts, src,
+  modified, recent".
+
+Commit: `feat(ui): add quick open on cmd+p`
+
+### Task 22: The guide, build, tests and verification
+
+- `docs/README.md` (Spanish guide): Quick Open with ⌘P, its keys, recent files and the preview tab rule. Replace the old
+  "⌘P focuses the filter" text.
+- Build once, then `swift test` (parallel twice, `--no-parallel` once) and record the counts in
+  `docs/superpowers/m3-verification.md` under a new "After the merge" section, with the editor and placeholder fixes.
+- Manual, in the built app: ⌘P with the panel open and closed; type fast (the panel must not flicker); ↑/↓ wrap;
+  Return and ⌥Return (the preview rule); Esc and a click outside; ⌘P again closes; recent files after a relaunch.
+
+Commit: `docs: record quick open in the guide and the m3 verification`
+
+## Comments like Conductor (CMT-02, CMT-05, CMT-06), after the merge
+
+> Same execution rules as Tasks 19–22. Read the M3 HTML's "Comments" section first: `CMT-01`, the "Revised 2026-09-24"
+> note, `CMT-02`, `CMT-05`, `CMT-06`, and `DIFF-02`. Rocky no longer stores review comments: a comment is written in a
+> box under the selected lines and goes at once to a conversation, whose transcript keeps it.
+
+**What exists (checked with `rg` on 2026-09-24; symbols are authoritative, lines are not):**
+- Stored comments: `DiffCommentRecord` (`Records.swift`), migration `v9` (`diffComment`), `RockyStore.comments`,
+  `saveComment`, `deleteComment`; `CommentAnchor` (`relocate`, `reanchor`, `capture`, `placement`); `ReviewPrompt.build`;
+  in `AppModel` `diffComments`, `sendingReviews`, `comments(onFile:)`, `readyComments`, `addDiffComment`,
+  `editDiffComment`, `deleteDiffComment`, `sendReview`, `markSent`, `applyReanchoring`, `saveComments`,
+  `syncDiffComments`, and the re-anchoring inside the changes refresh (`movedComments`). `sendAgentAction`'s `willSend`
+  exists only for `sendReview`.
+- UI: `CommentViews.swift` (`DiffCommentState`, `CommentAddGlyph`, `CommentComposerFocus`, `DiffCommentComposer`,
+  `DiffCommentSlot`, `OutdatedCommentsBox`, `DiffCommentCard`, `CommentStateChip`); `DiffTabView`'s comment slots and
+  `saveDraft`; `ChangesTab`'s `ReviewBar` and CHG-03's `CommentCountLabel`.
+- `DiffCommentRecord.Side` is also the side of `CommentLine`, `DiffCommentState` and `DiffLayout.gaps(holding:)`.
+  `CommentAnchor.placement(...).draftRowId` is the only code that finds the row a box opens under.
+- The draft is `@State` in `UnifiedDiffView`: it is lost when the tab or its Diff | Edit mode changes.
+- Chat attachments are `[String]` absolute paths (`ChatItem.attachments`, `ChatMessageRecord.attachments`, JSON since
+  `v5`). `ChatSessionModel.send(_:attachments: [URL])` and `enqueue` turn each into a `resource_link`
+  (`PromptAttachment.file`). `UserMessageRow`, `QueuedMessageRow`, ↑ history (`MessageHistory`) and a queued
+  message's Edit all treat every entry as a file.
+- `sendAgentAction` sends only to the selected conversation, never queues, and shows the conversation tab.
+- A conversation's chat exists only once its tab was shown (`makeChat` is private).
+- `ToastPresenter` shows text only and never takes a click.
+- `DiffScrollRequest` carries a path, not a line, and scrolls to the first hunk only on a change.
+- GRDB 7.11.1 skips an applied migration that the code no longer registers. The only guard is a
+  `fatalError` when the target is below the last applied one. Rocky's own database holds one `diffComment` row, already
+  sent (read-only check, 2026-09-24).
+
+**Decisions:**
+- **Drop the table.** `v9` stays registered, as history. The next free migration drops `diffComment`, so old and new
+  databases end with the same schema. The one stored comment was already sent; its conversation keeps it.
+- **The line entry is an absolute path with a fragment.** It is `/…/worktree/src/openapi.ts#L18-25`, and
+  `…#base-L12-13` for removed lines. The attachments already hold absolute paths, and the chip's click resolves them
+  like a file badge (`openBadgeFile`). This departs from `CMT-05`'s relative example; tell the designer.
+- **The agent's text is built when the comment is written, and travels with the message.** A queued comment must not
+  read its lines after the agent's turn may have edited them. So the message carries its prompt text:
+  - The transcript stores the comment and the entry.
+  - The agent gets `ReviewPrompt.single`'s block, as one text block and no `resource_link`.
+- **↑ history and queued Edit skip comments.** ↑ history leaves out messages with a line entry, because the composer
+  cannot hold the chip. A queued comment row offers Send now and Remove, not Edit. Tell the designer.
+- **Toast wording:**
+  - after a send: "Sent to “<title>”" with Show;
+  - when the turn is running: "Queued in “<title>”" with Show.
+  
+  Show calls `showConversation`.
+- **A stopped conversation** is started, and then the comment goes to it, like `sendQueuedNow` does.
+
+### Task 23: The kit: line entries, the prompt, and sending to any conversation
+
+**Files:** `RockyKit/Review/` (`LineRangeAttachment`, `ReviewPrompt`, `CommentLine` with its own `Side`),
+`RockyKit/Chat/ChatSessionModel.swift`, `RockyKit/ACP/ACPProtocol.swift`, `RockyKit/App/AppModel.swift`,
+`RockyKit/Store/RockyStore.swift`; tests beside each.
+
+- `LineRangeAttachment` (`Sendable`, `Equatable`): `path` (absolute), `side` (`.new` / `.old`), `start`, `end`;
+  `init?(entry:)` parses the last `#L<a>[-<b>]` or `#base-L<a>[-<b>]` suffix, and `entry` prints it; a plain path is
+  not one.
+- `ReviewPrompt.single(path:side:start:end:code:language:comment:) -> String`: the exact text of `CMT-05` for each side
+  (path worktree-relative, "lines 18–25", "line 18", "removed lines 12–13 (from the base)"), the fence one backtick
+  longer than the longest run in the code (`longestBacktickRun`), `\r` removed. `build` goes.
+- `CommentLine` keeps its fields with a `Side` of its own; `DiffLayout.gaps(holding:)` and the tests move to it. The
+  row a box opens under moves from `CommentAnchor.placement` to `DiffLayout` (e.g. `rowId(for:in:)`, with its old-side
+  fallback). The rest of `CommentAnchor` goes.
+- A line comment on the chat side: a message with the comment as its text, the entry as its only attachment, and the
+  prompt text. `ChatSessionModel` sends it (one text block, `PromptAttachment` gains a text case or equivalent) and
+  queues it (`QueuedMessage` keeps the prompt text); `ChatItem` and its record store only the text and the entry.
+- `AppModel.sendLineComment(workspaceId:conversationId:comment:) async -> LineCommentOutcome` (`.sent`, `.queued`,
+  `.unavailable`): makes the conversation's chat if needed without selecting it, starts a stopped one, then sends or
+  queues. It never changes the selected conversation or the tabs.
+- Comment drafts per workspace and diff tab, in `AppModel` like `editors`: the range, its side, the text and the
+  chosen conversation. Dropped when the tab closes, the comment is sent, or it is cancelled.
+- `DiffScrollRequest` gains an optional `CommentLine`; `openLineRange(workspaceId:attachment:)` opens the diff tab
+  scrolled to it, or the file tab when the file is no longer changed.
+- Remove the stored comments (every symbol under "What exists"), `sendAgentAction`'s `willSend`, and add the drop
+  migration.
+- Tests:
+  - `LineRangeAttachment` round-trips both sides and one line, and rejects plain paths and malformed fragments.
+  - `ReviewPrompt.single` produces the exact text on each side, with a fence inside the code.
+  - `ChatSessionModel`: the comment goes out as one text block; while running it is queued and goes out with the text
+    built before; the transcript item holds the comment and the entry.
+  - `AppModel.sendLineComment`: to a conversation not shown, without selecting it; queued while running; a stopped
+    one starts.
+  - `openLineRange` opens a changed file's diff with the line request and an unchanged one's file tab.
+  - The migration drops `diffComment` and a fresh database has none.
+  - Delete the stored-comment tests: `CommentAnchorTests` (keeping `aRowsCommentLineIsItsSidesNumber` and the placement
+    test, moved), `sendReview…`, `aRefreshKeepsCommentsOnTheirLinesAndStoresThem`,
+    `commentsSurviveARelaunchAndGoWithTheirWorkspace`, `commentsMigrationCreatesTheTable`,
+    `removingAWorkspaceRemovesItsComments`.
+
+Commit: `feat(kit): send line comments to any conversation and stop storing review comments`
+
+### Task 24: The comment box (CMT-02)
+
+**Files:** `RockyUI/CommentViews.swift`, `RockyUI/DiffTabView.swift`, `RockyUI/DiffRows.swift`.
+
+- `DiffCommentState` keeps the selection (press, drag, Shift, Esc) and loses editing. It reads and writes the draft
+  in the model, so the box comes back after a tab switch.
+- The box opens under the range's last row, aligned with the code, at most 560 wide, with the range kept in
+  `commentRange`:
+  - The head is 34 pt with a hairline under it: "Sending to" (12 `textTertiary`), then a `MenuButton` with the chosen
+    conversation's `AgentIcon`, its title (12.5 `textPrimary`) and `chevron.up.chevron.down`.
+  - The menu lists the workspace's open conversations, with `MenuItem(isChecked:)` on the chosen one. The default is
+    `selectedConversationIds[workspaceId]`.
+  - The body holds the chip (CMT-06), fixed and not deletable, then the text: 13 pt on 22-pt lines, at least two lines,
+    growing, with the placeholder "Ask about these lines…" through `stablePlaceholder`.
+  - The actions are "⌘Return to send" (11.5 `textTertiary`), Cancel, and Send (`RockyFilledButtonStyle`, white,
+    disabled while the text is empty).
+  - Send reads "Queue" while the chosen conversation's turn runs. Its tooltip is "<agent> is working; this goes out when
+    its turn ends".
+- Keys:
+  - ⌘Return sends and Return adds a new line.
+  - Esc closes an empty box. With text, it first asks "Discard this comment?" in Rocky's style.
+  - `CommentComposerFocus` still keeps Esc from `ChatView`.
+- Sending captures the code: the new side from the worktree lines (`newLines`), the removed side from the removed
+  rows. It builds `ReviewPrompt.single` and calls `sendLineComment`. The box closes and the diff stays on screen.
+- Delete `DiffCommentSlot`, `OutdatedCommentsBox`, `DiffCommentCard`, `CommentStateChip` and the slots in
+  `DiffTabView`.
+
+Commit: `feat(ui): write a comment under the lines and send it to a chosen conversation`
+
+### Task 25: The line chip (CMT-06), the transcript and the toast
+
+**Files:** `RockyUI/FileBadge.swift` (or a new `LineChip`), `RockyUI/ActivityRows.swift`,
+`RockyUI/QueuedMessagesView.swift`, `RockyUI/ChatView.swift`, `RockyUI/Toast.swift`, `RockyUI/DiffTabView.swift`.
+
+- The chip:
+  - It is 22 pt, radius 6, a 1 pt hairline border, on white 4 %.
+  - A 22 pt left segment holds the `FileKind` icon (12) and a hairline divider.
+  - Then the name (12 `textPrimary`) and the range (12 `textSecondary`, tabular): "+18–25", "−12–13", "+18".
+  - The tooltip is the path and the range. Reuse `FileBadgeLook` rather than drawing a second one.
+- `UserMessageRow` and `QueuedMessageRow` show a message with a line entry as the chip on top and the text under it,
+  never as a file badge. A click calls `openLineRange`.
+- ↑ history skips messages with a line entry. A queued comment row has Send now and Remove, and no Edit.
+- `ToastPresenter` takes an optional action: `show(_:action:)`, with a `Show` text button.
+  - Only the toast takes clicks, and only while it has an action.
+  - An action keeps it up longer, 4 s.
+  - The box's send shows "Sent to “…”" or "Queued in “…”".
+- `DiffTabView` scrolls to a line request's row, also when the tab first appears. The gaps that hold the line open
+  first.
+
+Commit: `feat(ui): show line comments as chips in the chat and toast where they went`
+
+### Task 26: The Changes tab and the numbers
+
+**Files:** `RockyUI/ChangesTab.swift`, `RockyUI/DiffRows.swift`.
+
+- Remove `ReviewBar` and CHG-03's comment count, `commentText` and their accessibility text.
+- `DiffRows` already draws `DIFF-02`'s one number column. Check that its doc comments match `CMT-01`: the "+" sits
+  over that number, and a removed row comments on the removed side.
+
+Commit: `refactor(ui): drop the comments bar and counts from the changes tab`
+
+### Task 27: The guide, build, tests and verification
+
+- `docs/README.md`: rewrite the comments section for the box, "Sending to", the queue, the chip and its click. Remove
+  "Send to agent", Pending, Sent and Outdated. Mention the diff's one number column.
+- Build once, then `swift test` (parallel twice, `--no-parallel` once). Record the counts in `m3-verification.md`'s
+  "After the merge".
+- Manual checks in the built app:
+  - comment on new lines and on removed lines;
+  - send to a conversation that is not shown, and see it arrive;
+  - send while a turn runs, and see it queued and then sent;
+  - the chip's click;
+  - Esc with and without text;
+  - the draft after a tab switch;
+  - the toast's Show.
+
+Commit: `docs: record comments like conductor in the guide and the m3 verification`
+
+## File icons (FIL-09), after the merge
+
+> Same execution rules as Tasks 19–27. Read `FIL-09` in the M3 HTML first, and the requirements that now point at it
+> (`FIL-02`, `FIL-05`, `FIL-08`, `CHG-03`, `DIFF-01`, `CMT-06`). User decision, 2026-09-24: Material Icon Theme, files
+> only; folders keep the blue folder.
+
+**What exists:** `FileKind` (`RockyUI/FileBadge.swift`) draws an SF Symbol and a color per category. It is used by
+`FileTreeIcon` (tree, Quick Open), `DiffTabIcon` (tabs), `FileBadgeLook` (chat badges, composer attachments, the line
+chip) and the Changes rows. Bundled SVG marks load through `Bundle.module.url(forResource:withExtension:subdirectory:
+"Icons")` into `NSImage` (`AgentIcon`, `SidebarRow`'s git glyphs). `README.md` credits Prism and Simple Icons.
+
+**Decisions:**
+- **A committed script vendors the icons.** `scripts/vendor-file-icons.py` downloads the pinned npm tarball
+  (`material-icon-theme` 5.38.1) and checks its version. It copies the icons `fileNames`, `fileExtensions` and `file`
+  reference, plus `LICENSE`, into `Sources/RockyUI/Resources/FileIcons/`. It writes the trimmed manifest there as
+  `manifest.json`. Running it again gives the same files.
+- `FileKind` stays: it decides what opens in the editor, and its symbol is the fallback when an SVG fails to load.
+  Folders keep `FileKind.folder`.
+- The lookup is pure and lives in RockyKit. It takes the manifest as a value, so tests use small handmade manifests.
+  RockyUI decodes the bundled manifest once.
+
+### Task 28: The icons, the manifest and the lookup
+
+**Files:** `scripts/vendor-file-icons.py`, `Sources/RockyUI/Resources/FileIcons/` (generated), `Package.swift`
+(`.copy("Resources/FileIcons")` and its credit comment), `README.md`,
+`Sources/RockyKit/Files/FileIcons.swift`, `Tests/RockyKitTests/FileIconsTests.swift`.
+
+- `FileIconManifest` (`Decodable`, `Sendable`) holds `fileNames`, `fileExtensions` and `file`.
+- `FileIcons.iconId(forPath:manifest:) -> String` applies `FIL-09`'s order, case-insensitive:
+  1. the longest path tail in `fileNames`, matched on component boundaries, relative or absolute;
+  2. the file name;
+  3. the longest compound extension;
+  4. the extension;
+  5. the default.
+  
+  The `.github/workflows/*.yml|yaml` rule gives `github-actions-workflow`.
+- Tests: one per step. Each covers case-insensitivity, the longest match winning (`d.ts` and `test.ts` over `ts`), a
+  path tail against an absolute path, and the workflow rule both inside and outside `.github/workflows/`. A file with
+  no extension and no name match gets the default.
+- `README.md` credits Material Icon Theme 5.38.1 (MIT, © 2025 Material Extensions) next to Prism, and names the
+  script.
+
+Commit: `feat(kit): vendor material icon theme's file icons and look them up by path`
+
+### Task 29: Drawing them everywhere
+
+**Files:** a new `RockyUI/FileIcon.swift` (the view and its cache), `FilesTab.swift`, `QuickOpen.swift`,
+`ChangesTab.swift`, `DiffTabView.swift`, `FileTabView.swift`, `FileBadge.swift`.
+
+- `FileIcon(path:size:)` draws the SVG of `FileIcons.iconId`. It uses `Image(nsImage:)`, resizable, at `Zoom.shared(size)`,
+  drawn as a vector at any viewBox. Images are cached per icon id on the main actor, and the manifest is decoded once.
+  If an SVG fails to load, it falls back to `FileKind`'s symbol and color. It is hidden from accessibility.
+- It replaces `FileKind`'s symbol for files, in these places and at these sizes:
+  - 14 pt: the tree and Quick Open rows (`FileTreeIcon`), Changes rows (after the status letter), and the diff and
+    file tab headers (before the path);
+  - 12 pt: unchanged tabs (`DiffTabIcon`; changed ones keep their letter), `FileBadgeLook` (chat badges, composer
+    attachments, the line chip).
+  
+  Folders keep the blue folder.
+- Ignored files draw their icon at 50 %.
+- Energy: no disk reads per row beyond the first load of each icon id; nothing at rest.
+
+Commit: `feat(ui): draw each file's material icon`
+
+### Task 30: The guide, build, tests and verification
+
+- `docs/README.md`: file icons in the All files section, with the credit.
+- Build once, then `swift test` (parallel twice, `--no-parallel` once). Record the counts in `m3-verification.md`.
+- Manual checks: the tree with `.ts`, `.tsx`, `.test.ts`, `package.json`, `tsconfig.json`, `README.md`, `.env` (dimmed),
+  a workflow `.yml`; Quick Open; a tab; a chat badge; the line chip; zoom at 90 % and 125 %.
+
+Commit: `docs: record file icons in the guide and the m3 verification`
+
+## The default app, the path chip and "+" without a menu, after the merge
+
+> Same execution rules as Tasks 19–30. Read first: `TB-03` (`2026-09-23-sidebar-topbar.html`), `OPN-01` and `OPN-02`
+> (`2026-09-23-m2.7-github.html`), `DIFF-01` and `FIL-05` (M3 HTML), and `CNV-01`, `CNV-02`, `KIT-11` and `KIT-13`
+> (`2026-09-23-m2.8-conversations.html`, marked "Shipped early").
+>
+> User decisions, 2026-09-24:
+> - The default app is the last one picked in the Open menu, one for all of Rocky.
+> - A click on a tab header's path opens the file in that app.
+> - "+" creates a conversation at once, with the agent last used in the repository.
+> - A right-click on "+" shows today's two items, as a bridge until M2.8's agent rail.
+
+**What exists:**
+- `WorkspaceDetailView.openMenu` is already simplified: Finder and the editors by name, a divider, New Terminal, Copy
+  Path, 200 wide.
+- `ExternalEditor.installed(lookup:)` and `ExternalEditorOpener.open(_:in:app:toasts:)` open a folder or a file.
+- The "+" is `MenuButton(id: "new-conversation-…")` in `WorkspaceDetailView`, and it calls
+  `AppModel.newConversation(workspace:agent:)`.
+- `showConversations` creates a Claude Code conversation when a workspace has none.
+- `DiffTabHeader` and `FileTabView`'s header draw the path as text.
+
+### Task 31: The default app (OPN-02) and the split button (TB-03)
+
+**Files:** RockyKit (`DefaultOpenApp`, with its tests), `RockyUI/WorkspaceDetailView.swift`, `Rocky/RockyApp.swift`.
+
+- `DefaultOpenApp.resolve(stored:installed:) -> OpenApp` (`.finder` / `.editor(ExternalEditor)`) is pure, with
+  `OPN-02`'s five tests:
+  - the stored app when installed;
+  - the first installed editor when nothing is stored;
+  - Finder with none installed;
+  - the fallback when the stored app is uninstalled, keeping the stored value;
+  - Finder stored.
+- `@AppStorage("defaultOpenApp")` holds the bundle id. It is resolved on each use, with no cache and no polling.
+- The split button follows `TB-03`'s values:
+  - the left part (30 wide) shows the default app's icon at 16 pt and opens the worktree in it; its tooltip is "Open in
+    <app> (⌘O)";
+  - then a 1 × 16 divider;
+  - the right part (22 wide) holds the chevron that opens the menu, with `fillSelected` while the menu is open.
+- In the menu, the default app's item shows the "⌘O" shortcut. Picking Finder or an editor opens the worktree there
+  and makes it the default; New Terminal and Copy Path leave the default alone.
+- File ▸ "Open in <app>" (⌘O) goes in `CommandGroup(after: .newItem)`, disabled with no selected workspace.
+
+Commit: `feat(ui): open the worktree in the default app from a split button`
+
+### Task 32: The path chip (DIFF-01, FIL-05)
+
+**Files:** `RockyUI/DiffTabView.swift`, `RockyUI/FileTabView.swift` (and a shared chip view).
+
+- The chip is 24 pt, radius 6, a 1 px hairline ring, padding 0 8 and gap 6. It holds the `FileIcon` (14), the folder in
+  `textTertiary` and the name in `textPrimary`, at 12.5, with `fillHover` on hover.
+- A click opens the file in the default app: `NSWorkspace.open([fileURL], withApplicationAt:)` for an editor, and
+  `activateFileViewerSelecting` for Finder. A failure shows a toast. The tooltip is "Open in <app>", or "Reveal in
+  Finder".
+- A deleted file's path stays plain text, with no ring, hover or tooltip. The "⋯" menu keeps Open in Finder and Copy
+  Path.
+
+Commit: `feat(ui): open a tab's file in the default app from its path`
+
+### Task 33: "+" creates at once (CNV-01, CNV-02, KIT-13)
+
+**Files:** `RockyKit/Store/RockyStore.swift`, `RockyKit/App/AppModel.swift`, `RockyUI/WorkspaceDetailView.swift`;
+tests in the store's and the model's tests.
+
+- `RockyStore.lastUsedAgent(repoId:) -> AgentKind?` is `KIT-13`'s one query, `chatMessage` → `chatSession` →
+  `workspace`. Its tests:
+  - across two workspaces of a repository;
+  - another repository's messages ignored;
+  - a closed tab still counts;
+  - nil with no messages.
+- `AppModel.newConversation(workspace:)` uses the default agent, `lastUsedAgent` or else Claude Code. `showConversations`
+  first conversation uses the same rule. `newConversation(workspace:agent:)` stays for the bridge. Test: the default
+  agent follows the last user message in the repository.
+- "+" becomes a `Button` in `RockyIconButtonStyle` with `.clickable()` and the tooltip "New conversation". One click
+  adds the tab at the end, selects it and focuses the message box.
+- The bridge is `.rockyContextMenu(id:)` on "+", with "New Claude Code conversation" and "New OpenCode conversation".
+  A pick there does not change the default by itself.
+
+Commit: `feat(ui): create a conversation at once with the last agent used`
+
+### Task 34: The guide, build, tests and verification
+
+- `docs/README.md` covers:
+  - the split button, ⌘O and how the default is picked;
+  - the path chip;
+  - "+" and its right-click.
+- Build once, then `swift test` (parallel twice, `--no-parallel` once). Record the counts in `m3-verification.md`.
+- Manual checks:
+  - ⌘O and the split button with Zed, VS Code and Finder;
+  - picking another app changes the button;
+  - the path chip opens the file in Zed, whether Zed reuses the worktree's window (`OPN-02`'s unknown);
+  - a deleted file's plain path;
+  - "+" with the last agent, and its right-click.
+
+Commit: `docs: record the default app, the path chip and new conversations in the guide`
+
+## ↑ brings a line comment back (CMT-05 History), after the merge
+
+> Same execution rules as Tasks 19–34. User decision, 2026-09-25, after ↑ skipped a line comment and loaded an older,
+> pre-redesign review prompt: "Chip y texto". The designer is updating `CMT-05` History and `CMT-06`.
+
+**What exists:**
+- `ChatView` builds the composer's history from `chat.items` and leaves out messages with a `lineRange`
+  (`ChatView.swift`, `MessageHistory.Entry(text:files:)`).
+- The composer (`Composer.swift`) holds files as `FileAttachment` (`NSTextAttachment`) at `PromptAttachment.marker`.
+  It loads an entry with `load(_:)` and gives back `(text, files)`.
+- A line comment goes out through `AppModel.sendLineComment` / `ChatSessionModel.send(_: LineComment)`, with the prompt
+  text built by the comment box from the diff's rows (`DiffLayout.lines`, `ReviewPrompt.single`).
+- The base's text comes from `AppModel.loadEditorBase` / `editorBaseText` (EDIT-04).
+
+### Task 35: The line chip in the message box
+
+**Files:** `RockyKit/Chat/MessageHistory.swift`, `RockyKit/App/AppModel.swift`, `RockyUI/Composer.swift`,
+`RockyUI/ChatView.swift`; tests in `MessageHistoryTests` / `AppModelTests`.
+
+- `MessageHistory.Entry` carries an optional `LineRangeAttachment`. The history keeps line-comment messages again.
+- The composer can hold at most one line chip, at the start, drawn as `CMT-06`'s chip (`FileBadgeLook(range:)`). ↑
+  and ↓ load it with the text. Backspace over it removes it, and the message then goes as a normal one. Nothing else
+  inserts a line chip.
+- Sending a message that holds a line chip builds the agent's block at send time. `AppModel.lineComment(for:comment:
+  workspaceId:) async -> LineComment` reads the lines:
+  - the new side from the worktree file;
+  - the removed side from the base, like `EDIT-04`, both through `Task.blocking`.
+  
+  It then calls `ReviewPrompt.single`. The comment is sent or queued as a `LineComment`, like the comment box's, so
+  the transcript shows the chip. If the lines can't be read (the file is gone, or the range is past its end), the
+  block goes without the code: "Comment on <path>, lines a–b:" and the comment. Files attached next to a line chip go
+  as `resource_link`s after the block.
+- A queued comment row still has no Edit (scope: the user asked about ↑ only).
+- Tests:
+  - history entries keep their line range;
+  - `lineComment(for:)` reads the new side from the worktree and the removed side from the base;
+  - a range past the end of the file gives the block without code;
+  - the transcript item of a resent comment holds the chip and the text.
+
+Commit: `feat(ui): bring a line comment back with its chip on the up arrow`
+
+### Task 36: The guide, build, tests and verification
+
+- `docs/README.md`: ↑ on a comment brings back the chip and the text, and resending reads the lines again.
+- Build once, then `swift test` (parallel twice, `--no-parallel` once). Record the counts in `m3-verification.md`.
+- Manual checks:
+  - ↑ after a comment;
+  - resend it;
+  - remove the chip with Backspace and send;
+  - ↑ on a comment about removed lines.
+
+Commit: `docs: record the up arrow on line comments in the guide`
+
+## Line counts on edit rows (DIFF-06), after the merge
+
+> Same execution rules as Tasks 19–36. Read `DIFF-06` in the M3 HTML: it settles the counting, the cap, the
+> storage and the test list. This section adds only what the code already holds.
+>
+> The request (2026-09-25): "en las ediciones a los archivos, sería bueno también ver cuántas líneas quitó y agregó".
+
+**What exists:**
+- `ACPUpdate.toolCall` and `toolCallUpdate` (`ACPProtocol.swift`) parse id, title, status, kind and paths, never
+  `content`.
+- `ChatSessionModel` applies them to `ChatItem` (`.tool` rows).
+- `ChatMessageRecord` persists items, and has no stats.
+- `ToolCallRow` and the group header draw the rows (`ActivityRows.swift`).
+- `DiffStat` and `DiffStatLabel` draw M3's `+a −d`.
+- Claude's per-hunk stats are at `_meta.jetbrains.air.diffStats` `{version: 1, added, removed}`
+  (claude-agent-acp 0.81.0, `dist/diff.js`, `air-extension.js`), not `_meta.diffStats`.
+
+### Task 37: Counting and storing (kit)
+
+**Files:** `RockyKit/ACP/ACPProtocol.swift`, a new `RockyKit/Chat/ToolDiffStats.swift`, `RockyKit/Chat/ChatSessionModel.swift`,
+`RockyKit/Store/RockyStore.swift`, `RockyKit/Store/Records.swift`, `RockyKit/App/AppModel.swift` (the record mapping);
+tests beside each.
+
+- `ToolCallDiff`: path, `oldText?`, `newText`, and the stats from `_meta`. `ACPUpdate.toolCall` and `toolCallUpdate` get
+  `diffs: [ToolCallDiff]?`, which is nil when the update carries no `content`.
+- `ToolDiffStats.count(_:) -> DiffStat?` follows `DIFF-06`'s order:
+  1. the stats;
+  2. `oldText` nil counts all of `newText`'s lines as added;
+  3. otherwise a `CollectionDifference` line diff, capped at 5,000 lines for both sides together.
+
+  A final newline does not start a line. If any entry cannot be counted, the result is nil.
+- `ChatItem.diffStat` is set only when the status is completed, from the latest content. An update with `content`
+  replaces the stat, and an update without it keeps it. The line diff runs off the main actor (`Task.blocking` or a
+  detached CPU task, as `FilesTab`'s ranking does).
+- The next free migration adds nullable `additions` and `deletions` columns to `chatMessage`. Old rows stay nil.
+- Tests: `DIFF-06`'s list. At least: Claude's `_meta` path, a new file, a context-line diff, the cap, one uncountable
+  entry giving nil, an optimistic diff replaced by the completed one, failed and rejected giving none, and the record
+  round trip.
+
+Commit: `feat(kit): count the lines each edit tool call added and removed`
+
+### Task 38: The rows, the group, the guide and verification
+
+**Files:** `RockyUI/ActivityRows.swift`, `docs/README.md`, `docs/superpowers/m3-verification.md`.
+
+- `DiffStatLabel` sits 6 after the badges of a tool row with a stat, showing both numbers, including "+10 −0".
+- The "N tool calls" header shows the sum of its rows' stats. It counts each row, so this is not a net change.
+- `docs/README.md` explains the counts on edit rows and on the group.
+- Build once, then `swift test` (parallel twice, `--no-parallel` once). Record the counts.
+- Manual checks, with Claude and with OpenCode: an Edit, a Write of a new file, a rejected edit, and a resumed
+  conversation keeping its counts.
+
+Commit: `feat(ui): show each edit's line counts in the chat`
+

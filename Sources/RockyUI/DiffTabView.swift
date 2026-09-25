@@ -2,20 +2,19 @@ import AppKit
 import RockyKit
 import SwiftUI
 
-/// A diff tab's icon in the tab row (DIFF-01): the status letter of a file in Changes, else the file's kind, as an
-/// unchanged file shows (FIL-05). A worktree tab always holds a file, so its kind comes from the name alone.
+/// A diff tab's icon in the tab row (DIFF-01): the status letter of a file in Changes, else the file's Material icon
+/// at 12 points, as an unchanged file shows (FIL-05, FIL-09). A worktree tab always holds a file, so the icon comes
+/// from the path alone.
 struct DiffTabIcon: View {
     let status: FileDiff.Status?
+    /// Worktree-relative.
     let path: String
 
     var body: some View {
         if let status {
             ChangeStatusLetter(status: status)
         } else {
-            let kind = FileKind(path: path, isDirectory: false)
-            Image(systemName: kind.symbol)
-                .font(.rocky(11))
-                .foregroundStyle(kind.color)
+            FileIcon(path: path, size: 12)
         }
     }
 }
@@ -127,10 +126,10 @@ struct DiffTabView: View {
     }
 }
 
-/// DIFF-01's header: the folder (`textTertiary`) and name (12.5), for a rename "old/path → new/path" (DIFF-03), the
-/// file's `+a −d` and "New file", then "Edited" and Save while the editor has unsaved edits, or "Reloaded" (EDIT-02,
-/// EDIT-03), then Diff | Edit, or "Unchanged" for a file not in Changes, and "⋯" (Reveal in All Files, Open in Finder,
-/// Copy Path, and Discard Changes… for uncommitted files; no icons).
+/// DIFF-01's header: the path chip (a deleted file's path as plain text), for a rename "old/path → new/path"
+/// (DIFF-03), the file's `+a −d` and "New file", then "Edited" and Save while the editor has unsaved edits, or
+/// "Reloaded" (EDIT-02, EDIT-03), then Diff | Edit, or "Unchanged" for a file not in Changes, and "⋯" (Reveal in All
+/// Files, Open in Finder, Copy Path, and Discard Changes… for uncommitted files; no icons).
 private struct DiffTabHeader: View {
     let model: AppModel
     let workspaceId: String
@@ -149,12 +148,9 @@ private struct DiffTabHeader: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            pathLabel
-                .font(.rocky(12.5))
-                .lineLimit(1)
-                .truncationMode(.head)
+            // A deleted file is not on disk, so there is nothing to open (DIFF-01).
+            PathChip(path: path, oldPath: file?.oldPath, url: url, opens: file?.status != .deleted)
                 .layoutPriority(1)
-                .help(file?.oldPath.map { "\($0) → \(path)" } ?? path)
             if let file {
                 DiffStatLabel(stat: DiffStat(additions: file.additions, deletions: file.deletions))
                 if file.status == .added {
@@ -211,18 +207,6 @@ private struct DiffTabHeader: View {
         .frame(height: Zoom.shared(34))
     }
 
-    /// "src/api/" in `textTertiary`, then the name; a rename puts its old path and an arrow first.
-    private var pathLabel: Text {
-        let parent = (path as NSString).deletingLastPathComponent
-        let folder = Text(verbatim: parent.isEmpty ? "" : parent + "/").foregroundStyle(Theme.textTertiary)
-        let name = Text(verbatim: (path as NSString).lastPathComponent).foregroundStyle(Theme.textPrimary)
-        if let oldPath = file?.oldPath {
-            let old = Text(verbatim: "\(oldPath) → ").foregroundStyle(Theme.textTertiary)
-            return Text("\(old)\(folder)\(name)")
-        }
-        return Text("\(folder)\(name)")
-    }
-
     private static func editDisabledReason(_ file: FileDiff) -> String? {
         if file.status == .deleted { return "A deleted file cannot be edited" }
         if file.isBinary { return "A binary file cannot be edited" }
@@ -236,6 +220,80 @@ private struct DiffTabHeader: View {
         } else {
             NSWorkspace.shared.open(url.deletingLastPathComponent())
         }
+    }
+}
+
+/// DIFF-01's path, a chip as in Conductor (user request, 2026-09-24), in the diff and file tabs' headers: the file's
+/// Material icon (FIL-09, 14 points; a folder a badge opened keeps the blue folder), then the folder in `textTertiary`
+/// and the name in `textPrimary`, at 12.5, a rename's old path and an arrow first (DIFF-03). 24 points, radius 6, a
+/// 1-point hairline ring, padding 0 8, gap 6, `fillHover` on hover. A click opens the file in the default app (OPN-02),
+/// or reveals it when Finder is the default. It opens the file on disk: unsaved edits in Rocky are not in it, and a save
+/// made in the other editor brings up EDIT-03's banner. With `opens` false (a deleted file, not on disk) it is the same
+/// text with no ring, padding, hover or tooltip. The default is looked up when the chip draws and again on the click.
+struct PathChip: View {
+    /// Shown as it is: worktree-relative in a diff tab, the full path (with "~") in a file tab.
+    let path: String
+    var oldPath: String?
+    /// The file on disk.
+    let url: URL
+    var isFolder = false
+    var opens = true
+    @AppStorage(DefaultOpenApp.storageKey) private var storedDefault: String?
+    @Environment(ToastPresenter.self) private var toasts: ToastPresenter?
+    @State private var hovering = false
+
+    var body: some View {
+        if opens {
+            let app = InstalledApp.defaultApp(stored: storedDefault).app
+            let tooltip = app == .finder ? "Reveal in Finder" : "Open in \(app.displayName)"
+            Button {
+                InstalledApp.defaultApp(stored: storedDefault).openFile(url) { [toasts] in toasts?.show($0) }
+            } label: {
+                content
+                    .padding(.horizontal, 8)
+                    .frame(height: Zoom.shared(24))
+                    .background(hovering ? Theme.fillHover : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.hairline))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { inside in withAnimation(Theme.Motion.hover) { hovering = inside } }
+            .clickable()
+            .help(tooltip)
+            .accessibilityLabel(path)
+            .accessibilityHint(tooltip)
+        } else {
+            content
+                .frame(height: Zoom.shared(24))
+        }
+    }
+
+    private var content: some View {
+        HStack(spacing: 6) {
+            if isFolder {
+                Image(systemName: FileKind.folder.symbol)
+                    .font(.rocky(12))
+                    .foregroundStyle(FileKind.folder.color)
+            } else {
+                FileIcon(path: path, size: 14)
+            }
+            label
+                .font(.rocky(12.5))
+                .lineLimit(1)
+                .truncationMode(.head)
+        }
+    }
+
+    /// "src/api/" in `textTertiary`, then the name; a rename puts its old path and an arrow first.
+    private var label: Text {
+        let parent = (path as NSString).deletingLastPathComponent
+        let folder = Text(verbatim: parent.isEmpty ? "" : parent + "/").foregroundStyle(Theme.textTertiary)
+        let name = Text(verbatim: (path as NSString).lastPathComponent).foregroundStyle(Theme.textPrimary)
+        if let oldPath {
+            let old = Text(verbatim: "\(oldPath) → ").foregroundStyle(Theme.textTertiary)
+            return Text("\(old)\(folder)\(name)")
+        }
+        return Text("\(folder)\(name)")
     }
 }
 
@@ -300,7 +358,8 @@ private struct DiffModeSegment: View {
 
 /// DIFF-02 and DIFF-03: a changed file's unified diff, or the line that stands in for it (binary, large, mode only).
 /// The worktree file is read off the main actor for the unchanged runs (`DiffLayout`), and the tokens come from the
-/// highlighter's queue; rows show plain text until they arrive (DIFF-04).
+/// highlighter's queue; rows show plain text until they arrive (DIFF-04). CMT-01's selection opens CMT-02's comment
+/// box under the range, and a chip's click (CMT-06) scrolls to its line.
 struct UnifiedDiffView: View {
     let model: AppModel
     let workspace: Workspace
@@ -318,8 +377,16 @@ struct UnifiedDiffView: View {
     @State private var layout: [Int] = []
     @State private var scroll = DiffScrollOffset()
     @State private var viewportWidth: CGFloat = 0
-    /// CMT-01's range and CMT-02's composer, for this tab only.
-    @State private var commenting = DiffCommentState()
+    /// CMT-01's range while it is pressed; the box is the model's, so it outlives this view.
+    @State private var commenting: DiffCommentState
+    @Environment(ToastPresenter.self) private var toasts: ToastPresenter?
+
+    init(model: AppModel, workspace: Workspace, file: FileDiff) {
+        self.model = model
+        self.workspace = workspace
+        self.file = file
+        _commenting = State(initialValue: DiffCommentState(model: model, workspaceId: workspace.id, path: file.path))
+    }
 
     private struct FileSizes {
         let old: Int?
@@ -329,6 +396,12 @@ struct UnifiedDiffView: View {
     private struct LoadKey: Equatable {
         let file: FileDiff
         let showsLarge: Bool
+    }
+
+    /// CMT-06: a chip's line to scroll to, once the rows it needs are read.
+    private struct LineScrollKey: Equatable {
+        let serial: Int?
+        let isLoaded: Bool
     }
 
     private var isCollapsed: Bool {
@@ -380,50 +453,49 @@ struct UnifiedDiffView: View {
         "File mode changed \(change.old.suffix(3)) → \(change.new.suffix(3))"
     }
 
-    /// DIFF-05: a badge asked this tab for its first hunk; the serial of the request, when it is this file's.
-    private var scrollRequest: Int? {
+    /// DIFF-05 and CMT-06: the request to scroll this tab, when it is this file's.
+    private var scrollRequest: DiffScrollRequest? {
         guard let request = model.diffScrollRequests[workspace.id], request.path == file.path else { return nil }
-        return request.serial
+        return request
+    }
+
+    /// CMT-06: a chip's request this tab has not scrolled for yet.
+    private var pendingLineRequest: DiffScrollRequest? {
+        guard let request = scrollRequest, request.line != nil, model.handledLineScrolls[workspace.id] != request.serial else { return nil }
+        return request
     }
 
     private var rowsView: some View {
-        let comments = model.comments(onFile: file.path, workspaceId: workspace.id)
         let draft = commenting.draft
-        // A run holding a commented line opens, so the comment shows under its line (CMT-02).
-        let commented = Set(comments.filter { $0.state != .outdated }.map { CommentLine(side: $0.side, number: $0.endLine) })
-        let open = expanded.union(DiffLayout.gaps(holding: commented, in: file, lineCount: newLines?.count))
+        // A run holding the box's last line opens, so the box shows under its line (CMT-02), also when the tab comes
+        // back without the runs it had expanded.
+        let held: Set<CommentLine> = draft.map { [$0.lastLine] } ?? []
+        let open = expanded.union(DiffLayout.gaps(holding: held, in: file, lineCount: newLines?.count))
         let rows = DiffLayout.rows(for: file, newLines: newLines, expanded: open)
-        let placement = CommentAnchor.placement(of: comments, draft: draft?.lastLine, in: rows)
+        let boxRowId = draft.flatMap { DiffLayout.rowId(for: $0.lastLine, in: rows) }
         let contentWidth = Zoom.shared(DiffMetrics.gutterWidth + DiffMetrics.codeTrailingPadding)
             + CGFloat(maxColumns) * DiffMetrics.characterWidth
         let width = max(contentWidth, viewportWidth)
-        // CMT-02's cards: at most 560 wide, and within the viewport past the gutter.
-        let cardWidth = min(Zoom.shared(560), max(Zoom.shared(240), viewportWidth - Zoom.shared(DiffMetrics.gutterWidth) - 24))
+        // CMT-02's box: at most 560 wide, and within the viewport past the gutter.
+        let boxWidth = min(Zoom.shared(560), max(Zoom.shared(240), viewportWidth - Zoom.shared(DiffMetrics.gutterWidth) - 24))
         let tokens = self.tokens
         let scroll = self.scroll
         let commenting = self.commenting
         return ScrollViewReader { proxy in
             ScrollView([.horizontal, .vertical]) {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    if !placement.outdated.isEmpty || !placement.unplaced.isEmpty {
-                        commentSlot(outdated: placement.outdated, comments: placement.unplaced, showsComposer: false, rows: rows, width: width, cardWidth: cardWidth)
-                    }
                     if let modeChange = file.modeChange {
                         DiffCaptionRow(text: Self.modeText(modeChange), width: width, scroll: scroll)
                     }
                     ForEach(rows) { row in
                         switch row {
-                        case .hunk(_, let header):
-                            DiffHunkRow(header: header, width: width, scroll: scroll)
                         case .line(let line):
                             DiffLineRow(line: line, tokens: tokens.tokens(for: line), width: width, scroll: scroll, commenting: commenting)
                         case .gap(let gap, let count):
                             DiffGapRow(count: count, width: width, scroll: scroll) { expanded.insert(gap) }
                         }
-                        let under = placement.underRows[row.id] ?? []
-                        let showsComposer = placement.draftRowId == row.id
-                        if !under.isEmpty || showsComposer {
-                            commentSlot(comments: under, showsComposer: showsComposer, rows: rows, width: width, cardWidth: cardWidth)
+                        if row.id == boxRowId, let draft {
+                            commentBox(draft, rows: rows, width: width, boxWidth: boxWidth)
                         }
                     }
                 }
@@ -432,59 +504,111 @@ struct UnifiedDiffView: View {
                 .padding(.bottom, 40)
             }
             .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+            // A two-axis scroll view centers content shorter than itself: a diff whose unchanged runs are collapsed
+            // sat in the middle of the tab, under empty space (user report, 2026-09-24). It starts at the top, as
+            // Conductor's does.
+            .defaultScrollAnchor(.topLeading, for: .alignment)
             .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.x } action: { _, x in
                 scroll.x = x
             }
             .onScrollGeometryChange(for: CGFloat.self) { $0.containerSize.width } action: { _, width in
                 viewportWidth = width
             }
-            .onChange(of: scrollRequest) { _, request in
+            .onChange(of: scrollRequest?.serial) { _, serial in
                 // A tab that opens for the badge starts at its top, where the first hunk is; this is for a tab that was
-                // already on screen, scrolled elsewhere.
-                guard request != nil else { return }
-                proxy.scrollTo(DiffRow.firstHunkId, anchor: .topLeading)
+                // already on screen, scrolled elsewhere. A chip's line is scrolled to below.
+                guard serial != nil, scrollRequest?.line == nil else { return }
+                if let first = DiffLayout.firstHunkRowId(in: file) { proxy.scrollTo(first, anchor: .topLeading) }
+            }
+            .onChange(of: LineScrollKey(serial: pendingLineRequest?.serial, isLoaded: isLoaded), initial: true) {
+                scrollToRequestedLine(proxy)
             }
         }
     }
 
-    private func commentSlot(
-        outdated: [DiffCommentRecord] = [],
-        comments: [DiffCommentRecord],
-        showsComposer: Bool,
-        rows: [DiffRow],
-        width: CGFloat,
-        cardWidth: CGFloat
-    ) -> some View {
-        DiffCommentSlot(
-            outdated: outdated,
-            comments: comments,
-            showsComposer: showsComposer,
-            commenting: commenting,
-            width: width,
-            cardWidth: cardWidth,
-            scroll: scroll,
-            save: { saveDraft(rows: rows) },
-            delete: { deleteComment($0) }
-        )
-    }
-
-    /// CMT-02's Comment: a new comment keeps the text of its lines (`CommentAnchor.capture`) from the rows it was made
-    /// on, or its edit gets the new body. The range and the composer go.
-    private func saveDraft(rows: [DiffRow]) {
-        guard let draft = commenting.draft else { return }
-        let body = commenting.text
-        if let id = draft.editing {
-            model.editDiffComment(id: id, workspaceId: workspace.id, body: body)
-        } else {
-            let capture = CommentAnchor.capture(draft.range, side: draft.side, rows: rows, newLines: newLines)
-            model.addDiffComment(workspaceId: workspace.id, path: file.path, side: draft.side, lines: draft.range, capture: capture, body: body)
+    /// CMT-06: a chip's line, also in a tab that has just opened for it. Its run opens first, and once the tab has
+    /// scrolled the model marks the request handled, so showing the tab again starts at its top.
+    private func scrollToRequestedLine(_ proxy: ScrollViewProxy) {
+        guard isLoaded, let request = pendingLineRequest, let line = request.line else { return }
+        let opened = expanded.union(DiffLayout.gaps(holding: [line], in: file, lineCount: newLines?.count))
+        if opened != expanded { expanded = opened }
+        let rows = DiffLayout.rows(for: file, newLines: newLines, expanded: opened)
+        if let rowId = DiffLayout.rowId(for: line, in: rows) {
+            // After the run's rows are laid out.
+            DispatchQueue.main.async { proxy.scrollTo(rowId, anchor: UnitPoint(x: 0, y: 0.3)) }
         }
-        commenting.cancel()
+        model.lineScrollHandled(workspaceId: workspace.id, serial: request.serial)
     }
 
-    private func deleteComment(_ comment: DiffCommentRecord) {
-        if commenting.draft?.editing == comment.id { commenting.cancel() }
-        model.deleteDiffComment(id: comment.id, workspaceId: workspace.id)
+    /// CMT-02's box under its range's last row, aligned with the code (the gutter's width in), staying in view while
+    /// long lines scroll, like the number column.
+    private func commentBox(_ draft: CommentDraft, rows: [DiffRow], width: CGFloat, boxWidth: CGFloat) -> some View {
+        let range = LineRangeAttachment(
+            path: AppModel.editorPath(worktree: workspace.path, relativePath: file.path),
+            side: draft.side,
+            start: draft.start,
+            end: draft.end
+        )
+        return Sticky(scroll: scroll) {
+            LineCommentBox(
+                model: model,
+                workspaceId: workspace.id,
+                range: range,
+                draft: draft,
+                commenting: commenting,
+                send: { sendComment(draft, range: range, rows: rows) }
+            )
+            .frame(width: boxWidth, alignment: .leading)
+            .padding(.leading, Zoom.shared(DiffMetrics.gutterWidth))
+            .padding(.top, 6)
+            .padding(.bottom, 8)
+        }
+        .frame(width: width, alignment: .leading)
+    }
+
+    /// CMT-05's Send: the lines' code as it is now, the new side from the worktree file (`newLines`) and the removed
+    /// side from the rows, goes with the comment as `ReviewPrompt.single`'s text. The box closes and the diff stays;
+    /// the toast says where the comment went, with Show. A comment that could go nowhere comes back in its box.
+    private func sendComment(_ draft: CommentDraft, range: LineRangeAttachment, rows: [DiffRow]) {
+        let text = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, let conversation = model.commentConversation(for: draft, workspaceId: workspace.id) else { return }
+        let code = DiffLayout.lines(in: draft.lines, side: draft.side, rows: rows, newLines: newLines)
+        let prompt = ReviewPrompt.single(
+            path: file.path,
+            side: draft.side,
+            start: draft.start,
+            end: draft.end,
+            code: code,
+            language: ReviewPrompt.fenceLanguage(forPath: file.path),
+            comment: text
+        )
+        let comment = LineComment(text: text, range: range, prompt: prompt)
+        let written = (text: draft.text, conversationId: draft.conversationId)
+        commenting.cancel()
+        let model = self.model
+        let workspace = self.workspace
+        let path = file.path
+        let toasts = self.toasts
+        let title = conversation.title ?? "New conversation"
+        let show = ToastAction(title: "Show") {
+            let current = model.workspace(id: workspace.id) ?? workspace
+            Task { await model.showConversation(workspace: current, conversationId: conversation.id) }
+        }
+        Task {
+            switch await model.sendLineComment(workspaceId: workspace.id, conversationId: conversation.id, comment: comment) {
+            case .sent:
+                toasts?.show("Sent to “\(title)”", action: show)
+            case .queued:
+                toasts?.show("Queued in “\(title)”", action: show)
+            case .unavailable:
+                if model.commentDraft(workspaceId: workspace.id, path: path) == nil,
+                   let restored = model.openCommentDraft(workspaceId: workspace.id, path: path, side: range.side, lines: range.start...range.end) {
+                    restored.text = written.text
+                    restored.conversationId = written.conversationId
+                }
+                toasts?.show("Couldn’t send to “\(title)”", action: show)
+            }
+        }
     }
 
     /// Reads what the rows need for this version of the file: the worktree file for its unchanged runs, the widest

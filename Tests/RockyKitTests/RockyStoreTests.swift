@@ -115,6 +115,76 @@ struct RockyStoreTests {
         #expect(try store.conversationTitles() == [workspace.id: "Fix invoice rounding"])
     }
 
+    /// KIT-13: nil while the repository has no user message, the agent's replies and another repository's messages
+    /// included.
+    @Test func lastUsedAgentIsNilWithoutAUserMessageInTheRepository() throws {
+        let store = try RockyStore.inMemory()
+        let repo = Repo(name: "app", path: "/dev/app")
+        let other = Repo(name: "web", path: "/dev/web")
+        try store.add(repo)
+        try store.add(other)
+        #expect(try store.lastUsedAgent(repoId: repo.id) == nil)
+
+        let lisbon = Workspace(repoId: repo.id, name: "lisbon", path: "/p", branch: "rocky/lisbon")
+        let paris = Workspace(repoId: other.id, name: "paris", path: "/r", branch: "rocky/paris")
+        try store.add(lisbon)
+        try store.add(paris)
+        let session = ChatSessionRecord(workspaceId: lisbon.id, agent: "opencode")
+        let elsewhere = ChatSessionRecord(workspaceId: paris.id, agent: "opencode")
+        try store.add(session)
+        try store.add(elsewhere)
+        try store.upsert(ChatMessageRecord(id: "a", sessionId: session.id, seq: 0, kind: "agent", text: "Hello", status: nil))
+        try store.upsert(ChatMessageRecord(id: "b", sessionId: elsewhere.id, seq: 0, kind: "user", text: "hi", status: nil))
+
+        #expect(try store.lastUsedAgent(repoId: repo.id) == nil)
+        #expect(try store.lastUsedAgent(repoId: other.id) == .opencode)
+    }
+
+    /// KIT-13, CNV-02: the agent of the newest user message across the repository's workspaces; a closed tab still
+    /// counts, and another repository's newer messages do not.
+    @Test func lastUsedAgentFollowsTheNewestUserMessageAcrossTheRepository() throws {
+        let store = try RockyStore.inMemory()
+        let repo = Repo(name: "app", path: "/dev/app")
+        let other = Repo(name: "web", path: "/dev/web")
+        try store.add(repo)
+        try store.add(other)
+        let lisbon = Workspace(repoId: repo.id, name: "lisbon", path: "/p", branch: "rocky/lisbon")
+        let oslo = Workspace(repoId: repo.id, name: "oslo", path: "/q", branch: "rocky/oslo")
+        let paris = Workspace(repoId: other.id, name: "paris", path: "/r", branch: "rocky/paris")
+        for workspace in [lisbon, oslo, paris] { try store.add(workspace) }
+        let claude = ChatSessionRecord(workspaceId: lisbon.id, agent: "claude", createdAt: day)
+        var opencode = ChatSessionRecord(workspaceId: oslo.id, agent: "opencode", createdAt: day)
+        let elsewhere = ChatSessionRecord(workspaceId: paris.id, agent: "claude", createdAt: day)
+        for session in [claude, opencode, elsewhere] { try store.add(session) }
+
+        func send(_ id: String, in session: ChatSessionRecord, kind: String = "user", after seconds: Double) throws {
+            try store.upsert(ChatMessageRecord(
+                id: id, sessionId: session.id, seq: 0, kind: kind, text: id, status: nil,
+                createdAt: day.addingTimeInterval(seconds)
+            ))
+        }
+
+        try send("first", in: claude, after: 10)
+        #expect(try store.lastUsedAgent(repoId: repo.id) == .claude)
+
+        // Another workspace of the repository, later: its agent.
+        try send("second", in: opencode, after: 20)
+        #expect(try store.lastUsedAgent(repoId: repo.id) == .opencode)
+
+        // The agent's own reply in the other conversation, and a newer message in another repository, change nothing.
+        try send("reply", in: claude, kind: "agent", after: 30)
+        try send("elsewhere", in: elsewhere, after: 40)
+        #expect(try store.lastUsedAgent(repoId: repo.id) == .opencode)
+
+        // Its tab closed: the message still counts.
+        opencode.closedAt = day.addingTimeInterval(50)
+        try store.update(opencode)
+        #expect(try store.lastUsedAgent(repoId: repo.id) == .opencode)
+
+        try send("third", in: claude, after: 60)
+        #expect(try store.lastUsedAgent(repoId: repo.id) == .claude)
+    }
+
     @Test func aTabTitleLeavesTheFilesOut() {
         let marker = PromptAttachment.marker
         #expect(ChatSessionRecord.title(from: "\(marker) Mira \(marker) esta imagen\nsegunda línea") == "Mira esta imagen")
@@ -216,71 +286,43 @@ struct RockyStoreTests {
         #expect(saved.storedPullRequest?.number == 4525)
     }
 
-    // MARK: Review comments (M3, CMT-03)
+    // MARK: Review comments (M3)
 
-    /// v9 adds the `diffComment` table: a v8 database opens with its rows and then keeps comments, their snippet and
-    /// context as they were written (a CRLF line keeps its "\r").
-    @Test func commentsMigrationCreatesTheTable() throws {
+    /// CMT-05 (2026-09-24): Rocky stores no comment any more. A database at the previous migration, with v9's table and
+    /// a comment in it, opens without the table and keeps its other rows; a new database never keeps it either.
+    @Test func theNextMigrationDropsTheCommentsTable() throws {
         let path = try Fixtures.temporaryDirectory("store").appendingPathComponent("rocky.sqlite").path
-        let v8 = try DatabaseQueue(path: path)
-        try RockyStore.migrator.migrate(v8, upTo: "v8")
-        try v8.write { db in
+        let v11 = try DatabaseQueue(path: path)
+        try RockyStore.migrator.migrate(v11, upTo: "v11")
+        try v11.write { db in
             try db.execute(sql: "INSERT INTO repo (id, name, path, colorIndex, createdAt) VALUES ('r1', 'app', '/r/app', 2, '2026-09-01 10:00:00.000')")
             try db.execute(sql: """
                 INSERT INTO workspace (id, repoId, name, path, branch, port, createdAt)
                 VALUES ('w1', 'r1', 'lisbon', '/r/app-worktrees/lisbon', 'rocky/lisbon', 41000, '2026-09-01 10:00:00.000')
                 """)
+            try db.execute(sql: """
+                INSERT INTO diffComment (id, workspaceId, path, side, startLine, endLine, snippet, contextBefore, contextAfter,
+                    body, state, createdAt, sentAt)
+                VALUES ('c1', 'w1', 'README.md', 'new', 1, 1, '["hello"]', '[]', '[]', 'Keep it.', 'sent',
+                    '2026-09-01 10:00:00.000', '2026-09-01 10:01:00.000')
+                """)
+            try db.execute(sql: "INSERT INTO recentFile (workspaceId, path, openedAt) VALUES ('w1', 'README.md', '2026-09-01 10:02:00.000')")
         }
-        try v8.close()
+        try v11.close()
 
         let store = try RockyStore(path: path)
-        #expect(try store.repos().first?.colorIndex == 2)
         #expect(try store.workspaces(repoId: "r1").map(\.name) == ["lisbon"])
-        #expect(try store.comments(workspaceId: "w1").isEmpty)
-        let comment = DiffCommentRecord(
-            workspaceId: "w1",
-            path: "src/a.ts",
-            side: .old,
-            startLine: 3,
-            endLine: 4,
-            snippet: ["let a = 1", "let b = 2\r"],
-            contextBefore: ["// top"],
-            contextAfter: [],
-            body: "Why were these removed?",
-            createdAt: day
-        )
-        try store.saveComment(comment)
-        #expect(try store.comments(workspaceId: "w1") == [comment])
-    }
+        #expect(try store.recentFiles(workspaceId: "w1") == ["README.md"])
+        let reopened = try DatabaseQueue(path: path)
+        #expect(try reopened.read { try $0.tableExists("diffComment") } == false)
+        try reopened.close()
 
-    /// Comments come oldest first, are replaced by id and deleted one by one; removing their workspace removes them,
-    /// and another workspace's stay.
-    @Test func removingAWorkspaceRemovesItsComments() throws {
-        let store = try RockyStore.inMemory()
-        let repo = Repo(name: "app", path: "/dev/app")
-        try store.add(repo)
-        let lisbon = Workspace(repoId: repo.id, name: "lisbon", path: "/p", branch: "rocky/lisbon")
-        let oslo = Workspace(repoId: repo.id, name: "oslo", path: "/q", branch: "rocky/oslo")
-        try store.add(lisbon)
-        try store.add(oslo)
-        let first = DiffCommentRecord(workspaceId: lisbon.id, path: "a.ts", side: .new, startLine: 1, endLine: 1, snippet: ["a"], body: "One", createdAt: day)
-        var second = DiffCommentRecord(workspaceId: lisbon.id, path: "b.ts", side: .new, startLine: 2, endLine: 5, snippet: ["b"], body: "Two", createdAt: day.addingTimeInterval(60))
-        let other = DiffCommentRecord(workspaceId: oslo.id, path: "a.ts", side: .new, startLine: 1, endLine: 1, snippet: ["a"], body: "Elsewhere", createdAt: day)
-        for comment in [second, first, other] {
-            try store.saveComment(comment)
-        }
-        #expect(try store.comments(workspaceId: lisbon.id) == [first, second])
-
-        second.state = .sent
-        second.sentAt = day.addingTimeInterval(120)
-        try store.saveComment(second)
-        #expect(try store.comments(workspaceId: lisbon.id) == [first, second])
-        try store.deleteComment(id: first.id)
-        #expect(try store.comments(workspaceId: lisbon.id) == [second])
-
-        try store.deleteWorkspace(id: lisbon.id)
-        #expect(try store.comments(workspaceId: lisbon.id).isEmpty)
-        #expect(try store.comments(workspaceId: oslo.id) == [other])
+        let freshPath = try Fixtures.temporaryDirectory("store").appendingPathComponent("rocky.sqlite").path
+        _ = try RockyStore(path: freshPath)
+        let fresh = try DatabaseQueue(path: freshPath)
+        #expect(try fresh.read { try $0.tableExists("diffComment") } == false)
+        #expect(try fresh.read { try $0.tableExists("recentFile") })
+        try fresh.close()
     }
 
     /// FIL-01, FIL-03: a database at the previous migration opens, gains the expanded folders' table and the
@@ -335,6 +377,121 @@ struct RockyStoreTests {
         try store.deleteWorkspace(id: lisbon.id)
         #expect(try store.expandedFolders(workspaceId: lisbon.id).isEmpty)
         #expect(try store.expandedFolders(workspaceId: oslo.id) == ["src"])
+    }
+
+    /// FIL-08: a database at the previous migration opens, gains the recent files' table, and keeps its rows.
+    @Test func recentFilesMigrationAddsItsTable() throws {
+        let path = try Fixtures.temporaryDirectory("store").appendingPathComponent("rocky.sqlite").path
+        let v10 = try DatabaseQueue(path: path)
+        try RockyStore.migrator.migrate(v10, upTo: "v10")
+        try v10.write { db in
+            try db.execute(sql: "INSERT INTO repo (id, name, path, colorIndex, createdAt) VALUES ('r1', 'app', '/r/app', 2, '2026-09-01 10:00:00.000')")
+            try db.execute(sql: """
+                INSERT INTO workspace (id, repoId, name, path, branch, port, createdAt)
+                VALUES ('w1', 'r1', 'lisbon', '/r/app-worktrees/lisbon', 'rocky/lisbon', 41000, '2026-09-01 10:00:00.000')
+                """)
+            try db.execute(sql: "INSERT INTO expandedFolder (workspaceId, path) VALUES ('w1', 'src')")
+        }
+        try v10.close()
+
+        let store = try RockyStore(path: path)
+        #expect(try store.expandedFolders(workspaceId: "w1") == ["src"])
+        #expect(try store.recentFiles(workspaceId: "w1").isEmpty)
+        try store.recordRecentFile(path: "src/a.ts", workspaceId: "w1", at: day)
+        #expect(try store.recentFiles(workspaceId: "w1") == ["src/a.ts"])
+    }
+
+    /// FIL-08: the newest 20 of each workspace are kept, the oldest dropped; a file opened again moves to the front,
+    /// once; opens at the same time keep their order; they go with their workspace, and another workspace's stay.
+    @Test func recentFilesKeepTheNewest20AndGoWithTheWorkspace() throws {
+        let store = try RockyStore.inMemory()
+        let repo = Repo(name: "app", path: "/dev/app")
+        try store.add(repo)
+        let lisbon = Workspace(repoId: repo.id, name: "lisbon", path: "/p", branch: "rocky/lisbon")
+        let oslo = Workspace(repoId: repo.id, name: "oslo", path: "/q", branch: "rocky/oslo")
+        try store.add(lisbon)
+        try store.add(oslo)
+
+        for index in 0..<22 {
+            try store.recordRecentFile(path: "file\(index).ts", workspaceId: lisbon.id, at: day.addingTimeInterval(Double(index)))
+        }
+        try store.recordRecentFile(path: "other.ts", workspaceId: oslo.id, at: day)
+        let kept = try store.recentFiles(workspaceId: lisbon.id)
+        #expect(kept.count == QuickOpen.recentLimit)
+        #expect(kept.first == "file21.ts")
+        #expect(kept.last == "file2.ts")
+        #expect(!kept.contains("file0.ts") && !kept.contains("file1.ts"))
+
+        try store.recordRecentFile(path: "file5.ts", workspaceId: lisbon.id, at: day.addingTimeInterval(100))
+        let reopened = try store.recentFiles(workspaceId: lisbon.id)
+        #expect(reopened.first == "file5.ts")
+        #expect(reopened.filter { $0 == "file5.ts" }.count == 1)
+        #expect(reopened.count == QuickOpen.recentLimit)
+
+        // The same time: the later open is newer.
+        let later = day.addingTimeInterval(200)
+        try store.recordRecentFile(path: "x.ts", workspaceId: lisbon.id, at: later)
+        try store.recordRecentFile(path: "y.ts", workspaceId: lisbon.id, at: later)
+        #expect(try store.recentFiles(workspaceId: lisbon.id).prefix(3) == ["y.ts", "x.ts", "file5.ts"])
+
+        try store.deleteWorkspace(id: lisbon.id)
+        #expect(try store.recentFiles(workspaceId: lisbon.id).isEmpty)
+        #expect(try store.recentFiles(workspaceId: oslo.id) == ["other.ts"])
+    }
+
+    // MARK: Line counts (DIFF-06)
+
+    /// A database at the previous migration opens, and its transcript rows keep their data, with no counts.
+    @Test func theNextMigrationAddsTheLineCountColumns() throws {
+        let path = try Fixtures.temporaryDirectory("store").appendingPathComponent("rocky.sqlite").path
+        let v12 = try DatabaseQueue(path: path)
+        try RockyStore.migrator.migrate(v12, upTo: "v12")
+        try v12.write { db in
+            try db.execute(sql: "INSERT INTO repo (id, name, path, createdAt) VALUES ('r1', 'app', '/r/app', '2026-09-01 10:00:00.000')")
+            try db.execute(sql: """
+                INSERT INTO workspace (id, repoId, name, path, branch, createdAt)
+                VALUES ('w1', 'r1', 'lisbon', '/r/app-worktrees/lisbon', 'rocky/lisbon', '2026-09-01 10:00:00.000')
+                """)
+            try db.execute(sql: "INSERT INTO chatSession (id, workspaceId, agent, createdAt) VALUES ('s1', 'w1', 'claude', '2026-09-01 10:00:00.000')")
+            try db.execute(sql: """
+                INSERT INTO chatMessage (id, sessionId, seq, kind, text, status, toolKind, createdAt)
+                VALUES ('m1', 's1', 1, 'tool', 'Edit README.md', 'completed', 'edit', '2026-09-01 10:01:00.000')
+                """)
+        }
+        try v12.close()
+
+        let store = try RockyStore(path: path)
+        let message = try #require(try store.messages(sessionId: "s1").first)
+        #expect(message.text == "Edit README.md")
+        #expect(message.toolKind == "edit")
+        #expect(message.additions == nil)
+        #expect(message.deletions == nil)
+        #expect(ChatItem(record: message).diffStat == nil)
+    }
+
+    /// A tool call's counts round-trip through its transcript row, "+10 −0" included, and a call without them stays
+    /// without, so a resumed conversation shows what it showed.
+    @Test func aToolCallKeepsItsLineCounts() throws {
+        let store = try RockyStore.inMemory()
+        let repo = Repo(name: "app", path: "/dev/app")
+        try store.add(repo)
+        let workspace = Workspace(repoId: repo.id, name: "lisbon", path: "/p", branch: "b")
+        try store.add(workspace)
+        let session = ChatSessionRecord(workspaceId: workspace.id, agent: "claude")
+        try store.add(session)
+
+        let edit = ChatItem(
+            kind: .tool, text: "Edit README.md", status: "completed", attachments: ["/p/README.md"], toolKind: "edit",
+            createdAt: day, diffStat: DiffStat(additions: 1, deletions: 1)
+        )
+        let write = ChatItem(kind: .tool, text: "Write notes.md", status: "completed", toolKind: "edit", createdAt: day, diffStat: DiffStat(additions: 10))
+        let read = ChatItem(kind: .tool, text: "Read a.ts", status: "completed", toolKind: "read", createdAt: day)
+        for item in [edit, write, read] { try store.upsert(ChatMessageRecord(item: item, sessionId: session.id)) }
+
+        let messages = try store.messages(sessionId: session.id)
+        #expect(messages.map(\.additions) == [1, 10, nil])
+        #expect(messages.map(\.deletions) == [1, 0, nil])
+        #expect(messages.map(ChatItem.init(record:)) == [edit, write, read])
     }
 
     @Test func persistsAcrossReopen() throws {

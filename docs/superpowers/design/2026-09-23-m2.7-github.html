@@ -66,6 +66,15 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
 .icon-btn { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r-btn); color: var(--text-2); flex-shrink: 0; transition: background var(--dur-fast), color var(--dur-fast); }
 .icon-btn:hover { background: var(--fill-icon-hover); color: var(--text); }
 .icon-btn.sm { width: 22px; height: 22px; border-radius: 5px; }
+/* TB-03: the Open split button, the default app (OPN-02) and the menu */
+.open-split { height: 28px; display: inline-flex; align-items: center; flex-shrink: 0; border-radius: var(--r-btn); background: var(--fill-control); box-shadow: inset 0 0 0 1px var(--hairline); overflow: hidden; }
+.open-split button { height: 100%; display: inline-flex; align-items: center; justify-content: center; color: var(--text-2); transition: background var(--dur-fast) ease-out, color var(--dur-fast) ease-out; }
+.open-split button:hover { background: var(--fill-hover); color: var(--text); }
+.open-split .os-main { width: 30px; } .open-split .os-chev { width: 22px; }
+.open-split .os-chev.on { background: var(--fill-selected); color: var(--text); }
+.open-split .os-chev svg { width: 10px; height: 10px; }
+.os-sep { width: 1px; height: 16px; background: var(--hairline); flex-shrink: 0; }
+.app-ico { display: inline-flex; flex-shrink: 0; width: 16px; height: 16px; } .app-ico svg { width: 16px; height: 16px; }
 .ghost-btn { height: 22px; display: inline-flex; align-items: center; gap: 5px; padding: 0 7px; border-radius: 5px; color: var(--text-2); font-size: 12px; white-space: nowrap; flex-shrink: 0; transition: background var(--dur-fast), color var(--dur-fast); }
 .ghost-btn:hover:not(:disabled) { background: var(--fill-icon-hover); color: var(--text); }
 .ghost-btn:disabled { opacity: 0.45; }
@@ -364,7 +373,6 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
       <tr><th>State</th><th>Group</th><th>Label</th><th>Action</th></tr>
       <tr><td>merged</td><td><span class="tone merged">merged</span></td><td>Merged</td><td>Archive (PR-06)</td></tr>
       <tr><td>queued_to_merge</td><td><span class="tone queued">queued</span></td><td>by <code>mergeQueueEntry.state</code>: AWAITING_CHECKS "Merge queue checks pending" · UNMERGEABLE "Merge queue blocked" · LOCKED "Merge queue locked" · else "Queued to merge"</td><td>static "Queued" badge</td></tr>
-      <tr><td>working</td><td><span class="tone no_pr">loading</span></td><td>Working… (spinner)</td><td>none</td></tr>
       <tr><td>create_pr</td><td><span class="tone no_pr">no_pr</span></td><td>No pull request (<code>textTertiary</code>, regular weight)</td><td>split "Create PR" (AGT-01)</td></tr>
       <tr><td>commit_and_push</td><td><span class="tone out_of_sync">out_of_sync</span></td><td>Uncommitted changes</td><td>Commit and push (AGT-02)</td></tr>
       <tr><td>incompatible</td><td><span class="tone out_of_sync">out_of_sync</span></td><td>Incompatible with remote · Remote branch was rebased</td><td>Resolve (AGT-06)</td></tr>
@@ -382,11 +390,12 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
       <tr><td>unable_to_merge</td><td><span class="tone out_of_sync">out_of_sync</span></td><td>Unable to merge · "Unable to merge · behind development" for BEHIND</td><td>none</td></tr>
     </table>
     <dl>
-      <dt>Notes</dt><dd>Rocky puts working before create_pr (Conductor has it after), so clicking Create PR shows "Working…" instead of an empty header. A closed (unmerged) pull request falls back to create_pr. With no pull request and nothing to put in one (branch equal to its base, nothing uncommitted), Rocky shows the label "No changes yet" and no action (Rocky's addition). "Behind/Ahead by N" compare the branch with its own remote branch; "behind the base" is a Git status row (GST-02), not a header state.</dd>
+      <dt>No working state</dt><dd>While a turn runs, the header keeps the pull request's state, and its agent actions are disabled with AGT-00's reason. User decision, 2026-09-25 (relayed by dev-1): "no me parece que si el agente está pensando en el panel de la derecha también haya un loader. Me parece que ya tenemos suficientes en toda la app". Before, a working row sat before create_pr and showed "Working…" with a spinner; the chat's "Working" row already says it.</dd>
+      <dt>Notes</dt><dd>A closed (unmerged) pull request falls back to create_pr. With no pull request and nothing to put in one (branch equal to its base, nothing uncommitted), Rocky shows the label "No changes yet" and no action (Rocky's addition). "Behind/Ahead by N" compare the branch with its own remote branch; "behind the base" is a Git status row (GST-02), not a header state.</dd>
       <dt>Queue</dt><dd>Only <code>mergeQueueEntry</code> makes queued_to_merge. An enabled <code>autoMergeRequest</code> does not: auto-merge is Conductor's Automerge (OUT-30).</dd>
       <dt>Optional</dt><dd>GitHub's UNSTABLE means "mergeable with non-passing commit status": whatever failed does not block. So failed checks make checks_failing only when <code>mergeStateStatus</code> is not UNSTABLE; with UNSTABLE the state is ready_to_merge and the label counts them as optional. No <code>isRequired</code> query needed.</dd>
       <dt>Merge state</dt><dd><code>mergeStateStatus</code> → state, after the rows above: CLEAN, UNSTABLE, HAS_HOOKS → ready_to_merge · BLOCKED → review_required when a review is required, else blocked · UNKNOWN → loading_pr · BEHIND → unable_to_merge. DIRTY and DRAFT are caught earlier (merge_conflicts, draft_pr).</dd>
-      <dt>Kit</dt><dd>Pure <code>PullRequestHeader.state(pr:local:agentWorking:) -&gt; HeaderState</code> in RockyKit; a test per row and for overlaps (uncommitted and conflicts → commit_and_push; failing checks and draft → draft_pr).</dd>
+      <dt>Kit</dt><dd>Pure <code>PullRequestHeader.state(pr:local:) -&gt; HeaderState</code> in RockyKit; a test per row and for overlaps (uncommitted and conflicts → commit_and_push; failing checks and draft → draft_pr).</dd>
     </dl>
   </section>
   <section class="req" id="REQ-HDR-04">
@@ -492,7 +501,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
     <header><code class="id">AGT-00</code><h3>How agent actions work</h3><span class="scope tech">Technical</span></header>
     <dl>
       <dt>Rule</dt><dd>One prompt, as if typed, to the workspace's <strong>selected conversation</strong> (its agent starts if needed; the workspace shows that conversation). Files go as Rocky attachments (<code>resource_link</code>). The agent runs with the repository's <code>GH_TOKEN</code> (ENV-01).</dd>
-      <dt>Disabled</dt><dd>While that conversation's turn runs the header shows "Working…" (HDR-02) and the panel's agent buttons are disabled with the tooltip "The agent is working"; with the agent stopped on an error: "Restart the agent first".</dd>
+      <dt>Disabled</dt><dd>While that conversation's turn runs, the header keeps its state (HDR-02) and the panel's agent buttons are disabled with the tooltip "The agent is working"; with the agent stopped on an error: "Restart the agent first".</dd>
       <dt>After</dt><dd>When that turn ends, Rocky refreshes the PR (PR-07).</dd>
       <dt>Kit</dt><dd>Pure builders (<code>AgentPrompts.createPullRequest(base:draft:)</code>…), each with a test for its exact text.</dd>
     </dl>
@@ -537,7 +546,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
 
 Address each comment and say what you changed for each number.</pre>
     <p>A thread's first comment is quoted as is; each reply follows as "&gt; login: text". A review body is an item "(review)". Multi-line bodies keep "&gt; " on every line.</p>
-    <p>"Add all to chat" sends every pending comment; a row's "Add to chat" only it; both mark them added (the row's check). Rocky's format matches M3's review prompt (CMT-05); Conductor wraps them in a <code>&lt;system-instruction&gt;</code> block instead.</p>
+    <p>"Add all to chat" sends every pending comment; a row's "Add to chat" only it; both mark them added (the row's check). Rocky's numbered format, written for GitHub's comments (M3's own line comments now go one by one, M3 CMT-05); Conductor wraps them in a <code>&lt;system-instruction&gt;</code> block instead.</p>
   </section>
   <section class="req" id="REQ-AGT-06">
     <header><code class="id">AGT-06</code><h3>Incompatible with the remote</h3><span class="scope in">In scope</span></header>
@@ -635,10 +644,26 @@ Address each comment and say what you changed for each number.</pre>
   <section class="req" id="REQ-OPN-01">
     <header><code class="id">OPN-01</code><h3>Open the workspace in an editor</h3><span class="scope in">In scope</span></header>
     <dl>
-      <dt>Where</dt><dd>M2.5's Open menu (TB-03), right after "Open in Finder": one item per installed editor, alphabetical: "Open in Antigravity", "Open in Cursor", "Open in VS Code", "Open in Zed". Then a divider, then New Terminal and Copy Path as today. (User request, relayed by dev-1.)</dd>
-      <dt>Item</dt><dd>The app's own icon at 16 pt (<code>NSWorkspace.shared.icon(forFile:)</code> on the app's URL, as the menu's <code>MenuItem</code> icon) and the label. An editor that is not installed has no item; with none installed, the group and its divider are gone.</dd>
+      <dt>Where</dt><dd>M2.5's Open menu (TB-03), right after "Finder": one item per installed editor, alphabetical: "Antigravity", "Cursor", "VS Code", "Zed". Then a divider, then New Terminal and Copy Path. (User request, relayed by dev-1.) The menu is 200 wide, with no path header and no "Open in" (user decision, 2026-09-24: "solo mostrar el logo del app y el nombre, como en conductor"). Picking an editor also makes it the default app (OPN-02).</dd>
+      <dt>Item</dt><dd>The app's own icon at 16 pt (<code>NSWorkspace.shared.icon(forFile:)</code> on the app's URL, as the menu's <code>MenuItem</code> icon) and the app's name. An editor that is not installed has no item; with none installed, the group and its divider are gone.</dd>
       <dt>Detect</dt><dd><code>NSWorkspace.shared.urlForApplication(withBundleIdentifier:)</code>, checked when the menu opens (no caching, no polling): Antigravity <code>com.google.antigravity-ide</code>, Cursor <code>com.todesktop.230313mzl4w4u92</code>, VS Code <code>com.microsoft.VSCode</code>, Zed <code>dev.zed.Zed</code>.</dd>
       <dt>Does</dt><dd><code>NSWorkspace.shared.open([worktreeURL], withApplicationAt: appURL, configuration:)</code> on the worktree folder. A failure shows a toast with the error's description.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-OPN-02">
+    <header><code class="id">OPN-02</code><h3>The default app</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Why</dt><dd>User, 2026-09-24: "el archivo debe poder abrirse en el editor que se haya seleccionado por defecto arriba, así como en conductor que el path del documento, al darle clic abre el archivo en el editor seleccionado, en este caso, zed". Decisions (relayed by dev-1): the default is the last app picked in the Open menu ("el editor es el que está seleccionado arriba"), and there is one default for all of Rocky, not one per repository.</dd>
+      <dt>What</dt><dd>Finder or one of OPN-01's editors. It drives three things: the left part of the Open split button (M2.5 TB-03), ⌘O, and the path chip in the diff and file tab headers (M3 DIFF-01).</dd>
+      <dt>Set</dt><dd>Picking Finder or an editor in the Open menu opens the worktree there and makes it the default. New Terminal and Copy Path leave it as it is. There is no other setting for it.</dd>
+      <dt>First time</dt><dd>With nothing stored: the first installed editor in OPN-01's order, else Finder. The same fallback applies when the stored app is no longer installed; the stored value stays, so reinstalling the app brings it back. Resolved each time it is used (the menu opening, a click, ⌘O), as OPN-01 looks up the editors: no caching, no polling.</dd>
+      <dt>Stored</dt><dd><code>@AppStorage("defaultOpenApp")</code>: the bundle id, <code>com.apple.finder</code> or the editor's. Not in the database: it is a preference of this Mac, like the folded repositories.</dd>
+      <dt>⌘O</dt><dd>File ▸ "Open in Zed" (the title follows the default; with Finder, "Open in Finder"), right after New Workspace (⌘N), in a <code>CommandGroup(after: .newItem)</code> next to <code>NewWorkspaceCommand</code>. It opens the selected workspace's worktree in the default app; it is disabled with no workspace selected. ⌘O is free: Rocky's File menu has no Open… (the app is a <code>WindowGroup</code>, with no documents), and no command in <code>RockyApp.swift</code> or shortcut in these specs uses it (checked 2026-09-24).</dd>
+      <dt>Opens a file</dt><dd>An editor: <code>NSWorkspace.shared.open([fileURL], withApplicationAt: appURL, configuration:)</code>. Finder: <code>NSWorkspace.shared.activateFileViewerSelecting([fileURL])</code>, which reveals the file. A failure shows a toast with the error's description, as in OPN-01.</dd>
+      <dt>Kit</dt><dd>Pure <code>DefaultOpenApp.resolve(stored: String?, installed: [ExternalEditor]) -&gt; OpenApp</code> (<code>.finder</code> or <code>.editor(ExternalEditor)</code>), next to <code>ExternalEditor</code>, with tests: nothing stored; an editor stored and installed; an editor stored but not installed; Finder stored; no editor installed.</dd>
+      <dt>Not known</dt><dd>Whether each editor opens the file in the window that already shows the worktree or in a new window; not checked for any of the four. To settle it: with the worktree open in the editor, click the chip. If an editor opens a new window, pass <code>[worktreeURL, fileURL]</code> together for that editor.</dd>
+      <dt>Done when</dt><dd>Pick Zed in the Open menu once: the split button shows Zed's icon, ⌘O opens the worktree in Zed, a diff tab's path chip has the tooltip "Open in Zed" and opens the file in Zed; after a relaunch the default is still Zed.</dd>
     </dl>
   </section>
 
@@ -654,6 +679,7 @@ Address each comment and say what you changed for each number.</pre>
 (() => {
   'use strict';
   const $ = (s) => document.querySelector(s);
+  const ZED_ICON = '<span class="app-ico" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 16 16"><rect x=".5" y=".5" width="15" height="15" rx="3.5" fill="#121316" stroke="rgba(255,255,255,.22)"/><path d="M4.8 5h6.4L4.8 11h6.4" fill="none" stroke="#E8E8E8" stroke-width="1.4" stroke-linejoin="round"/></svg></span>';   // demo stand-in for the default app's icon (OPN-02)
   const win = $('#win');
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const md = (s) => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>');
@@ -722,7 +748,6 @@ Address each comment and say what you changed for each number.</pre>
   function headerState(w) {
     const pr = w.pr; const l = w.local;
     if (pr && pr.state === 'MERGED') return 'merged';
-    if (w.turn) return 'working';
     if (!pr || pr.state === 'CLOSED') return l.uncommitted || l.ownCommits ? 'create_pr' : 'no_changes';
     if (l.uncommitted) return 'commit_and_push';
     if (l.incompatible) return 'incompatible';
@@ -748,7 +773,6 @@ Address each comment and say what you changed for each number.</pre>
       case 'merged': return { group: 'merged', label: 'Merged', btn: B('Archive', 'archive', 'archive') };
       case 'no_changes': return { group: 'no_pr', label: 'No changes yet', dim: true };
       case 'create_pr': return { group: 'no_pr', label: 'No pull request', dim: true, split: true };   // HDR-04: never an empty left side
-      case 'working': return { group: 'loading', label: 'Working…', spin: true };
       case 'commit_and_push': return { group: 'out_of_sync', label: 'Uncommitted changes', btn: B('Commit and push', 'agent-commit', '', { agent: true }) };
       case 'incompatible': return { group: 'out_of_sync', label: 'Incompatible with remote', btn: B('Resolve', 'agent-incompatible', '', { agent: true }) };
       case 'pull': return { group: 'out_of_sync', label: `Behind by ${l.behindRemote} commits`, btn: B('Pull', 'pull-remote') };
@@ -799,7 +823,9 @@ Address each comment and say what you changed for each number.</pre>
   function renderTopbar() {
     const w = sel();
     const crumb = `<span class="crumb">${esc(repos[w.repo].name)}</span><span style="color:var(--sep)">/</span><span class="br">${esc(w.branch)}</span><span class="grow"></span>`;
-    const open = `<button class="icon-btn" aria-label="Open in" title="Open in">${I.open}</button>`;
+    // M2.5 TB-03: the Open split button; its left part is the default app (OPN-02), Zed here.
+    const open = `<span class="open-split"><button class="os-main" data-action="toast" data-msg="Opens the worktree in Zed, the default app (⌘O, OPN-02)." aria-label="Open in Zed" title="Open in Zed (⌘O)">${ZED_ICON}</button>` +
+      `<span class="os-sep" aria-hidden="true"></span><button class="os-chev" data-action="toast" data-msg="Opens the Open menu: Finder, the editors, New Terminal, Copy Path (M2.5 TB-03)." aria-label="Open in…" title="Open in Finder, an editor or Terminal">${I.chev}</button></span>`;
     // PNL-02: the toggle is always the title bar row's last control, at the window's top-right corner: in the panel
     // header while the panel is open, here once it is closed. The same spot either way.
     const panelIcon = state.panelOpen ? '' : panelToggleHTML();
@@ -999,6 +1025,7 @@ Address each comment and say what you changed for each number.</pre>
     switch (b.dataset.action) {
       case 'select': state.selected = b.dataset.ws; state.confirmMerge = null; closeMenu(); renderAll(false); break;
       case 'toggle-panel': state.panelOpen = !state.panelOpen; renderTopbar(); renderPanel(false); break;
+      case 'toast': toast(b.dataset.msg); break;
       case 'run': state.running = !state.running; renderTopbar(); toast(state.running ? 'Runs the repository\'s Run script in the terminal panel.' : 'Stopped the Run script.'); break;
       case 'agent-create': runAgent(w, 'create'); break;
       case 'agent-commit': runAgent(w, 'commit'); break;

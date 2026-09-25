@@ -88,63 +88,155 @@ struct OpenFileAction {
     }
 }
 
-extension EnvironmentValues {
-    @Entry var openFile: OpenFileAction?
+/// Opens a line chip's file at its lines (CMT-06). Set by `WorkspaceDetailView`.
+struct OpenLineRangeAction {
+    let open: @MainActor (LineRangeAttachment) -> Void
+
+    @MainActor
+    func callAsFunction(_ range: LineRangeAttachment) {
+        open(range)
+    }
 }
 
-/// How a file badge looks, like Conductor's: a bordered badge in two parts, the icon colored by the file's type and
-/// the name. `showsRemove` puts an X in place of the icon. Only drawing, so the message box can also draw it as an
-/// image (`FileAttachment`). Its size is fixed by `size(for:)`, so text can leave exactly its room in a line.
+extension EnvironmentValues {
+    @Entry var openFile: OpenFileAction?
+    @Entry var openLineRange: OpenLineRangeAction?
+}
+
+/// How a file badge looks, like Conductor's: a bordered badge in two parts, the icon and the name. The icon is the
+/// file's Material icon at 12 points (FIL-09), or the blue folder for a folder. `showsRemove` puts an X in place of the
+/// icon. Only drawing, so the message box can also draw it as an image (`FileAttachment`, `LineChipAttachment`). Its
+/// size is fixed by `size(for:range:)`, so text can leave exactly its room in a line.
+///
+/// With `range`, it is CMT-06's line chip, in Conductor's measures: 22 points, radius 6, a 1-point `hairline` border
+/// on white 4 % (20 % white when hovered); a 22-point icon segment (the file's Material icon at 12) and a `hairline`
+/// divider; the name (12 `textPrimary`) and the range (12 `textSecondary`, tabular), "+18–25".
 struct FileBadgeLook: View {
     let path: String
     var isHovered = false
     var showsRemove = false
+    /// CMT-06's range after the name, which makes the badge a line chip.
+    var range: String?
 
     // Sizes at 100%; each one follows the zoom.
     static var height: CGFloat { Zoom.shared(22) }
     static var iconWidth: CGFloat { Zoom.shared(24) }
+    private static var chipIconWidth: CGFloat { Zoom.shared(22) }
     private static var maxNameWidth: CGFloat { Zoom.shared(240) }
     private static let fontSize: CGFloat = 12.5
+    private static let chipFontSize: CGFloat = 12
     private static var namePadding: (leading: CGFloat, trailing: CGFloat) { (Zoom.shared(7), Zoom.shared(8)) }
+    private static var chipNamePadding: (leading: CGFloat, trailing: CGFloat) { (Zoom.shared(7), Zoom.shared(7)) }
+    /// Between a chip's name and its range.
+    private static var rangeGap: CGFloat { Zoom.shared(5) }
     /// Where a badge inside a line sits against the text's baseline: centered on 14-point text.
     static var baselineOffset: CGFloat { Zoom.shared(-6) }
 
-    static func size(for path: String) -> CGSize {
+    static func size(for path: String, range: String? = nil) -> CGSize {
         let name = URL(fileURLWithPath: path).lastPathComponent as NSString
-        let nameWidth = ceil(name.size(withAttributes: [.font: NSFont.systemFont(ofSize: Zoom.shared(fontSize))]).width)
-        return CGSize(width: iconWidth + 1 + namePadding.leading + min(nameWidth, maxNameWidth) + namePadding.trailing, height: height)
+        guard let range else {
+            let nameWidth = ceil(name.size(withAttributes: [.font: NSFont.systemFont(ofSize: Zoom.shared(fontSize))]).width)
+            return CGSize(width: iconWidth + 1 + namePadding.leading + min(nameWidth, maxNameWidth) + namePadding.trailing, height: height)
+        }
+        let nameWidth = ceil(name.size(withAttributes: [.font: NSFont.systemFont(ofSize: Zoom.shared(chipFontSize))]).width)
+        let rangeFont = NSFont.monospacedDigitSystemFont(ofSize: Zoom.shared(chipFontSize), weight: .regular)
+        let rangeWidth = ceil((range as NSString).size(withAttributes: [.font: rangeFont]).width)
+        let text = min(nameWidth, maxNameWidth) + rangeGap + rangeWidth
+        return CGSize(width: chipIconWidth + 1 + chipNamePadding.leading + text + chipNamePadding.trailing, height: height)
     }
 
     var body: some View {
-        let kind = FileKind(path: path)
-        let size = Self.size(for: path)
+        let isChip = range != nil
+        // A chip's path is always a file: its kind comes from the name, with no look at the disk.
+        let kind = isChip ? FileKind(path: path, isDirectory: false) : FileKind(path: path)
+        let size = Self.size(for: path, range: range)
+        let padding = isChip ? Self.chipNamePadding : Self.namePadding
         HStack(spacing: 0) {
             Group {
                 if showsRemove {
                     Image(systemName: "xmark")
                         .font(.rocky(9, weight: .bold))
                         .foregroundStyle(.secondary)
-                } else {
+                } else if kind == .folder {
                     Image(systemName: kind.symbol)
                         .font(.rocky(11))
                         .foregroundStyle(kind.color)
+                } else {
+                    FileIcon(path: path, size: 12)
                 }
             }
-            .frame(width: Self.iconWidth, height: Self.height)
-            .background(Color.black.opacity(0.28))
-            Rectangle().fill(Color.white.opacity(0.1)).frame(width: 1)
-            Text(URL(fileURLWithPath: path).lastPathComponent)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .padding(.leading, Self.namePadding.leading)
-                .padding(.trailing, Self.namePadding.trailing)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(width: isChip ? Self.chipIconWidth : Self.iconWidth, height: Self.height)
+            .background(isChip ? Color.clear : Color.black.opacity(0.28))
+            Rectangle().fill(isChip ? Theme.hairline : Color.white.opacity(0.1)).frame(width: 1)
+            HStack(spacing: Self.rangeGap) {
+                let name = Text(URL(fileURLWithPath: path).lastPathComponent)
+                // A badge's name keeps the color around it, as before chips.
+                (isChip ? name.foregroundStyle(Theme.textPrimary) : name)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if let range {
+                    Text(verbatim: range)
+                        .monospacedDigit()
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+            }
+            .padding(.leading, padding.leading)
+            .padding(.trailing, padding.trailing)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .font(.rocky(Self.fontSize))
+        .font(.rocky(isChip ? Self.chipFontSize : Self.fontSize))
         .frame(width: size.width, height: size.height)
-        .background(Color.white.opacity(isHovered ? 0.08 : 0.04))
+        .background(Color.white.opacity(isHovered && !isChip ? 0.08 : 0.04))
         .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.white.opacity(0.12)))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(border(isChip: isChip)))
+    }
+
+    private func border(isChip: Bool) -> Color {
+        guard isChip else { return Color.white.opacity(0.12) }
+        return isHovered ? Color.white.opacity(0.2) : Theme.hairline
+    }
+}
+
+/// CMT-06's line chip: a file's lines, drawn by `FileBadgeLook`. In a comment box it only shows; in the transcript
+/// (`opens`) a click opens the file's diff tab scrolled to the lines, or its file tab when it is no longer changed
+/// (`AppModel.openLineRange`). The tooltip is the path and the range.
+struct LineChip: View {
+    let range: LineRangeAttachment
+    var opens = false
+    @Environment(\.openLineRange) private var openLineRange
+    @State private var hovering = false
+
+    var body: some View {
+        if opens {
+            Button {
+                openLineRange?(range)
+            } label: {
+                look
+            }
+            .buttonStyle(.plain)
+            .clickable()
+            .onHover { inside in withAnimation(Theme.Motion.hover) { hovering = inside } }
+            .accessibilityHint("Opens the file at these lines")
+        } else {
+            look
+        }
+    }
+
+    private var look: some View {
+        FileBadgeLook(path: range.path, isHovered: opens && hovering, range: range.rangeLabel)
+            .fixedSize()
+            .help("\((range.path as NSString).abbreviatingWithTildeInPath) \(range.rangeLabel)")
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(accessibilityText)
+    }
+
+    /// "openapi.ts, lines 18 to 25"; "removed line 12".
+    private var accessibilityText: String {
+        let name = (range.path as NSString).lastPathComponent
+        let lines = range.start == range.end ? "line \(range.start)" : "lines \(range.start) to \(range.end)"
+        return "\(name), \(range.side == .old ? "removed " : "")\(lines)"
     }
 }
 

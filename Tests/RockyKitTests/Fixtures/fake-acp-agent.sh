@@ -14,6 +14,11 @@
 # FAKE_ACP_COMMANDS_EARLY=true sends that list before the session/new result instead, as if the notification had
 # reached the client ahead of the response.
 # A prompt "change commands" announces a new list, init alone, and ends the turn.
+# A prompt "edit files" (DIFF-06) announces two edit calls with Claude's optimistic diffs: t2, a Write that reads as a
+# new file (3 lines), and t3, an Edit (a b c → a B C d). It asks permission for t2. Allowed: t2 gets the real hunk
+# with Claude's counts (+2 −1) in an update with only content, then completed; t3 completes without content, so its
+# optimistic diff stands (+3 −2). Rejected: t2 fails with a text content, and t3 fails.
+# A prompt "update edits" then sends t2 completed again without content, and t3 new content (+1 −1), and ends the turn.
 # FAKE_ACP_LOG=<file> appends every line the agent receives to that file, to tell what reached it.
 load_session="${FAKE_ACP_LOAD_SESSION:-true}"
 load_fails="${FAKE_ACP_LOAD_FAILS:-false}"
@@ -55,6 +60,28 @@ while IFS= read -r line; do
     *'"method":"session/prompt"'*)
       if [[ $line == *'"text":"change commands"'* ]]; then
         update "$changed_commands"
+        echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"stopReason\":\"end_turn\"}}"
+        continue
+      fi
+      if [[ $line == *'"text":"edit files"'* ]]; then
+        update '{"sessionUpdate":"tool_call","toolCallId":"t2","title":"Write notes.md","status":"pending","kind":"edit","locations":[{"path":"/tmp/notes.md"}],"content":[{"type":"diff","path":"/tmp/notes.md","oldText":null,"newText":"one\ntwo\nthree\n"}]}'
+        update '{"sessionUpdate":"tool_call","toolCallId":"t3","title":"Edit README.md","status":"pending","kind":"edit","locations":[{"path":"/tmp/README.md"}],"content":[{"type":"diff","path":"/tmp/README.md","oldText":"a\nb\nc","newText":"a\nB\nC\nd"}]}'
+        echo '{"jsonrpc":"2.0","id":"perm-2","method":"session/request_permission","params":{"sessionId":"fake-1","toolCall":{"toolCallId":"t2","title":"Write notes.md"},"options":[{"optionId":"allow","name":"Allow","kind":"allow_once"},{"optionId":"reject","name":"Reject","kind":"reject_once"}]}}'
+        IFS= read -r reply
+        if [[ $reply == *'"optionId":"allow"'* ]]; then
+          update '{"sessionUpdate":"tool_call_update","toolCallId":"t2","_meta":{"claudeCode":{"toolName":"Write"}},"content":[{"type":"diff","path":"/tmp/notes.md","oldText":"one\n2","newText":"one\ntwo\nthree","_meta":{"jetbrains":{"air":{"version":1,"diffStats":{"version":1,"added":2,"removed":1}}}}}]}'
+          update '{"sessionUpdate":"tool_call_update","toolCallId":"t2","status":"completed"}'
+          update '{"sessionUpdate":"tool_call_update","toolCallId":"t3","status":"completed"}'
+        else
+          update '{"sessionUpdate":"tool_call_update","toolCallId":"t2","status":"failed","content":[{"type":"content","content":{"type":"text","text":"The user rejected the edit"}}]}'
+          update '{"sessionUpdate":"tool_call_update","toolCallId":"t3","status":"failed"}'
+        fi
+        echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"stopReason\":\"end_turn\"}}"
+        continue
+      fi
+      if [[ $line == *'"text":"update edits"'* ]]; then
+        update '{"sessionUpdate":"tool_call_update","toolCallId":"t2","status":"completed"}'
+        update '{"sessionUpdate":"tool_call_update","toolCallId":"t3","content":[{"type":"diff","path":"/tmp/README.md","oldText":"a\nb\nc","newText":"a\nB\nc"}]}'
         echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"stopReason\":\"end_turn\"}}"
         continue
       fi

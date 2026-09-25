@@ -121,30 +121,25 @@ public struct PullRequestPanelState: Equatable, Sendable {
         self.addedCommentIds = addedCommentIds
     }
 
-    /// The state without the agent (what is stored): from the snapshot, else the stored one, else `loadingPR`.
+    /// The state (what is stored): from the snapshot, else the stored one, else `loadingPR`.
     public var headerState: HeaderState {
-        headerState(agentWorking: false)
-    }
-
-    public func headerState(agentWorking: Bool) -> HeaderState {
         if let snapshot {
-            return PullRequestHeader.state(pr: snapshot.pullRequest, local: local, agentWorking: agentWorking)
+            return PullRequestHeader.state(pr: snapshot.pullRequest, local: local)
         }
-        if agentWorking { return .working }
         return stored.flatMap { HeaderState(rawValue: $0.headerState) } ?? .loadingPR
     }
 
     /// What the header shows (`HDR-02`, `ERR-01`). A failure shows its label in the loading group, except offline with
     /// a snapshot, which keeps the last state. Before this launch's first refresh of the workspace: "Loading PR info…",
     /// since a stored state lacks the counts and the local status its label needs.
-    public func header(agentWorking: Bool) -> HeaderPresentation {
+    public func header() -> HeaderPresentation {
         if let error, error != .offline || snapshot == nil {
             return HeaderPresentation(group: .loading, label: error.label)
         }
         guard let snapshot else {
             return HeaderPresentation(group: .loading, label: "Loading PR info…", spins: true)
         }
-        let state = PullRequestHeader.state(pr: snapshot.pullRequest, local: local, agentWorking: agentWorking)
+        let state = PullRequestHeader.state(pr: snapshot.pullRequest, local: local)
         return PullRequestHeader.presentation(state, pr: snapshot.pullRequest, local: local)
     }
 }
@@ -402,7 +397,7 @@ public final class PullRequestMonitor {
             number: pr.number,
             url: pr.url,
             state: stateName(pr),
-            headerState: PullRequestHeader.state(pr: pr, local: local, agentWorking: false).rawValue,
+            headerState: PullRequestHeader.state(pr: pr, local: local).rawValue,
             checks: pr.checks,
             updatedAt: now,
             hiddenCommentIds: previous?.number == pr.number ? previous?.hiddenCommentIds ?? [] : []

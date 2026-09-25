@@ -15,7 +15,6 @@ struct WorkspaceDetailView: View {
     @AppStorage(RightPanelStorage.widthKey) private var rightPanelWidth = RightPanelStorage.defaultWidth
     @Environment(\.titleBarLeadingInset) private var titleBarLeadingInset
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(ToastPresenter.self) private var toasts: ToastPresenter?
 
     /// TERM-01: the open panel is never shorter than this, bar included.
     private static let minPanelHeight = 140.0
@@ -66,6 +65,10 @@ struct WorkspaceDetailView: View {
         .environment(\.openFile, OpenFileAction { [model, workspace] path in
             model.openBadgeFile(workspaceId: workspace.id, path: path)
         })
+        // A line chip (CMT-06) opens its file's diff tab at its lines, resolved like a badge's path.
+        .environment(\.openLineRange, OpenLineRangeAction { [model, workspace] range in
+            model.openLineRange(workspaceId: workspace.id, attachment: range)
+        })
     }
 
     /// One row as tall as the title bar (TB-01), over the conversation column only (LAY-01): repository / branch, then
@@ -108,44 +111,9 @@ struct WorkspaceDetailView: View {
         .windowDragBackground()
     }
 
-    /// TB-03: the worktree path as the header, then Open in Finder, the installed editors (OPN-01), New Terminal and
-    /// Copy Path. The menu's content is built each time it opens, so the editors are looked up then, never at rest.
+    /// TB-03's split button: the default app (OPN-02) on the left, the Open menu behind the chevron.
     private var openMenu: some View {
-        MenuButton(id: "open-\(workspace.id)", placement: .belowTrailing, width: 280) { isOpen in
-            MenuIconButtonLabel(title: "Open", systemImage: "arrow.up.forward.square", isOpen: isOpen)
-                .font(.rocky(14))
-        } content: {
-            let editors = ExternalEditor.installed { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }
-            OpenMenuPathHeader(path: workspace.path)
-            MenuDivider()
-            MenuItem(title: "Open in Finder", icon: .symbol("folder")) {
-                _ = NSWorkspace.shared.open(URL(fileURLWithPath: workspace.path, isDirectory: true))
-            }
-            // OPN-01: one item per installed editor, in alphabetical order, with the app's own icon; none installed,
-            // no group and no divider.
-            ForEach(Array(editors.enumerated()), id: \.offset) { _, entry in
-                MenuItem(title: "Open in \(entry.editor.displayName)", icon: .image(NSWorkspace.shared.icon(forFile: entry.app.path))) {
-                    ExternalEditorOpener.open(URL(fileURLWithPath: workspace.path, isDirectory: true), in: entry.editor, app: entry.app, toasts: toasts)
-                }
-            }
-            if !editors.isEmpty {
-                MenuDivider()
-            }
-            MenuItem(title: "New Terminal", icon: .symbol("terminal")) {
-                // TERM-07: a new "Terminal N", selected, with the panel unfolded. The first one may wait for the
-                // repository account's token (ENV-01).
-                Task {
-                    panelSelection = await model.openTerminal(workspaceId: workspace.id)?.id
-                    panelCollapsed = false
-                }
-            }
-            MenuItem(title: "Copy Path", icon: .symbol("doc.on.doc")) {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(workspace.path, forType: .string)
-            }
-        }
-        .fixedSize()
-        .help("Open in Finder, an editor or Terminal")
+        OpenSplitButton(model: model, workspaceId: workspace.id, worktreePath: workspace.path, panelSelection: $panelSelection)
     }
 
     /// Chat above, terminals and script output below (M2 layout decision), in one layout whatever the panel's state
@@ -205,7 +173,10 @@ struct WorkspaceDetailView: View {
                     chat: chat,
                     isActive: showsChat,
                     commands: model.commands(for: chat),
-                    terminal: EmbeddedTerminalHost(model: model, conversationId: model.selectedConversationIds[workspace.id])
+                    terminal: EmbeddedTerminalHost(model: model, conversationId: model.selectedConversationIds[workspace.id]),
+                    lineComment: { [model, workspace] range, comment, files in
+                        await model.lineComment(for: range, comment: comment, files: files, workspaceId: workspace.id)
+                    }
                 )
                     // A new view per conversation, so switching tabs does not carry a draft or a scroll position over.
                     .id(ObjectIdentifier(chat))
@@ -232,14 +203,19 @@ struct WorkspaceDetailView: View {
 
 /// The workspace's tabs, like Conductor's (TAB-01): its conversations (agent logo and title), then the files opened
 /// from a badge (type icon and name), then its diff tabs (DIFF-01: status letter and name); the selected one
-/// underlined, and a + for a new Claude Code or OpenCode conversation. A 34-point row with the hairline at its bottom,
-/// under the selected tab's underline. A file or diff tab whose editor has unsaved edits shows DIFF-01's dot and asks
-/// before it closes (EDIT-02), in the words Rocky uses when it quits with unsaved edits (`UnsavedChangesPrompt`).
+/// underlined, and a + for a new conversation with the default agent (CNV-01, CNV-02). A 34-point row with the hairline
+/// at its bottom, under the selected tab's underline. A file or diff tab whose editor has unsaved edits shows DIFF-01's
+/// dot and asks before it closes (EDIT-02), in the words Rocky uses when it quits with unsaved edits
+/// (`UnsavedChangesPrompt`).
 struct ConversationTabs: View {
     let model: AppModel
     let workspace: Workspace
     /// The tab whose close asks "Save changes to …?".
     @State private var closing: ClosingTab?
+    /// The conversations the strip has drawn, from the moment the workspace's tabs are loaded: one that joins later
+    /// (a "+", the workspace's first) enters with M2.5's entrance (CNV-01). nil until then, so the tabs already there
+    /// when the workspace is shown never play it.
+    @State private var drawnConversationIds: Set<String>?
 
     private struct ClosingTab: Equatable {
         enum Kind {
@@ -319,6 +295,9 @@ struct ConversationTabs: View {
                             }
                         }
                         .help(record.title ?? "New conversation")
+                        .modifier(Entrance(isNew: drawnConversationIds.map { !$0.contains(record.id) } ?? false) {
+                            drawnConversationIds?.insert(record.id)
+                        })
                     }
                     ForEach(files, id: \.self) { path in
                         let kind = FileKind(path: path)
@@ -329,9 +308,14 @@ struct ConversationTabs: View {
                             onSelect: { model.showFile(workspaceId: workspace.id, path: path) },
                             onClose: { close(.file, path: path) }
                         ) {
-                            Image(systemName: kind.symbol)
-                                .font(.rocky(11))
-                                .foregroundStyle(kind.color)
+                            // FIL-09: a file's Material icon at 12 points; a folder keeps the blue folder.
+                            if kind == .folder {
+                                Image(systemName: kind.symbol)
+                                    .font(.rocky(11))
+                                    .foregroundStyle(kind.color)
+                            } else {
+                                FileIcon(path: path, size: 12)
+                            }
                         }
                         .help(path)
                     }
@@ -354,23 +338,31 @@ struct ConversationTabs: View {
                 }
             }
             .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
-            MenuButton(id: "new-conversation-\(workspace.id)", placement: .belowLeading, width: 280) { isOpen in
-                MenuIconButtonLabel(title: "New conversation", systemImage: "plus", isOpen: isOpen)
-            } content: {
+            // CNV-01: one click makes the conversation, with the default agent (CNV-02), adds its tab at the end and
+            // selects it; its new `ChatView` takes the keyboard for the message box.
+            Button("New conversation", systemImage: "plus") {
+                Task { await model.newConversation(workspace: workspace) }
+            }
+            .buttonStyle(RockyIconButtonStyle())
+            .help("New conversation")
+            // CNV-01's bridge until M2.8's agent rail (AGM-01), the only way to pick OpenCode meanwhile (user decision,
+            // 2026-09-24): today's two items on a right-click. A pick does not change the default by itself.
+            .rockyContextMenu(id: "new-conversation-\(workspace.id)", width: 280) {
                 ForEach(AgentKind.allCases) { agent in
                     MenuItem(title: "New \(agent.displayName) conversation", icon: .agent(agent)) {
                         Task { await model.newConversation(workspace: workspace, agent: agent) }
                     }
                 }
             }
-            .fixedSize()
-            .help("New conversation")
         }
         .padding(.horizontal, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: Zoom.shared(34))
         .background(alignment: .bottom) {
             Rectangle().fill(Theme.hairline).frame(height: 1)
+        }
+        .onChange(of: model.conversations[workspace.id]?.map(\.id), initial: true) { _, ids in
+            if drawnConversationIds == nil, let ids { drawnConversationIds = Set(ids) }
         }
         .confirmationDialog(
             closing.map { UnsavedChangesPrompt.title(for: [$0.editor], quitting: false) } ?? "",
@@ -466,11 +458,79 @@ struct WorkspaceTab<Icon: View>: View {
 @MainActor
 enum ExternalEditorOpener {
     static func open(_ url: URL, in editor: ExternalEditor, app: URL, toasts: ToastPresenter?) {
+        open(url, in: editor, app: app) { toasts?.show($0) }
+    }
+
+    /// The same, with the failure's text handed to `toast`: ⌘O's menu command has no `ToastPresenter` and shows it
+    /// through `AppModel.onToast`.
+    static func open(_ url: URL, in editor: ExternalEditor, app: URL, toast: @escaping @MainActor @Sendable (String) -> Void) {
         let name = editor.displayName
         NSWorkspace.shared.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration()) { @Sendable _, error in
             guard let error else { return }
             let message = "Couldn’t open in \(name): \(error.localizedDescription)"
-            Task { @MainActor in toasts?.show(message) }
+            Task { @MainActor in toast(message) }
+        }
+    }
+}
+
+/// Finder or an installed editor (`OPN-01`, `OPN-02`), with its bundle on this Mac, for its icon and for opening a
+/// worktree or a file in it. Looked up each time it is needed (the split button drawing, the menu opening, a click, ⌘O,
+/// the path chip), never cached and never polled, so an editor installed or removed while Rocky runs shows up at the
+/// next use.
+@MainActor
+public struct InstalledApp {
+    public let app: OpenApp
+    /// The app's bundle; nil only for Finder, if Launch Services cannot find it.
+    let bundleURL: URL?
+
+    /// The Open menu's apps: Finder, then the installed editors in `OPN-01`'s order.
+    static func all() -> [InstalledApp] {
+        let finder = InstalledApp(
+            app: .finder,
+            bundleURL: NSWorkspace.shared.urlForApplication(withBundleIdentifier: OpenApp.finderBundleIdentifier)
+        )
+        let editors = ExternalEditor.installed { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }
+        return [finder] + editors.map { InstalledApp(app: .editor($0.editor), bundleURL: $0.app) }
+    }
+
+    /// The default app (`OPN-02`) for the stored bundle identifier, among `apps` or the apps installed now.
+    public static func defaultApp(stored: String?) -> InstalledApp {
+        defaultApp(stored: stored, among: all())
+    }
+
+    static func defaultApp(stored: String?, among apps: [InstalledApp]) -> InstalledApp {
+        let editors = apps.compactMap { entry -> ExternalEditor? in
+            if case .editor(let editor) = entry.app { return editor }
+            return nil
+        }
+        let resolved = DefaultOpenApp.resolve(stored: stored, installed: editors)
+        return apps.first { $0.app == resolved } ?? InstalledApp(app: .finder, bundleURL: nil)
+    }
+
+    /// The app's own icon, as the Open menu draws it (`OPN-01`).
+    var icon: NSImage? {
+        bundleURL.map { NSWorkspace.shared.icon(forFile: $0.path) }
+    }
+
+    /// Opens the worktree folder: a Finder window on it, or the editor's window on it as a project (`OPN-01`).
+    public func openFolder(_ url: URL, toast: @escaping @MainActor @Sendable (String) -> Void) {
+        switch app {
+        case .finder:
+            _ = NSWorkspace.shared.open(url)
+        case .editor(let editor):
+            guard let bundleURL else { return }
+            ExternalEditorOpener.open(url, in: editor, app: bundleURL, toast: toast)
+        }
+    }
+
+    /// Opens one file as it is on disk (`DIFF-01`'s path chip): an editor opens it, and Finder reveals it.
+    func openFile(_ url: URL, toast: @escaping @MainActor @Sendable (String) -> Void) {
+        switch app {
+        case .finder:
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        case .editor(let editor):
+            guard let bundleURL else { return }
+            ExternalEditorOpener.open(url, in: editor, app: bundleURL, toast: toast)
         }
     }
 }
@@ -525,23 +585,142 @@ private struct TabWidthCap: Layout {
     }
 }
 
-/// The label of an icon button that opens a Rocky menu, drawn like `RockyIconButtonStyle` (CUR-02) and lit while
-/// its menu is open. `MenuButton` wraps its label in a plain button, so the style itself cannot be applied.
-private struct MenuIconButtonLabel: View {
-    let title: String
-    let systemImage: String
+/// TB-03: the Open split button. Its left part shows the default app's icon (OPN-02) and opens the worktree in it, as
+/// ⌘O does; the chevron opens the menu: Finder and the installed editors (OPN-01), each as its app's icon and name, the
+/// default one with "⌘O", then New Terminal and Copy Path. No path header and no "Open in", as in Conductor (user
+/// request, 2026-09-24: "solo mostrar el logo del app y el nombre"). Picking Finder or an editor opens the worktree
+/// there and makes it the default; New Terminal and Copy Path leave the default as it is. The default is looked up
+/// when the button draws and again on each click, and the menu's apps when it opens: never at rest.
+private struct OpenSplitButton: View {
+    let model: AppModel
+    let workspaceId: String
+    let worktreePath: String
+    @Binding var panelSelection: UUID?
+    @AppStorage(DefaultOpenApp.storageKey) private var storedDefault: String?
+    @AppStorage("terminalPanelCollapsed") private var panelCollapsed = false
+    @Environment(ToastPresenter.self) private var toasts: ToastPresenter?
+
+    private var worktree: URL {
+        URL(fileURLWithPath: worktreePath, isDirectory: true)
+    }
+
+    private var toast: @MainActor @Sendable (String) -> Void {
+        { [toasts] in toasts?.show($0) }
+    }
+
+    var body: some View {
+        let current = InstalledApp.defaultApp(stored: storedDefault)
+        HStack(spacing: 0) {
+            Button {
+                InstalledApp.defaultApp(stored: storedDefault).openFolder(worktree, toast: toast)
+            } label: {
+                OpenAppIcon(app: current)
+            }
+            .buttonStyle(OpenSplitMainStyle())
+            .help("Open in \(current.app.displayName) (⌘O)")
+            .accessibilityLabel("Open in \(current.app.displayName)")
+            Rectangle()
+                .fill(Theme.hairline)
+                .frame(width: 1, height: Zoom.shared(16))
+            MenuButton(id: "open-\(workspaceId)", placement: .belowTrailing, width: 200) { isOpen in
+                OpenSplitChevron(isOpen: isOpen)
+            } content: {
+                menu
+            }
+            .help("Open in Finder, an editor or Terminal")
+        }
+        .frame(height: Zoom.shared(28))
+        .background(Theme.fillControl)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.hairline))
+        .fixedSize()
+    }
+
+    @ViewBuilder
+    private var menu: some View {
+        let apps = InstalledApp.all()
+        let current = InstalledApp.defaultApp(stored: storedDefault, among: apps)
+        ForEach(Array(apps.enumerated()), id: \.offset) { _, entry in
+            MenuItem(
+                title: entry.app.displayName,
+                icon: entry.icon.map(MenuIcon.image) ?? .symbol("folder"),
+                shortcut: entry.app == current.app ? "⌘O" : nil
+            ) {
+                storedDefault = entry.app.bundleIdentifier
+                entry.openFolder(worktree, toast: toast)
+            }
+        }
+        MenuDivider()
+        MenuItem(title: "New Terminal", icon: .symbol("terminal")) {
+            // TERM-07: a new "Terminal N", selected, with the panel unfolded. The first one may wait for the
+            // repository account's token (ENV-01).
+            Task {
+                panelSelection = await model.openTerminal(workspaceId: workspaceId)?.id
+                panelCollapsed = false
+            }
+        }
+        MenuItem(title: "Copy Path", icon: .symbol("doc.on.doc")) {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(worktreePath, forType: .string)
+        }
+    }
+}
+
+/// An app's own icon at 16 points, as the Open menu draws it; a folder symbol if Finder's bundle was not found.
+private struct OpenAppIcon: View {
+    let app: InstalledApp
+
+    var body: some View {
+        if let icon = app.icon {
+            Image(nsImage: icon)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: Zoom.shared(16), height: Zoom.shared(16))
+        } else {
+            Image(systemName: "folder")
+                .font(.rocky(13))
+                .foregroundStyle(Theme.textSecondary)
+        }
+    }
+}
+
+/// TB-03's left part: 30 wide, `fillHover` on hover and `fillPressed` pressed, under the split button's clip.
+private struct OpenSplitMainStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        OpenSplitMain(configuration: configuration)
+    }
+
+    private struct OpenSplitMain: View {
+        let configuration: Configuration
+        @State private var hovering = false
+
+        var body: some View {
+            configuration.label
+                .frame(width: Zoom.shared(30), height: Zoom.shared(28))
+                .background(configuration.isPressed ? Theme.fillPressed : hovering ? Theme.fillHover : .clear)
+                .contentShape(Rectangle())
+                .onHover { inside in withAnimation(Theme.Motion.hover) { hovering = inside } }
+                .clickable()
+        }
+    }
+}
+
+/// TB-03's right part, the label of its `MenuButton`: 22 wide, `chevron.down` 9 semibold in `textSecondary`,
+/// `fillHover` on hover, and `fillSelected` while the menu is open.
+private struct OpenSplitChevron: View {
     let isOpen: Bool
-    var size: CGFloat = 28
     @State private var hovering = false
 
     var body: some View {
-        Label(title, systemImage: systemImage)
-            .labelStyle(.iconOnly)
+        Image(systemName: "chevron.down")
+            .font(.rocky(9, weight: .semibold))
             .foregroundStyle(hovering || isOpen ? Theme.textPrimary : Theme.textSecondary)
-            .frame(width: Zoom.shared(size), height: Zoom.shared(size))
-            .background(isOpen ? Theme.fillPressed : hovering ? Theme.fillIconHover : .clear, in: RoundedRectangle(cornerRadius: 6))
+            .frame(width: Zoom.shared(22), height: Zoom.shared(28))
+            .background(isOpen ? Theme.fillSelected : hovering ? Theme.fillHover : .clear)
             .contentShape(Rectangle())
             .onHover { inside in withAnimation(Theme.Motion.hover) { hovering = inside } }
+            .accessibilityLabel("Open in…")
     }
 }
 
@@ -606,22 +785,5 @@ private struct BranchCopyButtonStyle: ButtonStyle {
                 .onHover { inside in withAnimation(Theme.Motion.hover) { hovering = inside } }
                 .clickable()
         }
-    }
-}
-
-/// The Open menu's header (TB-03): the worktree path, 11 mono in `textTertiary`, wrapping when long. The home folder
-/// shows as "~".
-private struct OpenMenuPathHeader: View {
-    let path: String
-
-    var body: some View {
-        Text((path as NSString).abbreviatingWithTildeInPath)
-            .fixedSize(horizontal: false, vertical: true)
-            .font(.rocky(11, design: .monospaced))
-        .foregroundStyle(Theme.textTertiary)
-        .padding(.horizontal, 10)
-        .padding(.top, 6)
-        .padding(.bottom, 4)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

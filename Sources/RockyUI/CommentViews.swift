@@ -2,9 +2,9 @@ import AppKit
 import RockyKit
 import SwiftUI
 
-/// A diff tab's commenting (CMT-01, CMT-02): the selected range, the composer's draft, and the frames of the rows on
-/// screen, which a drag reads. A class the rows read, like `DiffScrollOffset`, so a drag redraws the rows and not the
-/// whole diff; only the composer opening or closing redraws the diff, to place it.
+/// A diff tab's selection (CMT-01) and the frames of the rows on screen, which a drag reads. The box itself is the
+/// model's (`AppModel.commentDraft`), so it comes back after a tab switch or Diff | Edit (CMT-02). A class the rows
+/// read, like `DiffScrollOffset`, so a drag redraws the rows and not the whole diff.
 @MainActor
 @Observable
 final class DiffCommentState {
@@ -12,10 +12,10 @@ final class DiffCommentState {
     /// geometry closures, which run off the main actor.
     nonisolated static let space = "diff-comment-rows"
 
-    /// CMT-01's range: on one side only, from the line first pressed (`anchor`) to the line the drag or a Shift-click
-    /// reached.
+    /// CMT-01's range while it is being made: on one side only, from the line first pressed (`anchor`) to the line the
+    /// drag or a Shift-click reached.
     struct Selection: Equatable {
-        let side: DiffCommentRecord.Side
+        let side: CommentLine.Side
         let anchor: Int
         let start: Int
         let end: Int
@@ -25,41 +25,49 @@ final class DiffCommentState {
         }
     }
 
-    /// The composer's range, and the comment it edits (nil for a new one).
-    struct Draft: Equatable {
-        let side: DiffCommentRecord.Side
-        let start: Int
-        let end: Int
-        let editing: String?
-
-        var range: ClosedRange<Int> { start...end }
-        var lastLine: CommentLine { CommentLine(side: side, number: end) }
-    }
-
+    /// The range of the press in progress; between presses the box's range is the selection.
     private(set) var selection: Selection?
-    private(set) var draft: Draft?
-    /// The composer's text, kept apart from `draft` so typing redraws the composer alone.
-    var text = ""
-    /// CMT-02: Esc in a composer with text asks before dropping it.
+    /// CMT-02: Esc in a box with text asks before dropping it.
     var asksToDiscard = false
+    @ObservationIgnored private let model: AppModel
+    @ObservationIgnored private let workspaceId: String
+    /// Worktree-relative: the diff tab's file.
+    @ObservationIgnored private let path: String
     /// The side of the press in progress; nil between presses.
-    @ObservationIgnored private var pressedSide: DiffCommentRecord.Side?
+    @ObservationIgnored private var pressedSide: CommentLine.Side?
+    /// The line the box's range was first pressed on, which a Shift-click extends from.
+    @ObservationIgnored private var anchor: Int?
     /// The rows on screen, by row id: the line each one takes a comment on and its vertical extent.
     @ObservationIgnored private var frames: [String: (line: CommentLine, minY: CGFloat, maxY: CGFloat)] = [:]
 
+    init(model: AppModel, workspaceId: String, path: String) {
+        self.model = model
+        self.workspaceId = workspaceId
+        self.path = path
+    }
+
+    /// The tab's box, while it is open.
+    var draft: CommentDraft? {
+        model.commentDraft(workspaceId: workspaceId, path: path)
+    }
+
+    /// Lit with `commentRange`: the range being pressed, else the box's (CMT-02: the range keeps its fill while the
+    /// box is open).
     func isSelected(_ line: CommentLine) -> Bool {
-        selection?.contains(line) ?? false
+        if let selection { return selection.contains(line) }
+        return draft?.contains(line) ?? false
     }
 
     /// A press on a line's "+" or number: a range of that line, or with Shift one from the last range's anchor, when
     /// that range is on the same side.
     func press(_ line: CommentLine, extending: Bool) {
-        if extending, let selection, selection.side == line.side {
-            self.selection = Selection(
+        let current = selection ?? draft.map { Selection(side: $0.side, anchor: anchor ?? $0.start, start: $0.start, end: $0.end) }
+        if extending, let current, current.side == line.side {
+            selection = Selection(
                 side: line.side,
-                anchor: selection.anchor,
-                start: min(selection.anchor, line.number),
-                end: max(selection.anchor, line.number)
+                anchor: current.anchor,
+                start: min(current.anchor, line.number),
+                end: max(current.anchor, line.number)
             )
         } else {
             selection = Selection(side: line.side, anchor: line.number, start: line.number, end: line.number)
@@ -77,40 +85,33 @@ final class DiffCommentState {
         self.selection = Selection(side: side, anchor: selection.anchor, start: start, end: end)
     }
 
-    /// The press ended: the composer opens under the range. The text of a new comment not saved yet stays, as in the
-    /// mock; an edit's text does not carry over to a new comment.
+    /// The press ended: the box opens under the range, or moves there with what was written in it.
     func release() {
         guard pressedSide != nil, let selection else { return }
         pressedSide = nil
-        if draft?.editing != nil { text = "" }
-        draft = Draft(side: selection.side, start: selection.start, end: selection.end, editing: nil)
+        anchor = selection.anchor
+        model.openCommentDraft(workspaceId: workspaceId, path: path, side: selection.side, lines: selection.start...selection.end)
+        self.selection = nil
     }
 
-    /// VoiceOver's Comment action on a row: that line, with the composer open.
+    /// VoiceOver's Comment action on a row: that line, with the box open.
     func comment(on line: CommentLine) {
         press(line, extending: false)
         release()
     }
 
-    /// CMT-02's Edit: the composer in the card's place, on the comment's lines.
-    func edit(_ comment: DiffCommentRecord) {
-        selection = Selection(side: comment.side, anchor: comment.startLine, start: comment.startLine, end: comment.endLine)
-        draft = Draft(side: comment.side, start: comment.startLine, end: comment.endLine, editing: comment.id)
-        text = comment.body
-    }
-
-    /// Cancel, Esc, or after saving: no range and no composer.
+    /// Cancel, Esc, or once the comment is on its way: no range and no box.
     func cancel() {
         selection = nil
-        draft = nil
-        text = ""
-        asksToDiscard = false
         pressedSide = nil
+        anchor = nil
+        asksToDiscard = false
+        model.dropCommentDraft(workspaceId: workspaceId, path: path)
     }
 
-    /// Esc in the composer: an empty one closes, one with text asks first (CMT-02).
+    /// Esc in the box: an empty one closes, one with text asks first (CMT-02).
     func escape() {
-        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if (draft?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             cancel()
         } else {
             asksToDiscard = true
@@ -121,12 +122,12 @@ final class DiffCommentState {
         frames[rowId] = (line: line, minY: frame.minY, maxY: frame.maxY)
     }
 
-    /// A row the lazy stack let go of: its frame would go stale as comments open above it.
+    /// A row the lazy stack let go of: its frame would go stale as the box opens above it.
     func forget(rowId: String) {
         frames[rowId] = nil
     }
 
-    private func nearestLine(to y: CGFloat, side: DiffCommentRecord.Side) -> Int? {
+    private func nearestLine(to y: CGFloat, side: CommentLine.Side) -> Int? {
         var best: (number: Int, distance: CGFloat)?
         for entry in frames.values where entry.line.side == side {
             let distance = y < entry.minY ? entry.minY - y : y > entry.maxY ? y - entry.maxY : 0
@@ -151,272 +152,69 @@ struct CommentAddGlyph: View {
     }
 }
 
-/// The comments under one diff row, or at the top of the diff (CMT-02, CMT-04): the collapsed outdated ones, the cards,
-/// and the composer, aligned with the code (the gutter's width in) and at most 560 wide. They stay in view while long
-/// lines scroll, like the number columns.
-struct DiffCommentSlot: View {
-    var outdated: [DiffCommentRecord] = []
-    let comments: [DiffCommentRecord]
-    let showsComposer: Bool
-    let commenting: DiffCommentState
-    let width: CGFloat
-    let cardWidth: CGFloat
-    let scroll: DiffScrollOffset
-    let save: () -> Void
-    let delete: (DiffCommentRecord) -> Void
-
-    var body: some View {
-        let editing = commenting.draft?.editing
-        Sticky(scroll: scroll) {
-            VStack(alignment: .leading, spacing: 6) {
-                if !outdated.isEmpty {
-                    OutdatedCommentsBox(comments: outdated, delete: delete)
-                }
-                ForEach(comments) { comment in
-                    if comment.id == editing {
-                        DiffCommentComposer(commenting: commenting, save: save)
-                    } else {
-                        DiffCommentCard(comment: comment, edit: { commenting.edit(comment) }, delete: { delete(comment) })
-                    }
-                }
-                if showsComposer, editing == nil || !comments.contains(where: { $0.id == editing }) {
-                    DiffCommentComposer(commenting: commenting, save: save)
-                }
-            }
-            .frame(width: cardWidth, alignment: .leading)
-            .padding(.leading, Zoom.shared(DiffMetrics.gutterWidth))
-            .padding(.top, 6)
-            .padding(.bottom, 8)
-        }
-        .frame(width: width, alignment: .leading)
-    }
-}
-
-/// CMT-04: outdated comments at the top of a file's diff, collapsed under "2 outdated comments" (12 `textSecondary`),
-/// their cards dimmed to 80 % when open. They can only be deleted: their lines are gone.
-private struct OutdatedCommentsBox: View {
-    let comments: [DiffCommentRecord]
-    let delete: (DiffCommentRecord) -> Void
-    @State private var isOpen = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Button {
-                withAnimation(reduceMotion ? nil : Theme.Motion.state) { isOpen.toggle() }
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "chevron.right")
-                        .font(.rocky(9, weight: .semibold))
-                        .rotationEffect(.degrees(isOpen ? 90 : 0))
-                    Text(verbatim: comments.count == 1 ? "1 outdated comment" : "\(comments.count) outdated comments")
-                        .font(.rocky(12))
-                }
-                .foregroundStyle(Theme.textSecondary)
-                .frame(height: Zoom.shared(24))
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .clickable()
-            .accessibilityValue(isOpen ? "expanded" : "collapsed")
-            if isOpen {
-                ForEach(comments) { comment in
-                    DiffCommentCard(comment: comment, edit: nil, delete: { delete(comment) })
-                        .opacity(0.8)
-                }
-            }
-        }
-    }
-}
-
-/// CMT-02's card: "You", when, the state chip, and on hover Edit and Delete, then the text (13). `Theme.composer` with
-/// its border, radius 8.
-struct DiffCommentCard: View {
-    let comment: DiffCommentRecord
-    /// nil hides Edit (an outdated comment).
-    let edit: (() -> Void)?
-    let delete: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                Text("You")
-                    .font(.rocky(12, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                Text(verbatim: Self.age(of: comment.createdAt, now: Date()))
-                    .font(.rocky(11.5))
-                    .foregroundStyle(Theme.textSecondary)
-                CommentStateChip(state: comment.state)
-                Spacer(minLength: 0)
-                HStack(spacing: 2) {
-                    if let edit {
-                        Button("Edit comment", systemImage: "pencil", action: edit)
-                            .buttonStyle(RockyIconButtonStyle(size: 18))
-                            .help("Edit")
-                    }
-                    Button("Delete comment", systemImage: "trash", action: delete)
-                        .buttonStyle(RockyIconButtonStyle(size: 18))
-                        .help("Delete")
-                }
-                .font(.rocky(10))
-                .opacity(hovering ? 1 : 0)
-                .allowsHitTesting(hovering)
-            }
-            .frame(minHeight: Zoom.shared(18))
-            .padding(.leading, 12)
-            .padding(.trailing, 8)
-            .padding(.top, 8)
-            Text(verbatim: comment.body)
-                .font(.rocky(13))
-                .foregroundStyle(Theme.textPrimary)
-                .lineSpacing(Zoom.shared(4))
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 12)
-                .padding(.top, 4)
-                .padding(.bottom, 10)
-        }
-        .background(Theme.composer, in: RoundedRectangle(cornerRadius: 8))
-        .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.composerBorder) }
-        .contentShape(Rectangle())
-        .onHover { inside in withAnimation(Theme.Motion.hover) { hovering = inside } }
-    }
-
-    /// "just now" in the first minute, then `RelativeAge`'s "5m ago". Drawn when the card is, with no timer.
-    static func age(of date: Date, now: Date) -> String {
-        now.timeIntervalSince(date) < 60 ? "just now" : RelativeAge.text(since: date, now: now)
-    }
-}
-
-/// CMT-02's chips: Pending (`attention` outline), Sent (`textSecondary`, a check), Outdated (`textTertiary`, "The
-/// commented lines changed"); 18 points, radius 9, 10.5.
-struct CommentStateChip: View {
-    let state: DiffCommentRecord.State
-
-    var body: some View {
-        HStack(spacing: 4) {
-            if state == .sent {
-                Image(systemName: "checkmark")
-                    .font(.rocky(8, weight: .bold))
-            }
-            Text(verbatim: title)
-                .font(.rocky(10.5))
-        }
-        .foregroundStyle(color)
-        .padding(.horizontal, 6)
-        .frame(height: Zoom.shared(18))
-        .overlay { Capsule().strokeBorder(border) }
-        .fixedSize()
-        .optionalHelp(state == .outdated ? "The commented lines changed" : nil)
-    }
-
-    private var title: String {
-        switch state {
-        case .pending: "Pending"
-        case .sent: "Sent"
-        case .outdated: "Outdated"
-        }
-    }
-
-    private var color: Color {
-        switch state {
-        case .pending: Theme.attention
-        case .sent: Theme.textSecondary
-        case .outdated: Theme.textTertiary
-        }
-    }
-
-    private var border: Color {
-        switch state {
-        case .pending: Theme.attention.opacity(0.45)
-        case .sent: Color.white.opacity(0.14)
-        case .outdated: Color.white.opacity(0.1)
-        }
-    }
-}
-
-/// Whether a diff comment's composer has the keyboard. `ChatView`'s key monitor reads it at the key's time, since a
-/// monitor keeps the view as it was when it was added (`CLAUDE.md`), and then leaves Esc to the composer, which closes
-/// it (CMT-02), instead of stopping the agent's turn (KBD-02).
+/// Whether a comment box has the keyboard. `ChatView`'s key monitor reads it at the key's time, since a monitor keeps
+/// the view as it was when it was added (`CLAUDE.md`), and then leaves Esc to the box, which closes it (CMT-02),
+/// instead of stopping the agent's turn (KBD-02).
 @MainActor
 enum CommentComposerFocus {
-    /// The composer's own focus state, which it sets.
+    /// The box's own focus state, which it sets.
     static var isFocused = false
 
-    /// The composer's focus, and the window typing in a text view that is not a field editor, as the composer's
-    /// `TextEditor` does: a focus state left behind never keeps Esc from the agent once a field has the keyboard.
+    /// The box's focus, and the window typing in a text view that is not a field editor, as the box's `TextEditor`
+    /// does: a focus state left behind never keeps Esc from the agent once a field has the keyboard.
     static func hasKeyboard(in window: NSWindow) -> Bool {
         guard isFocused, let textView = window.firstResponder as? NSTextView else { return false }
         return !textView.isFieldEditor
     }
 }
 
-/// CMT-02's composer under the range: "Comment on line 14" or "lines 14–22" (11.5 `textSecondary`), a text box (13,
-/// three lines at least), "⌘Return to comment", Cancel and Comment (white filled). Esc closes it when empty and asks
-/// first with text.
-struct DiffCommentComposer: View {
+/// CMT-02's comment box under the range, on `Theme.composer` with its border, radius 10. A 34-point head over a
+/// hairline: "Sending to" (12 `textTertiary`) and Rocky's menu of the workspace's open conversations, its button the
+/// chosen one's agent icon, title (12.5 `textPrimary`) and `chevron.up.chevron.down`. Then the line chip (CMT-06),
+/// fixed, and the text (13 on 22-point lines, two at least, growing), placeholder "Ask about these lines…". Then
+/// "⌘Return to send" (11.5 `textTertiary`), Cancel and Send (white filled, disabled while the text is empty), which
+/// reads "Queue" while the chosen conversation's turn runs. Return is a new line; Esc closes an empty box and asks
+/// "Discard this comment?" first with text.
+struct LineCommentBox: View {
+    let model: AppModel
+    let workspaceId: String
+    /// The lines, as the chip and the message show them.
+    let range: LineRangeAttachment
+    @Bindable var draft: CommentDraft
     @Bindable var commenting: DiffCommentState
-    let save: () -> Void
+    let send: () -> Void
     @FocusState private var isFocused: Bool
 
+    /// A text line of the box, at the zoom.
+    private static var lineHeight: CGFloat { Zoom.shared(22) }
+
+    /// What `lineSpacing` adds to 13-point lines to make them 22 points.
+    private static var lineGap: CGFloat {
+        let font = NSFont.systemFont(ofSize: Zoom.shared(13))
+        return max(0, lineHeight - ceil(font.ascender - font.descender + font.leading))
+    }
+
     var body: some View {
-        let isEmpty = commenting.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let conversation = model.commentConversation(for: draft, workspaceId: workspaceId)
+        let isEmpty = draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         VStack(alignment: .leading, spacing: 0) {
-            Text(verbatim: label)
-                .font(.rocky(11.5))
-                .foregroundStyle(Theme.textSecondary)
-                .padding(.bottom, 6)
-            TextEditor(text: $commenting.text)
-                .font(.rocky(13))
-                .foregroundStyle(Theme.textPrimary)
-                .scrollContentBackground(.hidden)
-                .focused($isFocused)
-                .frame(minHeight: Zoom.shared(64), maxHeight: Zoom.shared(240))
-                .padding(.horizontal, 5)
-                .padding(.vertical, 6)
-                .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 6))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 6)
-                        .strokeBorder(isFocused ? Theme.accent.opacity(0.55) : Theme.hairline)
-                }
-                .overlay(alignment: .topLeading) {
-                    if commenting.text.isEmpty {
-                        Text("Leave a comment for the agent")
-                            .font(.rocky(13))
-                            .foregroundStyle(Theme.textTertiary)
-                            .padding(.leading, 10)
-                            .padding(.top, 6)
-                            .allowsHitTesting(false)
-                    }
-                }
-                .onKeyPress(.escape) {
-                    commenting.escape()
-                    return .handled
-                }
-                .accessibilityLabel(label)
-            HStack(spacing: 6) {
-                Text("⌘Return to comment")
-                    .font(.rocky(11))
-                    .foregroundStyle(Theme.textTertiary)
-                Spacer(minLength: 0)
-                Button("Cancel") { commenting.cancel() }
-                    .font(.rocky(12.5))
-                    .buttonStyle(RockyTextButtonStyle(height: 26))
-                Button("Comment", action: save)
-                    .font(.rocky(12.5, weight: .medium))
-                    .buttonStyle(RockyPrimaryButtonStyle())
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .disabled(isEmpty)
+            head(conversation)
+            Rectangle().fill(Theme.hairline).frame(height: 1)
+            HStack(alignment: .top, spacing: 6) {
+                LineChip(range: range)
+                editor
             }
-            .padding(.top, 8)
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+            .padding(.bottom, 4)
+            actions(conversation, isEmpty: isEmpty)
+                .padding(.leading, 12)
+                .padding(.trailing, 10)
+                .padding(.bottom, 10)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(Theme.composer, in: RoundedRectangle(cornerRadius: 8))
-        .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.composerBorder) }
-        // After the composer is in the window, or the focus does not take.
+        .background(Theme.composer, in: RoundedRectangle(cornerRadius: 10))
+        .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.composerBorder) }
+        // After the box is in the window, or the focus does not take.
         .task { isFocused = true }
         .onChange(of: isFocused, initial: true) { _, focused in CommentComposerFocus.isFocused = focused }
         .onDisappear { CommentComposerFocus.isFocused = false }
@@ -424,11 +222,130 @@ struct DiffCommentComposer: View {
             Button("Discard", role: .destructive) { commenting.cancel() }
             Button("Keep Editing", role: .cancel) {}
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Comment on \(range.rangeLabel)")
     }
 
-    private var label: String {
-        guard let draft = commenting.draft else { return "Comment" }
-        let lines = draft.start == draft.end ? "Comment on line \(draft.start)" : "Comment on lines \(draft.start)–\(draft.end)"
-        return draft.side == .old ? lines + " (removed)" : lines
+    private func head(_ conversation: ChatSessionRecord?) -> some View {
+        HStack(spacing: 6) {
+            Text("Sending to")
+                .font(.rocky(12))
+                .foregroundStyle(Theme.textTertiary)
+            MenuButton(id: "comment-to-\(workspaceId)-\(range.path)", placement: .belowLeading, width: 260) { isOpen in
+                CommentConversationLabel(conversation: conversation, isOpen: isOpen)
+            } content: {
+                ForEach(model.conversations[workspaceId] ?? []) { record in
+                    MenuItem(
+                        title: record.title ?? "New conversation",
+                        icon: .agent(AgentKind(rawValue: record.agent) ?? .claude),
+                        isChecked: record.id == conversation?.id
+                    ) {
+                        draft.conversationId = record.id
+                    }
+                }
+            }
+            .help("The conversation this comment goes to")
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, 12)
+        .padding(.trailing, 8)
+        .frame(height: Zoom.shared(34))
+    }
+
+    /// The text, sized by a hidden copy of it: a `TextEditor` does not grow with what it holds.
+    private var editor: some View {
+        Text(verbatim: Self.sizingText(draft.text))
+            .font(.rocky(13))
+            .lineSpacing(Self.lineGap)
+            .padding(.horizontal, 5)
+            .padding(.top, Self.firstLineInset)
+            .frame(maxWidth: .infinity, minHeight: Self.lineHeight * 2, alignment: .topLeading)
+            .fixedSize(horizontal: false, vertical: true)
+            .hidden()
+            .overlay(alignment: .topLeading) {
+                TextEditor(text: $draft.text)
+                    .font(.rocky(13))
+                    .lineSpacing(Self.lineGap)
+                    .foregroundStyle(Theme.textPrimary)
+                    .scrollContentBackground(.hidden)
+                    .scrollIndicators(.never)
+                    .padding(.top, Self.firstLineInset)
+                    .focused($isFocused)
+                    .onKeyPress(.escape) {
+                        commenting.escape()
+                        return .handled
+                    }
+                    .accessibilityLabel("Comment")
+            }
+            .overlay(alignment: .topLeading) {
+                // The first line's height, so the placeholder sits where the caret is, beside the chip.
+                Color.clear
+                    .frame(height: Self.lineHeight)
+                    .stablePlaceholder("Ask about these lines…", isVisible: draft.text.isEmpty)
+                    .font(.rocky(13))
+                    .padding(.leading, 5)
+                    .allowsHitTesting(false)
+            }
+    }
+
+    /// Centers the first line of text on the chip's 22 points.
+    private static var firstLineInset: CGFloat {
+        let font = NSFont.systemFont(ofSize: Zoom.shared(13))
+        return max(0, (lineHeight - ceil(font.ascender - font.descender + font.leading)) / 2)
+    }
+
+    /// The editor's text for its hidden copy: a last empty line still counts, and an empty box shows one line.
+    private static func sizingText(_ text: String) -> String {
+        text.isEmpty || text.hasSuffix("\n") ? text + " " : text
+    }
+
+    private func actions(_ conversation: ChatSessionRecord?, isEmpty: Bool) -> some View {
+        let agent = conversation.flatMap { AgentKind(rawValue: $0.agent) }
+        let isWorking = conversation.flatMap { model.chat(conversationId: $0.id) }?.state == .running
+        return HStack(spacing: 6) {
+            Text("⌘Return to send")
+                .font(.rocky(11.5))
+                .foregroundStyle(Theme.textTertiary)
+            Spacer(minLength: 0)
+            Button("Cancel") { commenting.cancel() }
+                .font(.rocky(12.5))
+                .buttonStyle(RockyTextButtonStyle(height: 26))
+            Button(isWorking ? "Queue" : "Send", action: send)
+                .font(.rocky(12.5, weight: .medium))
+                .buttonStyle(RockyPrimaryButtonStyle())
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(isEmpty || conversation == nil)
+                .optionalHelp(isWorking ? "\(agent?.displayName ?? "The agent") is working; this goes out when its turn ends" : nil)
+        }
+    }
+}
+
+/// The "Sending to" menu's button: the conversation's agent icon, its title (12.5 `textPrimary`) and
+/// `chevron.up.chevron.down`; 24 points, padding 6, radius 5, `fillIconHover` on hover and `fillPressed` while its menu
+/// is open. `MenuButton` wraps it in a plain button, so it draws its own hover.
+private struct CommentConversationLabel: View {
+    let conversation: ChatSessionRecord?
+    let isOpen: Bool
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if let agent = conversation.flatMap({ AgentKind(rawValue: $0.agent) }) {
+                AgentIcon(agent: agent, size: 14)
+            }
+            Text(verbatim: conversation.map { $0.title ?? "New conversation" } ?? "No conversation")
+                .font(.rocky(12.5))
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.rocky(9, weight: .semibold))
+                .foregroundStyle(Theme.textTertiary)
+        }
+        .padding(.horizontal, 6)
+        .frame(height: Zoom.shared(24))
+        .background(isOpen ? Theme.fillPressed : hovering ? Theme.fillIconHover : .clear, in: RoundedRectangle(cornerRadius: 5))
+        .contentShape(Rectangle())
+        .onHover { inside in withAnimation(Theme.Motion.hover) { hovering = inside } }
     }
 }

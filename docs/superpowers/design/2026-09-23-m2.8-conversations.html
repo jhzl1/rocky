@@ -186,6 +186,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
 .scope { font-size: 10px; padding: 1px 6px; border-radius: 4px; border: 1px solid; white-space: nowrap; }
 .scope.in { color: var(--success); border-color: rgba(124,192,138,0.4); } .scope.out { color: var(--attention); border-color: rgba(232,169,75,0.5); }
 .scope.tech { color: var(--accent); border-color: rgba(120,189,245,0.45); }
+.scope.early { color: var(--text-2); border-color: var(--hairline); margin-left: 4px; }
 .req dl { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 5px 10px; margin: 8px 0 0; }
 .req dt { padding-top: 1px; font-size: 11px; color: var(--text-3); } .req dd { margin: 0; }
 .req ol, .req ul { margin: 2px 0 0; padding-left: 18px; } .req li { margin: 2px 0; }
@@ -227,28 +228,32 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
 
 <aside class="spec" id="spec">
   <h1>Requirements</h1>
-  <p>Plan (dev-1): <code>docs/superpowers/plans/2026-09-23-m2.8-conversations.md</code>. After M3 (order: M2.7, M3, M2.8). Labels: <span class="scope tech">Technical</span> for data and process facts; <span class="scope in">In scope</span> for behavior and UI.</p>
+  <p>Plan (dev-1): <code>docs/superpowers/plans/2026-09-23-m2.8-conversations.md</code>. After M3 (order: M2.7, M3, M2.8), except CNV-01, CNV-02, KIT-13 and KIT-11's <code>newConversation(workspace:)</code>: <span class="scope early">Shipped early</span> in M3's follow-up branch <code>fix/m3-editor-and-quick-open</code> (user decision, 2026-09-24, relayed by dev-1). The rest (AGM-01…07, KIT-12, the rest of KIT-11) stays as designed. Labels: <span class="scope tech">Technical</span> for data and process facts; <span class="scope in">In scope</span> for behavior and UI.</p>
   <p><strong>User decisions (2026-09-23):</strong> the default is the agent last used in the repository · with messages, another agent's model opens a new conversation · the Claude instance stays a repository setting · Codex comes later, separately.</p>
   <p><strong>Today</strong> (for reference): "+" is a menu, "New Claude Code conversation" / "New OpenCode conversation" (<code>WorkspaceDetailView.swift</code>, <code>MenuButton(id: "new-conversation-…")</code>), and a conversation's agent never changes (<code>ChatSessionModel.agent</code> is a <code>let</code>).</p>
 
   <h2>New conversation</h2>
   <section class="req" id="REQ-CNV-01">
-    <header><code class="id">CNV-01</code><h3>"+" creates the conversation</h3><span class="scope in">In scope</span></header>
+    <header><code class="id">CNV-01</code><h3>"+" creates the conversation</h3><span class="scope in">In scope</span><span class="scope early">Shipped early</span></header>
     <dl>
       <dt>Button</dt><dd>The same 28 pt <code>plus</code> icon button after the tabs, no longer a menu. Tooltip "New conversation". One click adds the tab at the end, selects it and focuses the message box.</dd>
       <dt>Agent</dt><dd>The default agent (CNV-02). Its process starts in the background right away, as today, so the model list is there before the first message.</dd>
+      <dt>Bridge</dt><dd>Until AGM-01's rail lands, it is the only way to pick OpenCode, so a right-click on "+" (<code>rockyContextMenu</code>) shows today's two items, "New Claude Code conversation" and "New OpenCode conversation", each with its agent's mark; the pick creates the conversation with that agent, as the menu does today (user decision, 2026-09-24, relayed by dev-1). The pick does not change the default by itself: CNV-02 counts sent messages.</dd>
+      <dt>With AGM-01</dt><dd>The bridge goes. The rail switches an empty conversation's agent in place (AGM-02), so "+" and then a pick in the rail is the same two clicks, visible instead of hidden; and a second, hidden way to pick would need an item for every agent added later (Codex, OUT-40). dev-2's recommendation; the user can keep it. The mock shows M2.8 with the rail, so without the bridge.</dd>
       <dt>Motion</dt><dd>The tab enters with M2.5's entrance (220 ms, from 6 pt below, fade).</dd>
-      <dt>SwiftUI</dt><dd>Replace the <code>MenuButton</code> in the tab strip with a <code>Button</code> in <code>RockyIconButtonStyle</code>, <code>.clickable()</code>, calling <code>AppModel.newConversation(workspace:)</code> (KIT-11).</dd>
-      <dt>Done when</dt><dd>One click, no menu; the message box button shows only the loading spinner until the agent reports its models.</dd>
+      <dt>SwiftUI</dt><dd>Replace the <code>MenuButton</code> in the tab strip with a <code>Button</code> in <code>RockyIconButtonStyle</code>, <code>.clickable()</code>, calling <code>AppModel.newConversation(workspace:)</code> (KIT-11). The bridge adds <code>.rockyContextMenu(id:)</code> with today's two <code>MenuItem</code>s.</dd>
+      <dt>Shipped</dt><dd>Early, in M3's follow-up branch <code>fix/m3-editor-and-quick-open</code> (user decision, 2026-09-24, relayed by dev-1).</dd>
+      <dt>Done when</dt><dd>One click, no menu; a right-click shows the two agents and creates the one picked. With AGM-05, the message box button shows only the loading spinner until the agent reports its models.</dd>
     </dl>
   </section>
   <section class="req" id="REQ-CNV-02">
-    <header><code class="id">CNV-02</code><h3>The default agent</h3><span class="scope tech">Technical</span></header>
+    <header><code class="id">CNV-02</code><h3>The default agent</h3><span class="scope tech">Technical</span><span class="scope early">Shipped early</span></header>
     <dl>
       <dt>Rule</dt><dd>The agent of the conversation where you last sent a message <strong>in this repository</strong> (any of its workspaces, open or closed tabs). No message yet in the repository: Claude Code.</dd>
       <dt>Also</dt><dd>The first conversation a workspace opens by itself (today <code>showConversations</code> creates a Claude Code one) uses the same rule.</dd>
       <dt>Why</dt><dd>No setting to learn: if you work in OpenCode in a repository, its new conversations are OpenCode.</dd>
       <dt>Kit</dt><dd>KIT-13.</dd>
+      <dt>Shipped</dt><dd>Early, in M3's follow-up branch <code>fix/m3-editor-and-quick-open</code> (user decision, 2026-09-24, relayed by dev-1), the "Also" rule included.</dd>
     </dl>
   </section>
 
@@ -350,6 +355,7 @@ var pendingDrafts: [String: ComposerDraft]                                      
     <dl>
       <dt>Model</dt><dd>The picked model waits on the chat (<code>pendingModel</code>) and is applied with <code>setOption(SessionConfigOption.model, …)</code> when the options first arrive.</dd>
       <dt>Draft</dt><dd><code>ComposerDraft</code> (text, attachments) leaves <code>ComposerController</code> when the switch or the new conversation starts, and the next <code>ChatView</code> for that conversation takes it.</dd>
+      <dt>Shipped</dt><dd>Only <code>newConversation(workspace:)</code> (CNV-01) and its test of the default agent: early, in M3's follow-up branch <code>fix/m3-editor-and-quick-open</code> (user decision, 2026-09-24, relayed by dev-1). The rest comes with M2.8.</dd>
       <dt>Tests</dt><dd>The default agent (CNV-02); a pick in an empty conversation switches it in place and clears <code>acpSessionId</code>; a pick with messages opens a new conversation and leaves the old one untouched; the pending model is applied once, with the fallback when it is missing; after a model change the effort shown is the one the agent answered (AGM-07).</dd>
     </dl>
   </section>
@@ -363,8 +369,9 @@ var pendingDrafts: [String: ComposerDraft]                                      
     <p>Pure apart from its file. Tests: round trip; Claude instances kept apart; an unchanged list does not rewrite the file.</p>
   </section>
   <section class="req" id="REQ-KIT-13">
-    <header><code class="id">KIT-13</code><h3>The last agent used in a repository</h3><span class="scope tech">Technical</span></header>
+    <header><code class="id">KIT-13</code><h3>The last agent used in a repository</h3><span class="scope tech">Technical</span><span class="scope early">Shipped early</span></header>
     <p><code>RockyStore.lastUsedAgent(repoId:) -&gt; AgentKind?</code>: the <code>agent</code> of the chat session whose newest user message (<code>chatMessage.kind = 'user'</code>) is the most recent among the repository's workspaces; nil without one. One query joining <code>chatMessage</code> → <code>chatSession</code> → <code>workspace</code>. Tests: across two workspaces of a repository; another repository's messages ignored; a closed tab still counts.</p>
+    <p>Shipped early, in M3's follow-up branch <code>fix/m3-editor-and-quick-open</code> (user decision, 2026-09-24, relayed by dev-1).</p>
   </section>
 
   <h2>Out of scope</h2>

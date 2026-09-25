@@ -73,6 +73,13 @@ struct ACPProtocolTests {
         ])
     }
 
+    /// CMT-05: a line comment's prompt is one text block, as it was built, even with the file marker in its code.
+    @Test func aTextAttachmentIsOneTextBlockAsItIs() {
+        let prompt = "Comment on a.ts, line 1:\n```ts\nlet a = \"\(PromptAttachment.marker)\"\n```\nWhy?"
+        #expect(ACPProtocol.promptParams(sessionId: "s1", text: "", attachments: [.text(prompt)])
+            == ["sessionId": "s1", "prompt": [["type": "text", "text": .string(prompt)]]])
+    }
+
     @Test func mapsMessageThoughtAndToolUpdates() {
         #expect(ACPProtocol.event(fromUpdate: update(["sessionUpdate": "agent_message_chunk", "content": ["type": "text", "text": "Hel"]]), sessionId: "s1")
             == .agentText("Hel"))
@@ -95,6 +102,72 @@ struct ACPProtocolTests {
         let refined = update(["sessionUpdate": "tool_call_update", "toolCallId": "t2", "title": "Read a.png", "locations": [["path": "/repo/a.png"]]])
         #expect(ACPProtocol.event(fromUpdate: refined, sessionId: "s1")
             == .toolCallUpdate(id: "t2", status: nil, title: "Read a.png", paths: ["/repo/a.png"]))
+    }
+
+    /// DIFF-06, in the shapes claude-agent-acp 0.81 sends: the optimistic `tool_call` of a Write, then the update after
+    /// the tool ran, with only `content`, whose hunks carry their counts at `_meta.jetbrains.air.diffStats`.
+    @Test func readsClaudesDiffEntriesAndTheirCounts() {
+        let call = update([
+            "sessionUpdate": "tool_call", "toolCallId": "t4", "title": "Write notes.md", "status": "pending", "kind": "edit",
+            "content": [["type": "diff", "path": "/repo/notes.md", "oldText": .null, "newText": "one\ntwo\n"]],
+        ])
+        #expect(ACPProtocol.event(fromUpdate: call, sessionId: "s1") == .toolCall(
+            id: "t4", title: "Write notes.md", status: "pending", kind: "edit",
+            diffs: [ToolCallDiff(path: "/repo/notes.md", oldText: nil, newText: "one\ntwo\n")]
+        ))
+        let meta: JSONValue = ["jetbrains": ["air": ["version": 1, "diffStats": ["version": 1, "added": 1, "removed": 1]]]]
+        let hunks = update([
+            "sessionUpdate": "tool_call_update", "toolCallId": "t4",
+            "_meta": ["claudeCode": ["toolName": "Write"]],
+            "content": [
+                ["type": "diff", "path": "/repo/notes.md", "oldText": "one\n2", "newText": "one\ntwo", "_meta": meta],
+                // A hunk whose coordinates did not check out comes without counts.
+                ["type": "diff", "path": "/repo/notes.md", "oldText": .null, "newText": "three"],
+            ],
+        ])
+        #expect(ACPProtocol.event(fromUpdate: hunks, sessionId: "s1") == .toolCallUpdate(id: "t4", status: nil, diffs: [
+            ToolCallDiff(path: "/repo/notes.md", oldText: "one\n2", newText: "one\ntwo", stats: DiffStat(additions: 1, deletions: 1)),
+            ToolCallDiff(path: "/repo/notes.md", oldText: nil, newText: "three"),
+        ]))
+    }
+
+    /// Counts only at Claude's key, with `version` 1 and whole, non-negative numbers.
+    @Test func readsCountsOnlyInTheirKnownShape() {
+        func stats(_ diffStats: JSONValue) -> DiffStat? {
+            ACPProtocol.diffStats(fromMeta: ["jetbrains": ["air": ["diffStats": diffStats]]])
+        }
+        #expect(stats(["version": 1, "added": 3, "removed": 0]) == DiffStat(additions: 3))
+        #expect(stats(["version": 2, "added": 3, "removed": 0]) == nil)
+        #expect(stats(["added": 3, "removed": 0]) == nil)
+        #expect(stats(["version": 1, "added": -1, "removed": 0]) == nil)
+        #expect(stats(["version": 1, "added": .number(1.5), "removed": 0]) == nil)
+        #expect(stats(["version": 1, "added": .number(1e300), "removed": 0]) == nil)
+        #expect(stats(["version": 1, "added": "3", "removed": 0]) == nil)
+        #expect(ACPProtocol.diffStats(fromMeta: ["diffStats": ["version": 1, "added": 3, "removed": 0]]) == nil)
+        #expect(ACPProtocol.diffStats(fromMeta: nil) == nil)
+    }
+
+    /// DIFF-06: `diffs` is nil without `content`, so the call keeps its entries, and empty when the content holds no
+    /// diff, so an update with only such content is no longer ignored. OpenCode's entries have no `_meta`, and an
+    /// entry without its path or new text is left out.
+    @Test func anUpdateWithContentButNoDiffReplacesTheEntries() {
+        #expect(ACPProtocol.event(fromUpdate: update(["sessionUpdate": "tool_call_update", "toolCallId": "t5", "status": "failed"]), sessionId: "s1")
+            == .toolCallUpdate(id: "t5", status: "failed"))
+        let text = update([
+            "sessionUpdate": "tool_call_update", "toolCallId": "t5",
+            "content": [["type": "content", "content": ["type": "text", "text": "The user rejected the edit"]]],
+        ])
+        #expect(ACPProtocol.event(fromUpdate: text, sessionId: "s1") == .toolCallUpdate(id: "t5", status: nil, diffs: []))
+        let opencode = update([
+            "sessionUpdate": "tool_call_update", "toolCallId": "t6", "status": "completed",
+            "content": [
+                ["type": "diff", "path": "/repo/a.ts", "oldText": "", "newText": "export {}\n"],
+                ["type": "diff", "path": "/repo/b.ts"],
+                ["type": "diff", "newText": "x"],
+            ],
+        ])
+        #expect(ACPProtocol.event(fromUpdate: opencode, sessionId: "s1")
+            == .toolCallUpdate(id: "t6", status: "completed", diffs: [ToolCallDiff(path: "/repo/a.ts", oldText: "", newText: "export {}\n")]))
     }
 
     @Test func readsSettingsTheAgentChangesByItself() {

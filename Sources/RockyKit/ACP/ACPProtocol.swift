@@ -11,11 +11,14 @@ public struct AgentCapabilities: Sendable, Equatable {
     }
 }
 
-/// A file the user attached to a message.
+/// A file the user attached to a message, or a block of text that goes as it is.
 public enum PromptAttachment: Sendable, Equatable {
     case image(mimeType: String, base64: String)
     /// Sent as an ACP `resource_link`: the agent reads the file itself.
     case file(URL)
+    /// Sent as a text block of its own, never split at `marker`: a line comment's prompt (`CMT-05`), whose code may
+    /// hold anything.
+    case text(String)
 
     /// Up to this size an image goes inline; a bigger one is sent as a link.
     public static let maxInlineImageBytes = 5_000_000
@@ -73,13 +76,36 @@ public struct SessionConfigOption: Sendable, Equatable, Identifiable {
     }
 }
 
+/// One ACP `diff` entry of a tool call's content (`DIFF-06`): `{type: "diff", path, oldText, newText}`. `oldText` is
+/// nil for a new file, or for one of Claude's hunks that only adds lines; OpenCode sends "" for a new file.
+public struct ToolCallDiff: Sendable, Equatable {
+    public var path: String
+    public var oldText: String?
+    public var newText: String
+    /// Claude's own counts for the entry, `_meta.jetbrains.air.diffStats` version 1 (claude-agent-acp 0.81, on each
+    /// hunk whose coordinates check out); nil when `_meta` has none. `files` stays 0.
+    public var stats: DiffStat?
+
+    public init(path: String, oldText: String?, newText: String, stats: DiffStat? = nil) {
+        self.path = path
+        self.oldText = oldText
+        self.newText = newText
+        self.stats = stats
+    }
+}
+
 public enum SessionEvent: Sendable, Equatable {
     case agentText(String)
     case agentThought(String)
-    /// `kind` is ACP's tool kind (read, edit, execute, search, think…); `paths` are the files it touches.
-    case toolCall(id: String, title: String, status: String, kind: String? = nil, paths: [String] = [])
-    /// Only what changed: Claude's adapter first reports a tool with a placeholder title and fills it in later.
-    case toolCallUpdate(id: String, status: String?, title: String? = nil, kind: String? = nil, paths: [String]? = nil)
+    /// `kind` is ACP's tool kind (read, edit, execute, search, think…); `paths` are the files it touches. `diffs` are
+    /// the `diff` entries of its `content` (`DIFF-06`): nil when the update has no `content`, empty when its content
+    /// holds no diff.
+    case toolCall(id: String, title: String, status: String, kind: String? = nil, paths: [String] = [], diffs: [ToolCallDiff]? = nil)
+    /// Only what changed: Claude's adapter first reports a tool with a placeholder title and fills it in later, and
+    /// sends the real hunks of an Edit or a Write in an update of their own, after the tool ran.
+    case toolCallUpdate(
+        id: String, status: String?, title: String? = nil, kind: String? = nil, paths: [String]? = nil, diffs: [ToolCallDiff]? = nil
+    )
     /// The agent changed its settings by itself, for example leaving plan mode once the plan is approved.
     case configOptions([SessionConfigOption])
     case currentMode(String)
@@ -198,6 +224,8 @@ public enum ACPProtocol {
             ["type": "image", "mimeType": .string(mimeType), "data": .string(base64)]
         case let .file(url):
             ["type": "resource_link", "uri": .string(url.absoluteString), "name": .string(url.lastPathComponent)]
+        case let .text(text):
+            ["type": "text", "text": .string(text)]
         }
     }
 
@@ -225,15 +253,20 @@ public enum ACPProtocol {
                 title: update["title"]?.stringValue ?? "Tool call",
                 status: update["status"]?.stringValue ?? "pending",
                 kind: toolKind(of: update),
-                paths: paths(fromLocations: update["locations"]) ?? []
+                paths: paths(fromLocations: update["locations"]) ?? [],
+                diffs: diffs(fromContent: update["content"])
             )
         case "tool_call_update":
             let status = update["status"]?.stringValue
             let title = update["title"]?.stringValue
             let toolKind = update["kind"] == nil ? nil : toolKind(of: update)
             let touched = paths(fromLocations: update["locations"])
-            guard status != nil || title != nil || toolKind != nil || touched != nil else { return .ignored(kind) }
-            return .toolCallUpdate(id: update["toolCallId"]?.stringValue ?? "", status: status, title: title, kind: toolKind, paths: touched)
+            // Claude's hunks come in an update that carries only `content`.
+            let diffs = diffs(fromContent: update["content"])
+            guard status != nil || title != nil || toolKind != nil || touched != nil || diffs != nil else { return .ignored(kind) }
+            return .toolCallUpdate(
+                id: update["toolCallId"]?.stringValue ?? "", status: status, title: title, kind: toolKind, paths: touched, diffs: diffs
+            )
         case "config_option_update":
             return .configOptions(configOptions(from: update))
         case "current_mode_update":
@@ -283,6 +316,36 @@ public enum ACPProtocol {
             paths.append(path)
         }
         return paths
+    }
+
+    /// `DIFF-06`: the `diff` entries of a tool call's `content`, in order; nil when the update has no `content`, since
+    /// ACP replaces a call's content only with an update that carries one. An entry without a string `path` and
+    /// `newText` is not a diff ACP defines, and is left out.
+    static func diffs(fromContent content: JSONValue?) -> [ToolCallDiff]? {
+        guard let entries = content?.arrayValue else { return nil }
+        return entries.compactMap { entry -> ToolCallDiff? in
+            guard entry["type"]?.stringValue == "diff",
+                  let path = entry["path"]?.stringValue,
+                  let newText = entry["newText"]?.stringValue else { return nil }
+            return ToolCallDiff(path: path, oldText: entry["oldText"]?.stringValue, newText: newText, stats: diffStats(fromMeta: entry["_meta"]))
+        }
+    }
+
+    /// Claude's counts on a diff entry, claude-agent-acp's AIR extension: `_meta.jetbrains.air.diffStats` with
+    /// `version` 1 and whole, non-negative `added` and `removed`. Anything else is nil, and the entry is counted from
+    /// its text.
+    static func diffStats(fromMeta meta: JSONValue?) -> DiffStat? {
+        guard let stats = meta?["jetbrains"]?["air"]?["diffStats"],
+              count(stats["version"]) == 1,
+              let added = count(stats["added"]),
+              let removed = count(stats["removed"]) else { return nil }
+        return DiffStat(additions: added, deletions: removed)
+    }
+
+    /// A whole, non-negative number. Not `intValue`, whose `Int(_:)` traps on a number past `Int`'s range.
+    private static func count(_ value: JSONValue?) -> Int? {
+        guard case .number(let number)? = value, let count = Int(exactly: number), count >= 0 else { return nil }
+        return count
     }
 
     public static func permissionRequest(from params: JSONValue) -> PermissionRequest {

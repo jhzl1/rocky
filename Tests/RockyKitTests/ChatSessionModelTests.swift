@@ -479,6 +479,187 @@ struct ChatSessionModelTests {
         await model.stop()
     }
 
+    // MARK: Line comments (CMT-05)
+
+    private static let lineComment = LineComment(
+        text: "Why drop the retry?",
+        range: LineRangeAttachment(path: "/tmp/app-worktrees/tokyo/src/a.ts", side: .old, start: 12, end: 13),
+        prompt: "Comment on src/a.ts, removed lines 12–13 (from the base):\n```ts\n  retry()\n  log()\n```\nWhy drop the retry?"
+    )
+
+    /// Each prompt the fake agent received, as its blocks' "type:text".
+    private func prompts(_ log: URL) -> [[String]] {
+        received(log).filter { $0.contains(#""method":"session/prompt""#) }.compactMap { line in
+            guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                  let params = object["params"] as? [String: Any],
+                  let blocks = params["prompt"] as? [[String: Any]] else { return nil }
+            return blocks.map { "\($0["type"] as? String ?? ""):\($0["text"] as? String ?? "")" }
+        }
+    }
+
+    /// The agent gets the comment's prompt as one text block, no `resource_link`; the transcript, and the store through
+    /// `onPersist`, keep the comment and its range's entry.
+    @Test func aLineCommentGoesOutAsOneTextBlockAndTheTranscriptKeepsItsChip() async throws {
+        let log = Fixtures.stderrLog()
+        var persisted: [ChatItem] = []
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(log: log), flushInterval: .zero) { persisted.append($0) }
+        let comment = Self.lineComment
+        // Not started: the comment starts the agent, like a message.
+        async let sending: Void = model.send(comment)
+        try await waitForPermission(model)
+        model.answerPermission(optionId: "allow")
+        await sending
+
+        #expect(prompts(log) == [["text:" + comment.prompt]])
+        let user = try #require(model.items.first)
+        #expect(user.kind == .user)
+        #expect(user.text == comment.text)
+        #expect(user.attachments == [comment.range.entry])
+        #expect(user.lineRange == comment.range)
+        #expect(persisted.first?.attachments == [comment.range.entry])
+        await model.stop()
+    }
+
+    /// While a turn runs the comment waits in the queue, with its chip, and goes out after it with the prompt it was
+    /// written with.
+    @Test func aQueuedLineCommentGoesOutWithThePromptBuiltBefore() async throws {
+        let log = Fixtures.stderrLog()
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(log: log), flushInterval: .zero)
+        await model.start()
+        let comment = Self.lineComment
+        async let first: Void = model.send("first")
+        try await waitForPermission(model)
+        await model.send(comment)
+        #expect(model.queue.map(\.lineComment) == [comment])
+        #expect(model.queue.first?.text == comment.text)
+        #expect(model.queue.first?.attachments.isEmpty == true)
+        model.answerPermission(optionId: "allow")
+        await first
+
+        try await waitForPermission(model)
+        model.answerPermission(optionId: "allow")
+        try await waitUntil { model.state == .ready && model.items.filter { $0.kind == .user }.count == 2 }
+        #expect(prompts(log) == [["text:first"], ["text:" + comment.prompt]])
+        #expect(model.items.filter { $0.kind == .user }.map(\.text) == ["first", comment.text])
+        #expect(model.items.last(where: { $0.kind == .user })?.lineRange == comment.range)
+        await model.stop()
+    }
+
+    /// CMT-05 Resend: files attached next to the chip go as links after the block; the transcript keeps the chip's entry
+    /// first and the files after it, and while a turn runs the queued comment keeps them for its row and its Edit.
+    @Test func aLineCommentWithFilesSendsTheBlockThenTheirLinks() async throws {
+        let log = Fixtures.stderrLog()
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(log: log), flushInterval: .zero)
+        await model.start()
+        let shot = URL(fileURLWithPath: "/tmp/rocky-missing-shot.txt")
+        let comment = LineComment(
+            text: "Like \(PromptAttachment.marker)?",
+            range: Self.lineComment.range,
+            prompt: Self.lineComment.prompt,
+            files: [shot]
+        )
+        async let first: Void = model.send("first")
+        try await waitForPermission(model)
+        await model.send(comment)
+        let queued = try #require(model.queue.first)
+        #expect(queued.lineComment == comment)
+        #expect(queued.attachments == [shot])
+        model.answerPermission(optionId: "allow")
+        await first
+
+        try await waitForPermission(model)
+        model.answerPermission(optionId: "allow")
+        try await waitUntil { model.state == .ready && model.items.filter { $0.kind == .user }.count == 2 }
+        #expect(prompts(log).last == ["text:" + comment.prompt, "resource_link:"])
+        let user = try #require(model.items.last { $0.kind == .user })
+        #expect(user.text == comment.text)
+        #expect(user.attachments == [comment.range.entry, shot.path])
+        #expect(user.lineRange == comment.range)
+        #expect(user.attachedFiles == [shot.path])
+        await model.stop()
+    }
+
+    /// CMT-05 History, CMD-08: a line comment's text is a comment, never a command, even one of Claude Code's terminal
+    /// commands: it goes out as its block.
+    @Test func aLineCommentStartingWithASlashIsNoCommand() async throws {
+        let log = Fixtures.stderrLog()
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(log: log), flushInterval: .zero)
+        await model.start()
+        #expect(model.terminalCommand(in: "/mcp") != nil)
+        let comment = LineComment(text: "/mcp", range: Self.lineComment.range, prompt: "Comment on src/a.ts, removed lines 12–13 (from the base):\n/mcp")
+        async let sending: Void = model.send(comment)
+        try await waitForPermission(model)
+        model.answerPermission(optionId: "allow")
+        await sending
+        #expect(prompts(log) == [["text:" + comment.prompt]])
+        #expect(model.items.first?.lineRange == comment.range)
+        await model.stop()
+    }
+
+    // MARK: Line counts (DIFF-06)
+
+    /// The tool calls of the fake agent's "edit files" turn: its Write, then its Edit.
+    private func edits(_ model: ChatSessionModel) -> [ChatItem] {
+        model.items.filter { $0.kind == .tool }
+    }
+
+    /// Counts appear once a call completes, never before, from its latest content: Claude's optimistic Write (+3, a new
+    /// file) gives way to the real hunk's counts (+2 −1), and an Edit whose completion carried no content keeps its
+    /// optimistic diff, counted line by line (+3 −2). The store gets them with the turn.
+    @Test func editCountsAppearOnCompletionFromTheLatestContent() async throws {
+        var persisted: [ChatItem] = []
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(), flushInterval: .zero) { persisted.append($0) }
+        await model.start()
+        async let sending: Void = model.send("edit files")
+        try await waitForPermission(model)
+        #expect(edits(model).map(\.text) == ["Write notes.md", "Edit README.md"])
+        #expect(edits(model).map(\.status) == ["pending", "pending"])
+        #expect(edits(model).map(\.diffStat) == [nil, nil])
+        model.answerPermission(optionId: "allow")
+        await sending
+
+        let expected: [DiffStat?] = [DiffStat(additions: 2, deletions: 1), DiffStat(additions: 3, deletions: 2)]
+        try await waitUntil { edits(model).map(\.diffStat) == expected }
+        try await waitUntil { edits(model).map { item in persisted.last { $0.id == item.id }?.diffStat } == expected }
+        await model.stop()
+    }
+
+    /// After completion, an update with content replaces a call's counts, as ACP replaces its content, and one without
+    /// keeps them. A count that lands after its turn was saved is saved on its own.
+    @Test func anUpdateWithContentReplacesTheCountsAndOneWithoutKeepsThem() async throws {
+        var persisted: [ChatItem] = []
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(), flushInterval: .zero) { persisted.append($0) }
+        await model.start()
+        async let sending: Void = model.send("edit files")
+        try await waitForPermission(model)
+        model.answerPermission(optionId: "allow")
+        await sending
+        try await waitUntil { edits(model).map(\.diffStat) == [DiffStat(additions: 2, deletions: 1), DiffStat(additions: 3, deletions: 2)] }
+
+        await model.send("update edits")
+        let expected: [DiffStat?] = [DiffStat(additions: 2, deletions: 1), DiffStat(additions: 1, deletions: 1)]
+        try await waitUntil { edits(model).map(\.diffStat) == expected }
+        let edit = try #require(edits(model).last)
+        try await waitUntil { persisted.last { $0.id == edit.id }?.diffStat == expected[1] }
+        #expect(edits(model).map(\.status) == ["completed", "completed"])
+        await model.stop()
+    }
+
+    /// A rejected edit fails, and a failed call has no counts, from its optimistic diff or from its text content.
+    @Test func aRejectedEditHasNoCounts() async throws {
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(), flushInterval: .zero)
+        await model.start()
+        async let sending: Void = model.send("edit files")
+        try await waitForPermission(model)
+        model.answerPermission(optionId: "reject")
+        await sending
+        // Long enough for a count that must not have started to land.
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(edits(model).map(\.status) == ["failed", "failed"])
+        #expect(edits(model).map(\.diffStat) == [nil, nil])
+        await model.stop()
+    }
+
     /// A Refresh while the agent is still starting waits for that start to end, then starts again.
     @Test func restartWhileStartingStartsAgain() async throws {
         let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(), flushInterval: .zero)

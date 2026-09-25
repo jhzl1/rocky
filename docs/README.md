@@ -1,6 +1,6 @@
 # Guía de uso de Rocky
 
-Última actualización: 2026-09-24
+Última actualización: 2026-09-25
 
 Rocky es una app de macOS para trabajar con agentes de código (Claude Code y OpenCode) en paralelo. Cada tarea vive
 en su propio workspace, con su propia copia del repositorio, así que varios agentes pueden trabajar a la vez sin
@@ -9,7 +9,11 @@ pisarse. La idea viene de Conductor.
 **Estado de esta guía.** Describe lo construido de M1 a M3:
 
 - M3 (revisar y editar: las pestañas All files y Changes, los diffs, los comentarios en líneas, el editor y los
-  commits desde Rocky) está en `development` desde el 2026-09-24.
+  commits desde Rocky) está en `development` desde el 2026-09-24. Quick Open (⌘P), los comentarios que salen al
+  escribirlos (sección 15), los íconos de cada tipo de archivo (sección 17), la app por defecto del botón Open y de
+  la ruta de las pestañas (secciones 3 y 14), el "+" que crea la conversación de inmediato (sección 6), ↑ sobre un
+  comentario en líneas (sección 15), las líneas agregadas y quitadas en cada edición del agente (sección 6) y los
+  arreglos del editor que vinieron después están en la rama `fix/m3-editor-and-quick-open`.
 - M2.6 (los comandos con "/" y la tecla Esc dentro de un terminal) y M2.7 (el panel de GitHub) ya están en
   `development`.
 
@@ -71,7 +75,7 @@ de cada compilación. Para usar otro certificado, define `ROCKY_SIGN_IDENTITY` c
 
 | Ruta | Qué contiene |
 | --- | --- |
-| `~/Library/Application Support/Rocky/rocky.sqlite` | La base de datos: repositorios, workspaces, conversaciones, comentarios en líneas y las carpetas abiertas de All files. |
+| `~/Library/Application Support/Rocky/rocky.sqlite` | La base de datos: repositorios, workspaces, conversaciones (con sus comentarios en líneas), las carpetas abiertas de All files y los archivos recientes de Quick Open. |
 | `~/Library/Application Support/Rocky/agents` | Los agentes que instala Rocky: el adaptador de Claude y OpenCode. |
 | `~/Library/Application Support/Rocky/opencode-data` | Los datos propios del OpenCode de Rocky: sesiones y login. |
 | `~/Library/Application Support/Rocky/ci-logs` | Los logs de CI que "Fix errors" adjunta, una carpeta por workspace. |
@@ -144,13 +148,31 @@ Name y Remove Workspace…
 
 ### La barra superior y el menú Open
 
-Arriba de la conversación ves `repositorio / rama`. Un clic en la rama la copia. El menú "Open" muestra la ruta del
-worktree y ofrece:
+Arriba de la conversación ves `repositorio / rama`. Un clic en la rama la copia.
 
-- Open in Finder.
-- Open in Antigravity, Cursor, VS Code o Zed, solo los que tengas instalados.
-- New Terminal (abre un terminal en el panel inferior).
-- Copy Path.
+A la derecha está el botón Open, que tiene dos partes:
+
+- **La parte izquierda** muestra el ícono de la app por defecto y abre el worktree en ella. Hace lo mismo que ⌘O
+  (File ▸ Open in …, con el nombre de la app). Su tooltip dice, por ejemplo, "Open in Zed (⌘O)".
+- **La flecha** abre el menú. Cada opción es el ícono de la app y su nombre:
+  - Finder.
+  - Antigravity, Cursor, VS Code y Zed, solo los que tengas instalados, en orden alfabético.
+  - New Terminal (abre un terminal en el panel inferior).
+  - Copy Path (copia la ruta del worktree).
+
+  La app por defecto muestra "⌘O" a la derecha.
+
+**La app por defecto** es la última que elegiste en ese menú. Elegir Finder o un editor abre el worktree ahí y la
+convierte en la app por defecto. New Terminal y Copy Path no la cambian. Es una sola para todo Rocky, y se recuerda al
+relanzar.
+
+- Si nunca elegiste una, es el primer editor instalado de la lista (Antigravity, Cursor, VS Code, Zed). Sin editores,
+  es Finder.
+- Si desinstalas la app por defecto, Rocky usa esa misma regla mientras falte, y la recupera si la vuelves a instalar.
+- Rocky busca las apps cada vez que las usa (al dibujar el botón, al abrir el menú, en cada clic y con ⌘O), sin
+  revisar nada en reposo.
+
+La misma app abre el archivo de una pestaña cuando haces clic en su ruta (sección 14).
 
 ### Al abrir Rocky de nuevo
 
@@ -285,8 +307,17 @@ corren conservan el entorno con el que arrancaron**; los cambios aplican a los p
 
 ### Pestañas y agentes
 
-Las conversaciones del workspace aparecen como pestañas sobre el chat. El "+" al final abre "New Claude Code
-conversation" o "New OpenCode conversation". Cerrar una pestaña detiene su agente, y la conversación queda guardada.
+Las conversaciones del workspace aparecen como pestañas sobre el chat. Cerrar una pestaña detiene su agente, y la
+conversación queda guardada.
+
+- **Un clic en el "+"** al final de las pestañas crea una conversación de inmediato, sin menú. Su pestaña aparece al
+  final, queda seleccionada y el cuadro de mensaje toma el teclado.
+- **El agente de la nueva conversación** es el de la conversación donde enviaste tu último mensaje en ese
+  repositorio, en cualquiera de sus workspaces, aunque ya hayas cerrado esa pestaña. Si aún no enviaste ninguno, es
+  Claude Code. La primera conversación que un workspace abre solo sigue la misma regla.
+- **Clic derecho en el "+"** muestra "New Claude Code conversation" y "New OpenCode conversation", para elegir el
+  agente. Por ahora es la única forma de abrir una conversación de OpenCode sin haber usado OpenCode antes en el
+  repositorio. Elegir uno ahí no cambia el agente por defecto: lo cambia el primer mensaje que envíes.
 
 El agente de la conversación que tienes en pantalla arranca solo, en segundo plano. Las demás arrancan cuando las
 abres. Mientras arranca, el selector de modelo dice "Starting Claude Code…".
@@ -324,7 +355,8 @@ abres. Mientras arranca, el selector de modelo dice "Starting Claude Code…".
 
 Con el cuadro vacío, ↑ trae tu último mensaje de esa conversación, con sus archivos. ↑ otra vez trae el anterior. ↓
 avanza hasta dejar el cuadro vacío. Solo funciona mientras el texto mostrado no se ha tocado; si editas, las flechas
-mueven el cursor como siempre.
+mueven el cursor como siempre. Un comentario en líneas vuelve con su etiqueta al inicio y el comentario después
+(sección 15).
 
 ### Mensajes en cola
 
@@ -336,6 +368,7 @@ Si el agente está trabajando, Return no interrumpe: el mensaje entra en una col
   - "Send now": detiene el turno en curso y envía ese mensaje primero.
   - "Edit": lo devuelve al cuadro para editarlo. Solo funciona con el cuadro vacío.
   - "Delete": lo borra.
+- Un comentario en líneas en cola muestra su etiqueta y ofrece "Send now", "Edit" y "Remove" (sección 15).
 - Si detienes el turno, o el agente falla, la cola queda en espera. La leyenda dice "On hold until your next message".
   Sale cuando envías otro mensaje o pulsas "Send now".
 - La cola vive en memoria: si cierras Rocky, se pierde.
@@ -345,7 +378,8 @@ Si el agente está trabajando, Return no interrumpe: el mensaje entra en una col
 Pulsa Esc o el botón de detener (cuadrado). El turno termina con la marca "INTERRUPTED BY USER". También aparece
 después de "Send now", porque ese botón detiene el turno en curso.
 
-Esc va primero a lo que esté abierto encima: un menú, los ajustes, un diálogo o una hoja (como la del commit). Tampoco
+Esc va primero a lo que esté abierto encima: un menú, los ajustes, Quick Open, un diálogo o una hoja (como la del
+commit). Tampoco
 detiene el turno mientras escribes en el editor o en su barra de búsqueda, en el filtro de All files o en un
 comentario: ahí Esc es de ese campo. Solo cuando no pasa nada de eso detiene el turno.
 
@@ -368,6 +402,24 @@ sesión nueva sin error.
 
 Si el agente se detiene, el cuadro de mensaje muestra el motivo y un botón "Restart".
 
+### Las líneas de cada edición
+
+Cuando el agente edita o crea archivos (Edit, MultiEdit y Write de Claude Code; edit, write y patch de OpenCode), la
+fila de esa acción muestra `+A −D` después de las etiquetas de sus archivos: las líneas que agregó (verde) y las que
+quitó (rojo), con los miles como "2.3k", igual que en Changes (sección 13). Por ejemplo, "Edit README.md +1 −1".
+
+- Los números aparecen cuando la edición termina. Mientras corre, si falla o si la rechazas, no hay números, porque
+  el archivo no cambió.
+- Se muestran los dos números, también "+10 −0". Si los dos son 0, la fila no muestra nada.
+- Una acción que toca varios archivos muestra la suma de todos.
+- Las líneas de contexto que el agente envía alrededor del cambio no cuentan.
+- Un grupo de acciones ("3 tool calls") muestra después de su título la suma de sus filas, también cuando está
+  plegado. Es lo que dicen las filas, no el cambio neto de los archivos: una línea editada dos veces cuenta dos veces.
+- Si Rocky tiene que comparar más de 5000 líneas entre el texto anterior y el nuevo (por ejemplo, al reescribir un
+  archivo grande entero), esa acción no muestra números.
+- Los números se guardan con la conversación, así que siguen ahí al relanzar Rocky. Las ediciones guardadas antes de
+  esta función no tienen números.
+
 ### Pestañas de archivos
 
 Un clic en la etiqueta de un archivo, en tus mensajes o en las acciones del agente (Read, Edit…), abre el archivo en
@@ -377,7 +429,8 @@ una pestaña junto a las conversaciones:
   Así ves qué cambió el agente.
 - Otro archivo del worktree abre su pestaña en el editor, con la marca "Unchanged" (sección 16).
 - Un archivo fuera del worktree abre una pestaña de archivo: imágenes, código y texto en el editor, Markdown con
-  Preview | Edit, PDF en la vista rápida de macOS, y lo demás como "Binary file" (sección 17).
+  Preview | Edit, PDF en la vista rápida de macOS, y lo demás como "Binary file" (sección 17). Su encabezado muestra
+  la ruta completa, que se abre con un clic en la app por defecto como en una pestaña de diff (sección 14).
 
 ---
 
@@ -514,7 +567,8 @@ Debajo del encabezado hay tres pestañas en forma de pastilla: **All files · Ch
   Changes.
 - ⌘⇧C (View ▸ Show Changes) abre el panel en Changes. Pulsado mientras Changes se ve, oculta el panel (View ▸ Hide
   Changes).
-- ⌘P (File ▸ Go to File…) abre el panel en All files, con el filtro listo para escribir.
+- ⌘P (File ▸ Go to File…) abre Quick Open, que busca en los archivos del worktree sin cambiar el panel
+  (sección 17).
 
 ### Diseño de la ventana
 
@@ -534,7 +588,6 @@ GitHub), el estado y **una sola acción**. Rocky toma el primer estado de esta t
 | --- | --- | --- |
 | Merged | Archive | Rocky |
 | Queued to merge | Etiqueta "Queued" | — |
-| Working… | Ninguna: el agente está en un turno | — |
 | No changes yet | Ninguna | — |
 | No pull request | Create PR | El agente |
 | Uncommitted changes | Commit and push | El agente |
@@ -616,8 +669,8 @@ Al pie del panel ves la cuenta y la hora del último refresco, por ejemplo "jhzl
 
 Create PR, Commit and push, Resolve, Fix errors y los comentarios se envían a la conversación seleccionada del
 workspace, como si tú hubieras escrito el mensaje. Así ves lo que hace el agente. Mientras corre un turno, esos
-botones están desactivados con el tooltip "The agent is working" y el encabezado dice "Working…". Estos botones
-nunca usan la cola de mensajes. Si el agente está detenido, el tooltip dice "Restart the agent first".
+botones están desactivados con el tooltip "The agent is working"; el encabezado sigue mostrando el estado del pull
+request. Estos botones nunca usan la cola de mensajes. Si el agente está detenido, el tooltip dice "Restart the agent first".
 
 ---
 
@@ -805,8 +858,8 @@ Changes…). Debajo, dos grupos:
 Cada fila muestra:
 
 - la letra de estado: A (agregado, verde), M (modificado, ámbar), D (borrado, rojo) o R (renombrado, gris);
+- el ícono del tipo de archivo (sección 17, "Íconos de los archivos");
 - el nombre y su carpeta;
-- cuántos comentarios tiene el archivo (un globo y el número), si tiene alguno (sección 15);
 - `+a −d`.
 
 Al pasar el mouse, las cifras se cambian por Edit (lápiz) y, en archivos sin commit, Discard (flecha hacia atrás). El
@@ -856,7 +909,10 @@ pestañas de archivos. Hay una sola pestaña por archivo.
 
 De izquierda a derecha:
 
-1. La carpeta y el nombre. En un renombre, "ruta/vieja → ruta/nueva".
+1. La ruta: el ícono del archivo, la carpeta y el nombre, en un recuadro. En un renombre, "ruta/vieja → ruta/nueva".
+   Un clic abre el archivo en la app por defecto (sección 3); si es Finder, lo muestra en Finder. El tooltip dice
+   "Open in Zed" (con el nombre de la app) o "Reveal in Finder". Abre el archivo tal como está en el disco, sin tus
+   cambios sin guardar. Un archivo borrado no está en el disco, así que su ruta es texto normal, sin recuadro.
 2. `+a −d`, y "New file" si el archivo es nuevo.
 3. "Edited" y Save mientras hay cambios sin guardar, o "Reloaded" (sección 16).
 4. El selector **Diff | Edit** (sección 16).
@@ -865,14 +921,17 @@ De izquierda a derecha:
 ### El diff unificado
 
 - Es de solo lectura. Para escribir, cambia a Edit.
-- Tiene dos columnas de números (la línea vieja y la nueva), la marca `+` o `−` y el código con colores de sintaxis.
+- Tiene una sola columna de números, como Conductor: el número nuevo, o el viejo en una línea borrada. Es verde en
+  las líneas agregadas, rojo en las borradas y gris en las demás. Después vienen la marca `+` o `−` y el código con
+  colores de sintaxis.
 - Las líneas agregadas tienen fondo verde; las borradas, fondo rojo.
-- Cada bloque de cambios (hunk) empieza con su encabezado de git, por ejemplo `@@ -40,7 +40,12 @@`, y trae tres
-  líneas sin cambios alrededor.
+- Cada bloque de cambios (hunk) trae tres líneas sin cambios alrededor. Como en Conductor, no se muestra el
+  encabezado `@@` de git.
 - Las líneas sin cambios entre bloques se pliegan en una fila como "⋯ 18 unchanged lines". Un clic la despliega.
+- El diff empieza arriba de la pestaña, aunque sea corto.
 
-Las líneas largas no se cortan: el diff se desplaza hacia los lados y las columnas de números se quedan fijas. El
-texto de cada línea se puede seleccionar para copiarlo.
+Las líneas largas no se cortan: el diff se desplaza hacia los lados y la columna de números se queda fija. El texto de
+cada línea se puede seleccionar para copiarlo.
 
 ### Colores de sintaxis
 
@@ -900,84 +959,102 @@ XML, YAML, TOML, shell (`.sh`, `.zsh`, `.zshrc`…), Markdown y SQL. Cualquier o
 
 ## 15. Comentarios en líneas
 
-En el modo Diff de una pestaña puedes comentar líneas y después enviarle todos los comentarios al agente en un solo
-mensaje.
+En el modo Diff de una pestaña puedes comentar una línea o un rango y enviar el comentario a una conversación del
+workspace en el momento, como en Conductor. Rocky no guarda los comentarios: la conversación los guarda, como a
+cualquier otro mensaje.
 
-### Agregar un comentario
+### Escribir un comentario
 
 1. Pasa el mouse sobre una línea: aparece un "+" sobre su número.
 2. Elige las líneas:
    - un clic en el "+" o en el número comenta esa línea;
    - arrastrar desde el "+" o desde un número elige un rango;
    - ⇧-clic en otro número elige un rango desde la línea que marcaste antes.
-3. Se abre un cuadro debajo de las líneas, con "Comment on line 14" o "Comment on lines 14–22". Escribe el comentario.
-4. Pulsa Comment o ⌘Return.
+3. Se abre un cuadro debajo de la última línea del rango. Las líneas elegidas quedan marcadas mientras el cuadro está
+   abierto.
+4. Escribe el comentario y pulsa Send o ⌘Return. Return agrega una línea nueva.
 
-- Un rango queda de un solo lado: líneas nuevas (agregadas y sin cambios) o líneas borradas. En líneas borradas, el
-  cuadro agrega "(removed)".
-- Cancel cierra el cuadro. Esc también, pero si el cuadro tiene texto pregunta antes "Discard this comment?" (Discard o
-  Keep Editing).
-- Mientras escribes un comentario, Esc no detiene el turno del agente.
+El diff tiene una sola columna de números (sección 14). En una línea borrada ese número es el de la línea vieja, así
+que el comentario queda del lado borrado. Un rango queda de un solo lado: líneas nuevas (agregadas y sin cambios) o
+líneas borradas.
 
-### Las tarjetas
+### El cuadro
 
-Cada comentario queda como una tarjeta debajo de su última línea: "You", cuándo lo escribiste ("just now", "5m ago"),
-su estado y el texto. Al pasar el mouse aparecen Edit (lápiz) y Delete (papelera).
+- **"Sending to"** muestra la conversación que recibirá el comentario, con el ícono de su agente. Un clic abre la
+  lista de conversaciones abiertas del workspace, con un check en la elegida. Por defecto es la última conversación
+  que mostraste en el workspace.
+- **La etiqueta de las líneas** va al inicio del texto: el ícono del archivo, su nombre y el rango. Por ejemplo,
+  "openapi.ts +18–25" para líneas nuevas, "−12–13" para líneas borradas y "+18" para una sola línea. No se puede
+  borrar: Cancel descarta el comentario entero.
+- **Send** está apagado mientras el texto está vacío. Si la conversación elegida está en un turno, el botón dice
+  "Queue" y su tooltip "Claude Code is working; this goes out when its turn ends".
+- **Cancel** cierra el cuadro. Esc también, pero si el cuadro tiene texto pregunta antes "Discard this comment?"
+  (Discard o Keep Editing). Mientras escribes, Esc no detiene el turno del agente.
+- **El cuadro se conserva** en memoria mientras la pestaña del diff está abierta. Si cambias de pestaña, o pasas a
+  Edit y vuelves, lo encuentras como lo dejaste. Si eliges otras líneas del mismo archivo, el cuadro se mueve y el
+  texto se mantiene. Cerrar la pestaña lo descarta.
+- Abrir un cuadro en una pestaña de vista previa la conserva como pestaña normal (sección 17), para que un clic en el
+  árbol no se lleve el comentario.
 
-- Edit abre el cuadro con el texto. Solo cambia el texto: el estado se queda como estaba.
-- Delete borra el comentario sin preguntar.
+### Al enviarlo
 
-| Estado | Qué quiere decir |
-| --- | --- |
-| Pending | Todavía no se envió al agente. Borde ámbar. |
-| Sent | Ya se envió. Lleva un check. |
-| Outdated | Las líneas comentadas cambiaron. El tooltip dice "The commented lines changed". |
+1. El comentario sale en ese momento hacia la conversación elegida, aunque no esté en pantalla. Si su agente no ha
+   arrancado, o está detenido, Rocky lo arranca primero. El diff se queda donde estaba.
+2. El cuadro se cierra y aparece el aviso "Sent to “Review the schemas”". **Show** abre esa conversación. Un aviso con
+   Show dura 4 segundos.
+3. Si la conversación está en un turno, el comentario entra en su cola (sección 6) y sale cuando el turno termina. El
+   aviso dice "Queued in “Review the schemas”", también con Show.
+4. Si la conversación no puede recibirlo (se cerró, o su agente no arranca), el comentario vuelve a su cuadro con su
+   texto, y el aviso dice "Couldn’t send to “…”".
 
-### Cómo siguen al código
-
-Cada vez que Rocky vuelve a leer los cambios, revisa los comentarios sobre líneas nuevas que están en Pending o Sent:
-
-1. Si las líneas comentadas siguen en su lugar, el comentario se queda ahí.
-2. Si esas mismas líneas aparecen en otro lugar (por ejemplo, el agente agregó líneas arriba), el comentario se mueve
-   a la coincidencia más cercana.
-3. Si ya no están (alguien las editó, o el archivo ya no existe), el comentario pasa a **Outdated** y guarda su texto.
-
-- Los comentarios Outdated se agrupan arriba del diff del archivo, plegados en "2 outdated comments". Solo se pueden
-  borrar.
-- Los comentarios sobre líneas borradas nunca se mueven ni pasan a Outdated, porque la base no cambia.
-- Rocky lee los cambios mientras el workspace muestra Changes, All files o una pestaña de diff. Si no muestra ninguno,
-  los comentarios se mueven la próxima vez que los lea.
-- Los comentarios quedan guardados: siguen ahí al relanzar Rocky. Quitar el workspace los borra.
-
-### Enviarlos al agente
-
-Mientras hay comentarios en Pending, la pestaña Changes muestra abajo una barra con "2 comments ready" y "Send to
-agent".
-
-1. Pulsa "Send to agent".
-2. Rocky junta todos los comentarios Pending, del más antiguo al más nuevo, en un solo mensaje para la conversación
-   seleccionada del workspace. Si su agente no está corriendo, primero lo arranca.
-3. El workspace muestra esa conversación, y los comentarios pasan a Sent.
-
-El mensaje tiene esta forma, con la rama que está activa en el worktree:
+El agente recibe el código de las líneas junto con el comentario, en un solo bloque de texto, con la ruta relativa al
+worktree:
 
 ````
-Review comments on rocky/lima:
-
-1. src/openapi.ts, lines 18–25
+Comment on src/openapi.ts, lines 18–25:
 ```ts
 function operation(route: Route) {
   …
 ```
 Use the route's name as operationId only when it is unique.
-
-Address each comment and say what you changed for each number.
 ````
 
-- Mientras el agente está en un turno, el botón está apagado y su tooltip dice "The agent is working". Los
-  comentarios no entran en la cola de mensajes.
-- Si el agente está detenido, el tooltip dice "Restart the agent first".
-- Si el mensaje no llega a salir (por ejemplo, el agente no arranca), los comentarios siguen en Pending.
+- En líneas borradas dice "Comment on src/openapi.ts, removed lines 12–13 (from the base):" y trae el código de la
+  base.
+- El código se toma al pulsar Send. Un comentario en cola guarda ese código, aunque el agente cambie el archivo
+  durante su turno.
+
+### En la conversación
+
+- Tu mensaje muestra la etiqueta de las líneas arriba y el comentario debajo. No muestra el código que recibió el
+  agente.
+- Un clic en la etiqueta abre la pestaña de diff del archivo en esas líneas, y despliega las líneas sin cambios que
+  las esconden. Si el archivo ya no tiene cambios, abre su pestaña en el editor (sección 16). El tooltip muestra la
+  ruta y el rango.
+- En la cola, un comentario se ve con su etiqueta, como los demás mensajes en cola. Al pasar el mouse ofrece "Send
+  now", "Edit" y "Remove". "Edit" solo funciona con el cuadro de mensaje vacío.
+
+### Volver a enviar un comentario
+
+Con el cuadro de mensaje vacío, ↑ sobre un comentario trae su etiqueta al inicio del cuadro y el comentario después.
+"Edit" en un comentario en cola hace lo mismo y lo saca de la cola.
+
+- El cursor no puede ir antes de la etiqueta. ⌫ al inicio del texto la quita, y el mensaje sale como uno normal.
+- Copiar y pegar dejan la etiqueta fuera, así que nunca aparece dos veces ni en medio del texto. El cuadro lleva una
+  etiqueta como máximo.
+- Con la etiqueta al inicio, un "/" al comienzo del texto no es un comando.
+- Para enviarlo hace falta texto: la etiqueta sola no se envía.
+
+Al enviarlo, Rocky vuelve a leer las líneas de la etiqueta: las nuevas del archivo del worktree y las borradas de la
+base. El código puede ser distinto del que salió la primera vez. Un comentario que editaste desde la cola también se
+lee de nuevo: el código que guardaba se descarta.
+
+- Si alguna línea ya no se puede leer (el archivo ya no existe, o el rango pasa del final), el bloque sale sin código:
+  "Comment on src/openapi.ts, lines 18–25:" y el comentario.
+- Si la conversación está en un turno, el comentario entra en su cola, como al enviarlo desde el diff.
+- Los archivos que agregues junto a la etiqueta salen como enlaces después del bloque. En el bloque, cada uno aparece
+  con su nombre.
+- En la conversación se ve igual que el primer envío: la etiqueta arriba y el comentario debajo.
 
 ---
 
@@ -1094,6 +1171,27 @@ Con el teclado, después de un clic en una fila:
 | ← | Cierra la carpeta, o sube a la carpeta que la contiene. |
 | Return | Abre el archivo, como un clic. En una carpeta, la abre o la cierra. |
 
+### Íconos de los archivos
+
+Cada archivo lleva el ícono de su tipo, del tema Material Icon Theme de VS Code. Las carpetas conservan la carpeta
+azul.
+
+Rocky elige el ícono por la ruta del archivo, sin distinguir mayúsculas. Gana la primera regla que coincide:
+
+1. Un `.yml` o `.yaml` dentro de `.github/workflows/` lleva el ícono de GitHub Actions.
+2. El final de la ruta, para los pocos archivos que el tema reconoce con su carpeta, como `.config/graphqlrc`.
+3. El nombre completo: `package.json`, `tsconfig.json`, `.gitignore`, `README.md`.
+4. La extensión más larga que el tema conoce: `.test.ts` antes que `.ts`, y `.d.ts` también antes que `.ts`.
+5. Si nada coincide, un ícono genérico de archivo.
+
+El mismo ícono aparece en el árbol, en Quick Open, en las filas de Changes, en las pestañas de archivos sin cambios
+(las de archivos cambiados muestran su letra de estado), en el encabezado de las pestañas, en los archivos de la
+conversación y del cuadro de mensaje, y en la etiqueta de las líneas comentadas (sección 15). Los archivos ignorados
+lo muestran atenuado, igual que su nombre. Los íconos siguen el zoom de la ventana (⌘+ y ⌘-).
+
+Los íconos son de Material Icon Theme 5.38.1 (licencia MIT, © 2025 Material Extensions) y vienen dentro de Rocky: no
+se descarga nada al usarlo.
+
 ### Archivos ignorados
 
 - Rocky oculta lo que git ignora: `node_modules`, `dist`, `.env`, `.DS_Store`… Los archivos que empiezan con punto y
@@ -1101,11 +1199,10 @@ Con el teclado, después de un clic en una fila:
 - "⋯" ▸ Show Ignored Files muestra los ignorados, atenuados. Rocky recuerda esa opción para cada repositorio.
 - El filtro nunca busca entre los archivos ignorados.
 
-### Filtrar y Go to File (⌘P)
+### Filtrar
 
-1. Escribe en el campo "Filter files", arriba del árbol. También puedes pulsar ⌘P (File ▸ Go to File…) desde cualquier
-   parte, incluso desde el cuadro de mensaje o un terminal: abre el panel en All files, con el campo listo y su texto
-   seleccionado. ⌘P ocupa el lugar de File ▸ Print, que Rocky no usa.
+1. Escribe en el campo "Filter files", arriba del árbol. Para buscar un archivo desde cualquier parte, sin abrir el
+   panel, usa Quick Open (⌘P, más abajo).
 2. El árbol se cambia por una lista de los archivos que coinciden: ícono, nombre, carpeta y letra de estado. Las
    letras que coinciden se ven resaltadas.
 3. ↓ / ↑ recorren los resultados, y Return abre el elegido. Con el campo vacío, ↓ pasa al árbol.
@@ -1122,10 +1219,41 @@ Los resultados van en este orden, sin distinguir mayúsculas:
 Si dos empatan, van en el orden de Finder. Sin resultados, la lista dice "No file matches “srv”". Mientras escribes en
 el filtro, Esc no detiene el turno del agente.
 
+### Quick Open (⌘P)
+
+Quick Open busca un archivo del worktree desde cualquier parte de la ventana, sin tocar el panel derecho.
+
+1. Pulsa ⌘P (File ▸ Go to File…), también desde el cuadro de mensaje, el editor o un terminal. ⌘P ocupa el lugar de
+   File ▸ Print, que Rocky no usa.
+2. Aparece un panel arriba, al centro de la ventana, con el campo "Search project files…" listo para escribir. El
+   panel derecho queda como estaba, abierto o cerrado.
+3. Escribe parte del nombre o de la ruta. Los resultados siguen el mismo orden que el filtro de All files, y dentro de
+   cada grupo van primero los archivos que abriste hace poco. Las letras que coinciden se ven resaltadas.
+4. ↓ / ↑ mueven la selección; desde la última fila, ↓ vuelve a la primera. Pasar el mouse sobre una fila también la
+   selecciona.
+5. Return abre el archivo elegido en una pestaña normal, y ⌥Return lo abre como vista previa. Con el mouse: un clic
+   abre, y ⌥-clic abre como vista previa. Los botones de abajo, "Open ↩" y "Open as preview ⌥↩", hacen lo mismo.
+
+Esc, un clic fuera del panel o ⌘P otra vez lo cierran. Mientras está abierto, Esc no detiene el turno del agente.
+
+Con el campo vacío, la lista muestra, en este orden:
+
+1. Los archivos que abriste hace poco en este workspace, del más reciente al más antiguo, con un reloj.
+2. Los archivos cambiados que no están entre ellos, con su letra de estado.
+3. Todos los demás, en el orden de Finder.
+
+- "Recientes" son los últimos 20 archivos que abriste en una pestaña de este workspace: desde el árbol, Changes, una
+  etiqueta del chat o Quick Open. Rocky los recuerda al relanzar, y quitar el workspace los borra.
+- Quick Open nunca lista los archivos ignorados.
+- La primera vez, o si algo cambió en el disco desde la última lectura, Quick Open lee la lista de archivos al abrirse
+  y muestra "Reading files…". Escribir no lanza ningún proceso.
+
 ### Pestañas de vista previa
 
-1. Un clic en un archivo (o Return) lo abre en una **pestaña de vista previa**, con el título en cursiva.
-2. El siguiente clic en otro archivo la reemplaza. Así, recorrer el árbol no llena la fila de pestañas.
+1. Un clic en un archivo (o Return) lo abre en una **pestaña de vista previa**, con el título en cursiva. En Quick Open
+   es ⌥Return o ⌥-clic.
+2. La siguiente vista previa la reemplaza. Así, recorrer el árbol no llena la fila de pestañas. Un archivo que abres
+   para quedarte (Return en Quick Open) abre su propia pestaña y deja la vista previa como estaba.
 3. Para quedarte con ella: doble clic en el archivo, doble clic en la pestaña, o tu primer cambio en el texto.
 
 - La vista previa no toma el teclado, así que las flechas siguen moviéndose por el árbol.
@@ -1190,8 +1318,9 @@ El commit usa la identidad de git que tengas configurada. M4 traerá una identid
 | --- | --- | --- |
 | ⌘, | Abre Settings | Menú Rocky |
 | ⌘N | Nuevo workspace | Menú File |
+| ⌘O | Abre el worktree en la app por defecto (Open in …) | Menú File |
 | ⌘S | Guarda el archivo en pantalla (Save) | Menú File |
-| ⌘P | Go to File: abre el filtro de All files | Menú File |
+| ⌘P | Go to File: abre o cierra Quick Open | Menú File |
 | ⌘L | Go to Line: va a una línea del editor | Menú File |
 | ⌘K | Busca workspaces | Menú View |
 | ⌘1 … ⌘9 | Selecciona el workspace visible número N | Menú View |
@@ -1219,9 +1348,10 @@ El commit usa la identidad de git que tengas configurada. M4 traerá una identid
 | ⌘-clic en el número del PR | Abre el PR en GitHub | Panel derecho |
 | ↑ / ↓, →, ←, Return | Mover, abrir carpeta, cerrarla o subir, abrir archivo | Árbol de All files |
 | ↑ / ↓, Return, Esc | Recorrer resultados, abrir, borrar el texto (un segundo Esc sale) | Filtro de All files |
+| ↑ / ↓, Return, ⌥Return, Esc | Mover (da la vuelta), abrir, abrir como vista previa, cerrar | Quick Open |
 | ⌘F | Busca en el archivo | Editor |
 | Tab | Inserta la sangría del archivo | Editor |
-| ⌘Return | Guarda el comentario | Cuadro de comentario |
+| ⌘Return | Envía el comentario | Cuadro de comentario |
 | Esc | Cierra el cuadro (pregunta antes si tiene texto) | Cuadro de comentario |
 | ⌘Return | Hace el commit | Hoja de commit |
 | Esc | Cancela | Hoja de commit |
@@ -1238,14 +1368,16 @@ Rocky está hecho para gastar poca batería, incluso con muchos workspaces abier
   corre solo después de un evento: un cambio en el disco (Rocky los agrupa cada medio segundo), seleccionar un
   workspace, volver a la ventana, una acción tuya o el fin de un turno.
 - **Git calcula solo lo que se ve.** Tras un cambio, Rocky cuenta las líneas del workspace para la barra lateral.
-  El diff completo es solo para el workspace seleccionado, mientras muestra Changes, All files o una pestaña de diff.
-  `git ls-files` corre solo mientras se ve All files, y el árbol lee solo las carpetas abiertas.
+  El diff completo es solo para el workspace seleccionado, mientras muestra Changes, All files, Quick Open o una
+  pestaña de diff. `git ls-files` corre solo mientras se ve All files, o al abrir Quick Open si algo cambió desde la
+  última lectura, y el árbol lee solo las carpetas abiertas.
 - **Las animaciones se pausan solo cuando la ventana no se ve** (minimizada, oculta, tapada o en otro Space). Con
   Rocky visible detrás de otra app siguen, para que un agente que trabaja no parezca congelado. El círculo de carga
   usa Core Animation; el texto brillante de "Working" es el único costo visible (hasta 30 cuadros por segundo).
 - **GitHub no lanza procesos.** Cada refresco es una petición `URLSession` a GitHub, y dos mientras la pestaña Checks
   muestra los comentarios de un PR abierto. `gh` solo corre para leer las cuentas y los tokens, una vez por sesión.
-- **Los agentes arrancan cuando hacen falta:** el de la conversación en pantalla, y los demás al abrirlos.
+- **Los agentes arrancan cuando hacen falta:** el de la conversación en pantalla, y los demás al abrirlos o al recibir
+  un comentario en líneas (sección 15).
 - **Las actualizaciones de agentes** se consultan una vez al día, con una petición HTTPS a npm.
 
 Para medir el consumo:

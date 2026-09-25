@@ -117,9 +117,14 @@ struct FilePreviewContent: View {
                     .frame(width: 360, alignment: .leading)
             } else {
                 HStack(spacing: 10) {
-                    Image(systemName: FileKind(path: path).symbol)
-                        .font(.rocky(22))
-                        .foregroundStyle(FileKind(path: path).color)
+                    // FIL-09: the badge's Material icon, larger; a folder keeps the blue folder.
+                    if FileKind(path: path) == .folder {
+                        Image(systemName: FileKind.folder.symbol)
+                            .font(.rocky(22))
+                            .foregroundStyle(FileKind.folder.color)
+                    } else {
+                        FileIcon(path: path, size: 22)
+                    }
                     VStack(alignment: .leading, spacing: 2) {
                         Text(URL(fileURLWithPath: path).lastPathComponent).lineLimit(1)
                         Text(details).font(.rocky(10)).foregroundStyle(.secondary)

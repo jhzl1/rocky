@@ -48,7 +48,7 @@ struct DiffLayoutTests {
 
     @Test func theRunBetweenHunksCollapsesToItsCount() {
         let rows = DiffLayout.rows(for: Self.twoHunks, newLines: nil, expanded: [])
-        #expect(rows.map(\.id) == ["h0", "l1:1", "l0:2", "l2:3", "l3:4", "l4:5", "g1", "h1", "l20:21", "l21:0", "l0:22", "l22:23", "l23:24"])
+        #expect(rows.map(\.id) == ["l1:1", "l0:2", "l2:3", "l3:4", "l4:5", "g1", "l20:21", "l21:0", "l0:22", "l22:23", "l23:24"])
         let gaps = Self.gaps(rows)
         #expect(gaps.map(\.0) == [DiffGap(hunkIndex: 1)])
         // New lines 6 to 20.
@@ -87,7 +87,7 @@ struct DiffLayoutTests {
         let rows = DiffLayout.rows(for: file, newLines: Self.thirtyLines, expanded: [DiffGap(hunkIndex: 0)])
         #expect(Self.lines(rows).first == DiffLine(kind: .context, oldNumber: 1, newNumber: 1, text: "n1"))
         #expect(Self.lines(rows)[8] == DiffLine(kind: .context, oldNumber: 9, newNumber: 9, text: "n9"))
-        #expect(rows[9] == .hunk(index: 0, header: "@@ -10,2 +10,3 @@"))
+        #expect(rows[9] == .line(DiffLine(kind: .context, oldNumber: 10, newNumber: 10, text: "ten")))
     }
 
     /// An added or deleted file is one hunk from its first line to its last: nothing to collapse. A deleted file's new
@@ -100,7 +100,7 @@ struct DiffLayoutTests {
             ]),
         ])
         #expect(Self.gaps(DiffLayout.rows(for: deleted, newLines: [], expanded: [])).isEmpty)
-        #expect(DiffLayout.rows(for: deleted, newLines: nil, expanded: []).count == 3)
+        #expect(DiffLayout.rows(for: deleted, newLines: nil, expanded: []).count == 2)
 
         let added = FileDiff(path: "new.txt", status: .added, hunks: [
             Hunk(header: "@@ -0,0 +1,2 @@", oldStart: 0, oldCount: 0, newStart: 1, newCount: 2, lines: [
@@ -149,6 +149,44 @@ struct DiffLayoutTests {
         #expect(DiffLayout.gaps(holding: [CommentLine(side: .new, number: 27)], in: file, lineCount: nil).isEmpty)
         #expect(DiffLayout.gaps(holding: [CommentLine(side: .new, number: 27), CommentLine(side: .old, number: 5)], in: file, lineCount: 30)
             == [DiffGap(hunkIndex: 1), DiffGap(hunkIndex: 2)])
+    }
+
+    // MARK: Comment lines (CMT-01, CMT-02, CMT-05)
+
+    /// Line 1 unchanged, line 2 replaced ("gone" → "came"), line 3 unchanged.
+    private static let replaced: [DiffRow] = [
+        .line(DiffLine(kind: .context, oldNumber: 1, newNumber: 1, text: "keep")),
+        .line(DiffLine(kind: .removed, oldNumber: 2, newNumber: nil, text: "gone")),
+        .line(DiffLine(kind: .added, oldNumber: nil, newNumber: 2, text: "came")),
+        .line(DiffLine(kind: .context, oldNumber: 3, newNumber: 3, text: "end")),
+    ]
+
+    @Test func aRowsCommentLineIsItsSidesNumber() {
+        #expect(DiffLine(kind: .removed, oldNumber: 4, newNumber: nil, text: "").commentLine == CommentLine(side: .old, number: 4))
+        #expect(DiffLine(kind: .added, oldNumber: nil, newNumber: 7, text: "").commentLine == CommentLine(side: .new, number: 7))
+        #expect(DiffLine(kind: .context, oldNumber: 4, newNumber: 7, text: "").commentLine == CommentLine(side: .new, number: 7))
+    }
+
+    /// CMT-02: the box opens under the row of the range's last line on its side. An old-side line whose removed row is
+    /// gone (the line came back) is under that line's context row; a line no row shows has no row.
+    @Test func theBoxOpensUnderTheRowOfItsLastLineOnItsSide() {
+        #expect(DiffLayout.rowId(for: CommentLine(side: .new, number: 1), in: Self.replaced) == "l1:1")
+        #expect(DiffLayout.rowId(for: CommentLine(side: .new, number: 2), in: Self.replaced) == "l0:2")
+        #expect(DiffLayout.rowId(for: CommentLine(side: .old, number: 2), in: Self.replaced) == "l2:0")
+        #expect(DiffLayout.rowId(for: CommentLine(side: .old, number: 3), in: Self.replaced) == "l3:3")
+        #expect(DiffLayout.rowId(for: CommentLine(side: .old, number: 9), in: Self.replaced) == nil)
+        #expect(DiffLayout.rowId(for: CommentLine(side: .new, number: 9), in: Self.replaced) == nil)
+    }
+
+    /// CMT-05's code: the new side from the worktree file when it is read, so a range across a collapsed run keeps
+    /// every line; else, and on the removed side, from the rows.
+    @Test func aCommentsCodeComesFromTheFileOrTheRows() {
+        let lines = (1...10).map { "n\($0)" }
+        #expect(DiffLayout.lines(in: 4...5, side: .new, rows: [], newLines: lines) == ["n4", "n5"])
+        #expect(DiffLayout.lines(in: 9...12, side: .new, rows: [], newLines: lines) == ["n9", "n10"])
+        #expect(DiffLayout.lines(in: 2...2, side: .old, rows: Self.replaced, newLines: lines) == ["gone"])
+        #expect(DiffLayout.lines(in: 1...3, side: .old, rows: Self.replaced, newLines: nil) == ["keep", "gone", "end"])
+        #expect(DiffLayout.lines(in: 2...3, side: .new, rows: Self.replaced, newLines: nil) == ["came", "end"])
     }
 
     /// A file shorter than its diff (read after the agent cut it) shows the lines it has.

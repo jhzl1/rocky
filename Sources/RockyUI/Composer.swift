@@ -9,8 +9,11 @@ import SwiftUI
 @Observable
 final class ComposerController {
     private(set) var isEmpty = true
-    /// There is something to send: text other than spaces, or a file.
+    /// There is something to send: text other than spaces, or a file. With a line chip, words: a comment needs them,
+    /// as the comment box's Send does (CMT-02).
     private(set) var hasContent = false
+    /// A line comment's chip starts the message (CMT-05 History): the message goes as that comment again.
+    private(set) var hasLineChip = false
     /// The editor's height: from two lines up to ten, then it scrolls.
     private(set) var height = ComposerController.minHeight
     /// The slash command popup over the box (CMD-01…CMD-05), driven by this text view.
@@ -40,15 +43,16 @@ final class ComposerController {
         window.makeFirstResponder(nil)
     }
 
-    /// A queued message back in the box to edit it: its text, with its files as badges where they were.
-    func load(text: String, files: [String]) {
-        textView?.load(MessageHistory.Entry(text: text, files: files))
+    /// A queued message back in the box to edit it: its text, with its files as badges where they were, and a line
+    /// comment's chip before it (CMT-05 Running).
+    func load(text: String, files: [String], lineRange: LineRangeAttachment? = nil) {
+        textView?.load(MessageHistory.Entry(text: text, files: files, lineRange: lineRange))
     }
 
-    /// The message to send and its files, then an empty box. Each file's place in the text is a
-    /// `PromptAttachment.marker`.
-    func takeMessage() -> (text: String, files: [URL]) {
-        guard let textView else { return ("", []) }
+    /// The message to send, its files and its line chip's range, then an empty box. Each file's place in the text is a
+    /// `PromptAttachment.marker`; the chip has none.
+    func takeMessage() -> ComposerMessage {
+        guard let textView else { return ComposerMessage(text: "", files: [], lineRange: nil) }
         let message = textView.message()
         textView.clear()
         return message
@@ -72,9 +76,16 @@ final class ComposerController {
     fileprivate func textChanged() {
         guard let textView else { return }
         let string = textView.string
+        let chip = textView.lineChip != nil
         isEmpty = string.isEmpty
-        hasContent = string.contains(PromptAttachment.marker)
-            || !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if hasLineChip != chip { hasLineChip = chip }
+        if chip {
+            hasContent = !string.replacingOccurrences(of: PromptAttachment.marker, with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        } else {
+            hasContent = string.contains(PromptAttachment.marker)
+                || !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
         height = min(max(textView.contentHeight, Self.minHeight), Self.maxHeight)
         refreshPopup()
     }
@@ -86,6 +97,7 @@ final class ComposerController {
         popup.update(
             text: string,
             caret: textView.selectedRange().location,
+            // A line chip is an attachment too: with it first, a "/" is not a command (CMT-05 History, CMD-01).
             firstIsAttachment: string.hasPrefix(PromptAttachment.marker),
             commands: commands,
             confirmed: commandsConfirmed
@@ -127,6 +139,14 @@ final class ComposerController {
         focus()
         textView?.apply(choice)
     }
+}
+
+/// What the message box sends: the text, its files, and the range of the line chip it starts with, which makes it a
+/// line comment (CMT-05 Resend).
+struct ComposerMessage {
+    let text: String
+    let files: [URL]
+    let lineRange: LineRangeAttachment?
 }
 
 /// The keys the message box hands to the slash command popup while it is open.
@@ -214,6 +234,10 @@ struct ComposerEditor: NSViewRepresentable {
 /// Return sends, Shift-Return starts a new line, Shift-Tab switches plan mode, ↑ and ↓ browse the conversation's
 /// messages from an empty box. Pasted or dropped files become badges where the text is; pasted text comes in plain.
 /// While the slash command popup is open, ↑, ↓, Return, Tab and Esc go to it first.
+///
+/// A line comment brought back (CMT-05 History) starts with its chip (CMT-06 In the box), one at most: only ↑, ↓ and a
+/// queued comment's Edit put one there, at the start. The caret and the selection never go before it, so nothing is
+/// typed, dropped or selected there, and copying leaves it out; Backspace at the start of the text removes it.
 final class ComposerTextView: NSTextView {
     var history = MessageHistory()
     var onSubmit: () -> Void = {}
@@ -319,7 +343,8 @@ final class ComposerTextView: NSTextView {
         return a.maxY > b.minY + 1 && b.maxY > a.minY + 1
     }
 
-    /// A sent message back in the box: its text, with its files as badges where they were.
+    /// A sent message back in the box: its text, with its files as badges where they were, and a line comment's chip
+    /// first.
     private func show(_ entry: MessageHistory.Entry) {
         replaceAll(with: attributedMessage(entry))
         history.didShow(string)
@@ -334,6 +359,9 @@ final class ComposerTextView: NSTextView {
 
     private func attributedMessage(_ entry: MessageHistory.Entry) -> NSAttributedString {
         let result = NSMutableAttributedString()
+        if let range = entry.lineRange {
+            result.append(NSAttributedString(attachment: LineChipAttachment(range: range, owner: self)))
+        }
         let marker = PromptAttachment.marker
         // Messages sent before files sat inside the text: their files go first.
         let missing = max(0, entry.files.count - (entry.text.components(separatedBy: marker).count - 1))
@@ -393,8 +421,9 @@ final class ComposerTextView: NSTextView {
 
     /// CMD-07: "/" at the start of an empty message. A message with text gets "/ " before it, so its first word
     /// stays out of the token a chosen command replaces. A message that already starts with "/" gets the caret
-    /// after it.
+    /// after it. A line comment's message gets nothing: with its chip first, a "/" is not a command (CMT-05 History).
     fileprivate func beginCommand() {
+        guard lineChip == nil else { return }
         if string.isEmpty {
             replaceCharacters(in: NSRange(location: 0, length: 0), withPlain: "/")
         } else if !string.hasPrefix("/") {
@@ -445,6 +474,48 @@ final class ComposerTextView: NSTextView {
         insertFiles(urls)
         window?.makeFirstResponder(self)
         return true
+    }
+
+    // MARK: The line chip (CMT-05 History, CMT-06)
+
+    /// The line chip the message starts with, if any. It is always the first character: see `setSelectedRanges`.
+    var lineChip: LineChipAttachment? {
+        guard let storage = textStorage, storage.length > 0 else { return nil }
+        return storage.attribute(.attachment, at: 0, effectiveRange: nil) as? LineChipAttachment
+    }
+
+    /// The caret and every selection start after the chip, so nothing is typed before it, and a selection, which is
+    /// what copying and dragging write, never holds it: it cannot be pasted twice or into the middle of the text.
+    override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting stillSelectingFlag: Bool) {
+        guard lineChip != nil else { return super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelectingFlag) }
+        let clamped = ranges.map { value -> NSValue in
+            let range = value.rangeValue
+            guard range.location < 1 else { return value }
+            return NSValue(range: NSRange(location: 1, length: max(0, range.upperBound - 1)))
+        }
+        super.setSelectedRanges(clamped, affinity: affinity, stillSelecting: stillSelectingFlag)
+    }
+
+    /// A drop of text before the chip is refused: it would put the chip in the middle of the message.
+    override func shouldChangeText(inRanges affectedRanges: [NSValue], replacementStrings: [String]?) -> Bool {
+        if lineChip != nil {
+            for (index, value) in affectedRanges.enumerated() {
+                let range = value.rangeValue
+                let replacement = replacementStrings.flatMap { index < $0.count ? $0[index] : nil } ?? ""
+                if range.location == 0, range.length == 0, !replacement.isEmpty { return false }
+            }
+        }
+        return super.shouldChangeText(inRanges: affectedRanges, replacementStrings: replacementStrings)
+    }
+
+    /// Backspace at the start of the text removes the chip, and the message then goes as a normal one.
+    override func deleteBackward(_ sender: Any?) {
+        guard !hasMarkedText(), lineChip != nil, selectedRanges.count == 1,
+              selectedRange() == NSRange(location: 1, length: 0) else { return super.deleteBackward(sender) }
+        let chip = NSRange(location: 0, length: 1)
+        guard shouldChangeText(in: chip, replacementString: ""), let storage = textStorage else { return }
+        storage.replaceCharacters(in: chip, with: "")
+        didChangeText()
     }
 
     // MARK: Badges
@@ -584,13 +655,16 @@ final class ComposerTextView: NSTextView {
         didChangeText()
     }
 
-    func message() -> (text: String, files: [URL]) {
-        guard let storage = textStorage else { return ("", []) }
+    func message() -> ComposerMessage {
+        guard let storage = textStorage else { return ComposerMessage(text: "", files: [], lineRange: nil) }
         var files: [URL] = []
         storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, _, _ in
             if let file = value as? FileAttachment { files.append(URL(fileURLWithPath: file.path)) }
         }
-        return (storage.string.trimmingCharacters(in: .whitespacesAndNewlines), files)
+        let chip = lineChip
+        // The chip's character is not the text's: the markers left are its files'.
+        let text = chip == nil ? storage.string : (storage.string as NSString).substring(from: 1)
+        return ComposerMessage(text: text.trimmingCharacters(in: .whitespacesAndNewlines), files: files, lineRange: chip?.range)
     }
 
     /// Redraws the text and its badges at a new zoom.
@@ -602,13 +676,20 @@ final class ComposerTextView: NSTextView {
         storage.enumerateAttribute(.attachment, in: full) { value, range, _ in
             if let file = value as? FileAttachment { badges.append((range, file.path)) }
         }
+        let chip = lineChip?.range
         storage.beginEditing()
         storage.addAttributes(textAttributes, range: full)
-        // From the end, so earlier ranges stay valid; a new attachment is drawn at the new size.
+        // From the end, so earlier ranges stay valid; a new attachment is drawn at the new size. The chip, first, goes
+        // last.
         for badge in badges.reversed() {
             let replacement = NSMutableAttributedString(attachment: FileAttachment(path: badge.path, owner: self))
             replacement.addAttributes(textAttributes, range: NSRange(location: 0, length: replacement.length))
             storage.replaceCharacters(in: badge.range, with: replacement)
+        }
+        if let chip {
+            let replacement = NSMutableAttributedString(attachment: LineChipAttachment(range: chip, owner: self))
+            replacement.addAttributes(textAttributes, range: NSRange(location: 0, length: replacement.length))
+            storage.replaceCharacters(in: NSRange(location: 0, length: 1), with: replacement)
         }
         storage.endEditing()
         font = textFont
@@ -672,6 +753,48 @@ final class FileAttachment: NSTextAttachment {
             .environment(\.colorScheme, .dark))
         renderer.scale = scale
         return renderer.nsImage
+    }
+
+    override func attachmentBounds(for attributes: [NSAttributedString.Key: Any], location: any NSTextLocation, textContainer: NSTextContainer?, proposedLineFragment: CGRect, position: CGPoint) -> CGRect {
+        bounds
+    }
+}
+
+/// CMT-06's line chip at the start of the message box (CMT-05 History). TextKit draws it as an image of
+/// `FileBadgeLook(range:)` with a gap after it, so the text starts clear of it, like the comment box's. Not a badge: it
+/// has no hover, X or click, and Backspace removes it (`ComposerTextView`).
+final class LineChipAttachment: NSTextAttachment {
+    let range: LineRangeAttachment
+
+    /// Between the chip and the text after it.
+    @MainActor private static var gap: CGFloat { Zoom.shared(6) }
+
+    @MainActor
+    fileprivate init(range: LineRangeAttachment, owner: ComposerTextView) {
+        self.range = range
+        super.init(data: nil, ofType: nil)
+        allowsTextAttachmentView = false
+        let scale = owner.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+        let label = range.rangeLabel
+        let renderer = ImageRenderer(content: FileBadgeLook(path: range.path, range: label)
+            .padding(.trailing, Self.gap)
+            .environment(\.colorScheme, .dark))
+        renderer.scale = scale
+        image = renderer.nsImage
+        let size = FileBadgeLook.size(for: range.path, range: label)
+        bounds = CGRect(x: 0, y: FileBadgeLook.baselineOffset, width: size.width + Self.gap, height: size.height)
+    }
+
+    required init?(coder: NSCoder) {
+        guard let entry = coder.decodeObject(of: NSString.self, forKey: "entry") as String?,
+              let range = LineRangeAttachment(entry: entry) else { return nil }
+        self.range = range
+        super.init(coder: coder)
+    }
+
+    override func encode(with coder: NSCoder) {
+        super.encode(with: coder)
+        coder.encode(range.entry as NSString, forKey: "entry")
     }
 
     override func attachmentBounds(for attributes: [NSAttributedString.Key: Any], location: any NSTextLocation, textContainer: NSTextContainer?, proposedLineFragment: CGRect, position: CGPoint) -> CGRect {

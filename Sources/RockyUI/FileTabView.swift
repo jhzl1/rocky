@@ -46,13 +46,9 @@ struct FileTabView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Image(systemName: kind.symbol).foregroundStyle(kind.color)
-            Text(path)
-                .font(.rocky(12))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.head)
-                .textSelection(.enabled)
+            // DIFF-01's path chip, which opens the file in the default app (OPN-02); the full path, with "~".
+            PathChip(path: (path as NSString).abbreviatingWithTildeInPath, url: url, isFolder: kind == .folder)
+                .layoutPriority(1)
             Spacer()
             if kind.opensInEditor {
                 EditorStatusControls(model: model, workspaceId: workspaceId, path: path)
@@ -80,7 +76,8 @@ struct FileTabView: View {
             .help("Open in its app")
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        // A diff tab's header height (DIFF-01), so the chip sits the same in both kinds of tab.
+        .frame(height: Zoom.shared(34))
     }
 
     @ViewBuilder
