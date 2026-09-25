@@ -6,8 +6,10 @@ Rocky es una app de macOS para trabajar con agentes de código (Claude Code y Op
 en su propio workspace, con su propia copia del repositorio, así que varios agentes pueden trabajar a la vez sin
 pisarse. La idea viene de Conductor.
 
-**Estado de esta guía.** Describe lo construido de M1 a M3:
+**Estado de esta guía.** Describe lo construido de M1 a M3 y M2.8:
 
+- M2.8 (elegir el agente desde el menú de modelos, el esfuerzo que sigue al modelo, ⌃` para el terminal y los
+  diálogos propios de Rocky, secciones 2, 6 y 8) está en la rama `feat/m2.8-conversations`.
 - M3 (revisar y editar: las pestañas All files y Changes, los diffs, los comentarios en líneas, el editor y los
   commits desde Rocky) está en `development` desde el 2026-09-24. Quick Open (⌘P), los comentarios que salen al
   escribirlos (sección 15), los íconos de cada tipo de archivo (sección 17), la app por defecto del botón Open y de
@@ -79,6 +81,7 @@ de cada compilación. Para usar otro certificado, define `ROCKY_SIGN_IDENTITY` c
 | `~/Library/Application Support/Rocky/agents` | Los agentes que instala Rocky: el adaptador de Claude y OpenCode. |
 | `~/Library/Application Support/Rocky/opencode-data` | Los datos propios del OpenCode de Rocky: sesiones y login. |
 | `~/Library/Application Support/Rocky/ci-logs` | Los logs de CI que "Fix errors" adjunta, una carpeta por workspace. |
+| `~/Library/Application Support/Rocky/agent-models.json` | Los modelos que cada agente informó la última vez, para mostrarlos en el menú de modelos sin arrancarlo. Solo nombres: sin tokens, sin llaves y sin niveles de esfuerzo. |
 | `~/Library/Logs/Rocky` | Los logs de los agentes (lo que cada uno escribe en stderr). |
 | Llavero de macOS | Los valores de las variables marcadas como secretas. |
 
@@ -91,6 +94,28 @@ En Settings → Data puedes abrir la base de datos y los logs en Finder.
 - La primera vez Rocky abre en 1440 × 900 puntos, o lo que quepa en tu pantalla.
 - Después recuerda el tamaño y la posición en que la dejaste.
 - El tamaño mínimo es 900 × 560, que es lo justo para el sidebar, una conversación legible y el panel derecho lado a lado.
+
+### Los diálogos de Rocky
+
+Las confirmaciones, los errores, el commit y los permisos del agente son diálogos propios de Rocky, no los de macOS:
+un panel centrado sobre la ventana, que se oscurece detrás. El texto va alineado a la izquierda y los botones a la
+derecha; "Don’t Save" queda solo en el extremo izquierdo. Se muestra un diálogo a la vez: si llega otro, espera a que
+cierres el primero.
+
+| Tecla | Qué hace |
+| --- | --- |
+| Return | Pulsa el botón de la derecha, el que actúa: "Discard Changes", "Save", "OK". |
+| Esc, o un clic fuera del panel | Cancela. En un error, pulsa OK. |
+| Tab / ⇧Tab | Mueven el foco entre los botones, marcado con un anillo azul. |
+| Space | Pulsa el botón enfocado. Return también, una vez que moviste el foco. |
+| ⌘D | Pulsa "Don’t Save" donde lo hay. |
+
+- Mientras un diálogo está abierto, lo que queda detrás no recibe teclas: ni el cuadro de mensaje, ni el terminal, ni
+  los atajos. ⌘Q sí funciona: cancela el diálogo y muestra la pregunta de salida si hay cambios sin guardar
+  (sección 16).
+- Si hay un menú de Rocky abierto encima del diálogo, Esc cierra primero el menú.
+- En un error, el título es "Something went wrong" y el mensaje se puede seleccionar y copiar (⌘C).
+- Los selectores de archivos y carpetas (agregar un repositorio, adjuntar archivos) siguen siendo los de macOS.
 
 ## 3. Repositorios y workspaces
 
@@ -315,12 +340,12 @@ conversación queda guardada.
 - **El agente de la nueva conversación** es el de la conversación donde enviaste tu último mensaje en ese
   repositorio, en cualquiera de sus workspaces, aunque ya hayas cerrado esa pestaña. Si aún no enviaste ninguno, es
   Claude Code. La primera conversación que un workspace abre solo sigue la misma regla.
-- **Clic derecho en el "+"** muestra "New Claude Code conversation" y "New OpenCode conversation", para elegir el
-  agente. Por ahora es la única forma de abrir una conversación de OpenCode sin haber usado OpenCode antes en el
-  repositorio. Elegir uno ahí no cambia el agente por defecto: lo cambia el primer mensaje que envíes.
+- **Otro agente** se elige después, en el menú de modelos del cuadro de mensaje (ver "Elegir el agente"). El "+" ya
+  no tiene menú con clic derecho.
 
 El agente de la conversación que tienes en pantalla arranca solo, en segundo plano. Las demás arrancan cuando las
-abres. Mientras arranca, el selector de modelo dice "Starting Claude Code…".
+abres. Mientras arranca, el botón de modelo muestra solo un indicador de carga en lugar del logo del agente, sin texto.
+Ya es un menú: puedes abrirlo y elegir un modelo, que se aplica en cuanto el agente termina de arrancar.
 
 ### El cuadro de mensaje
 
@@ -335,12 +360,46 @@ abres. Mientras arranca, el selector de modelo dice "Starting Claude Code…".
 
 ### Modelo, esfuerzo y modo plan
 
-- El botón de modelo (abajo a la izquierda) abre un menú con los modelos del agente, el esfuerzo ("Effort") y
-  "Fast" cuando el agente los ofrece.
+- El botón de modelo (abajo a la izquierda) muestra el logo del agente, el modelo y el esfuerzo, por ejemplo
+  "Opus 5.5 High". Cuando el esfuerzo es el nivel "Default" del agente, no se muestra: "GPT-5.5", no
+  "GPT-5.5 Default".
+- El botón abre un menú con una columna de agentes a la izquierda y, a la derecha, el nombre del agente, cuántos
+  modelos tiene ("42 models") y sus modelos, con el actual marcado. Para el agente de la conversación también
+  aparecen el esfuerzo ("Effort") y "Fast" cuando el agente los ofrece.
 - Si el agente tiene más de ocho modelos (OpenCode lista los de todos sus proveedores), el menú muestra un buscador
   y agrupa los modelos por proveedor. Return elige el primero que coincide.
+- **El esfuerzo sigue al modelo.** Los niveles de "Effort" son los que el agente ofrece para el modelo elegido, en su
+  orden. Al cambiar de modelo, Rocky muestra el nivel con el que responde el agente (normalmente el que el modelo trae
+  por defecto) y no conserva el anterior por su cuenta. Si el modelo no tiene niveles, la fila "Effort" desaparece.
+- **El menú queda abierto** al elegir un modelo o un nivel de esfuerzo, para cambiar el esfuerzo con un clic más. Se
+  cierra con Esc, con un clic fuera, al enviar un mensaje o cuando se abre otra conversación (ver abajo).
+- Mientras el agente trabaja en un turno, el botón está desactivado.
 - El modo plan pide al agente que planifique antes de cambiar código. Actívalo con ⇧Tab o con "Plan mode" en el menú
   "+". Mientras está activo se ve la etiqueta "Plan". Al apagarlo, el agente vuelve al modo anterior.
+
+### Elegir el agente
+
+La columna de la izquierda del menú de modelos tiene un logo por agente. El agente de la conversación lleva un punto
+verde y su nombre dice "(current)". El menú se abre en el agente de la conversación.
+
+1. Haz clic en otro agente de la columna, o usa ↑ y ↓ después de hacer clic en ella. El menú muestra los modelos de
+   ese agente. Todavía no cambia nada.
+2. Elige un modelo. Lo que pasa depende de la conversación:
+   - **Sin mensajes** (ni enviados ni en la cola): la conversación cambia de agente en su misma pestaña. El agente
+     anterior se detiene, el nuevo arranca con el modelo elegido y el texto que tenías escrito sigue en el cuadro, con
+     sus archivos y su etiqueta de líneas. El menú queda abierto: el punto verde pasa al nuevo agente y, cuando este
+     termina de arrancar, aparece su fila "Effort".
+   - **Con mensajes**: la conversación queda como está, con su agente corriendo, porque su historial vive en la sesión
+     de ese agente y no se puede pasar a otro. Se abre una conversación nueva al final de las pestañas, con el agente y
+     el modelo elegidos, y el texto que tenías escrito pasa a ella. El menú se cierra.
+3. Si el modelo elegido ya no existe en el agente, Rocky usa el modelo por defecto del agente y lo avisa, por ejemplo
+   "GPT-5.5 isn't available in OpenCode; using Claude Sonnet 5".
+
+Los modelos de otro agente son los que ese agente informó la última vez que corrió en este Mac. Rocky los guarda en
+`agent-models.json`, así que verlos no arranca el agente. Los de Claude Code se guardan por instancia de Claude (la
+carpeta de configuración de Claude del repositorio). Si un agente nunca informó sus modelos, Rocky los trae solo: lo
+arranca en segundo plano, sin abrir una conversación, guarda la lista y lo cierra. Mientras tanto el menú muestra un
+círculo girando. Si falla, el menú dice por qué, y al volver a mostrar ese agente lo intenta de nuevo.
 
 ### Adjuntos
 
@@ -378,9 +437,8 @@ Si el agente está trabajando, Return no interrumpe: el mensaje entra en una col
 Pulsa Esc o el botón de detener (cuadrado). El turno termina con la marca "INTERRUPTED BY USER". También aparece
 después de "Send now", porque ese botón detiene el turno en curso.
 
-Esc va primero a lo que esté abierto encima: un menú, los ajustes, Quick Open, un diálogo o una hoja (como la del
-commit). Tampoco
-detiene el turno mientras escribes en el editor o en su barra de búsqueda, en el filtro de All files o en un
+Esc va primero a lo que esté abierto encima: un menú, después un diálogo (sección 2), después los ajustes o Quick Open.
+Tampoco detiene el turno mientras escribes en el editor o en su barra de búsqueda, en el filtro de All files o en un
 comentario: ahí Esc es de ese campo. Solo cuando no pasa nada de eso detiene el turno.
 
 ### Preguntas y permisos del agente
@@ -388,8 +446,11 @@ comentario: ahí Esc es de ese campo. Solo cuando no pasa nada de eso detiene el
 - **Preguntas:** cuando el agente te pregunta algo, aparece una tarjeta sobre el cuadro de mensaje, una pregunta a
   la vez. Eliges una opción (o varias), o escribes en "Other answer". Botones: "Skip" (seguir sin responder), "Back",
   "Next" y "Submit" en la última.
-- **Permisos:** cuando el agente pide permiso para una acción, aparece "Permission needed" con las opciones del
-  agente y "Cancel".
+- **Permisos:** cuando el agente pide permiso para una acción, aparece el diálogo "Permission needed", con el logo
+  del agente. Lo que quiere hacer (por ejemplo, el comando) va en un bloque de texto monoespaciado, que se puede
+  seleccionar y que se desplaza pasadas diez líneas. A la izquierda quedan "Cancel" y las opciones de rechazar
+  ("Reject"); a la derecha, "Always Allow" y "Allow". Return pulsa "Allow" (permitir una vez), como en Claude Code.
+  Cancel, Esc o un clic fuera cancelan la petición. El diálogo aparece mientras esa conversación está en pantalla.
 
 En ambos casos el workspace muestra el estado "Needs you" en la barra lateral.
 
@@ -477,6 +538,16 @@ El panel inferior del workspace tiene pestañas para los scripts (Setup, Run, Ar
 - **Nombres:** los terminales se llaman "Terminal 1", "Terminal 2"… según su posición.
 - **Plegar y desplegar:** ⌘J, o la flecha a la derecha de la barra. Plegar no detiene nada: terminales y scripts
   siguen corriendo. Rocky recuerda si el panel estaba plegado.
+- **⌃` (View ▸ Toggle Terminal)**, como en VS Code:
+  - Si un terminal del panel tiene el teclado, pliega el panel y devuelve el teclado a la pestaña seleccionada: el
+    cuadro de mensaje de la conversación, o el editor de la pestaña de archivo o de diff.
+  - Si no, despliega el panel y pone el teclado en un terminal: la pestaña seleccionada si es un terminal; si no, la
+    primera pestaña de terminal; y si no hay ninguno, abre "Terminal 1" (el primero puede esperar el token de la
+    cuenta de GitHub del repositorio).
+  - Nunca elige Setup ni Run: son scripts, no terminales.
+  - Pliega y despliega el mismo panel que ⌘J, así que los dos atajos coinciden.
+  - El shell ya no recibe ⌃`. Con una distribución de teclado donde ` es una tecla muerta, el atajo puede no funcionar,
+    igual que en VS Code.
 - **Alto:** arrastra la línea que separa el panel del chat.
 - **Estado de cada pestaña:** un punto verde mientras el proceso corre, rojo si falló. Al terminar, el terminal
   muestra una última línea como "Process exited with code 0" o "Process stopped".
@@ -1133,11 +1204,16 @@ contenido del archivo con los que leyó. Si cambiaron y no elegiste Keep Mine, n
 
 ### Cerrar una pestaña o salir con cambios sin guardar
 
-- Al cerrar una pestaña con cambios sin guardar, Rocky pregunta "Save changes to openapi.ts?", con Save, Don’t Save y
-  Cancel.
+- Al cerrar una pestaña con cambios sin guardar, Rocky pregunta "Save changes to openapi.ts?", con Don’t Save a la
+  izquierda (⌘D), Cancel (Esc) y Save (Return).
 - Al salir de Rocky con cambios sin guardar, pregunta antes, aunque la ventana esté cerrada: "Save changes to 3 files
   before quitting?". Lista los archivos (hasta ocho, y cuenta el resto), con su workspace si son de varios. Los botones
-  son Save All (Return), Cancel (Esc) y Don’t Save (⌘D). Con un solo archivo, el botón dice Save.
+  son Don’t Save (⌘D), Cancel (Esc) y Save All (Return). Con un solo archivo, el botón dice Save.
+- Con la ventana abierta, la pregunta es un diálogo de Rocky sobre ella (sección 2). Si la ventana estaba minimizada,
+  oculta o en otro escritorio, Rocky la trae al frente primero. Si ya había un diálogo abierto, se cancela y la
+  pregunta de salida ocupa su lugar.
+- Con la ventana cerrada (⌘W), la pregunta es el aviso de macOS, el único diálogo nativo que queda: un diálogo de Rocky
+  necesita la ventana, y abrirla solo para preguntar sería peor.
 - Save All guarda cada archivo como lo haría ⌘S. Si alguno no se puede guardar (cambió en el disco, o falló la
   escritura), Rocky no sale y te muestra esa pestaña con su aviso.
 - Rocky no guarda solo. Cerrar la ventana (⌘W) no cierra Rocky ni pierde tus cambios: siguen en sus pestañas.
@@ -1291,20 +1367,23 @@ Rocky puede hacer el commit él mismo, sin el agente. Sirve, por ejemplo, para t
 El "Commit and push" del panel (sección 11), en cambio, se lo pide al agente.
 
 1. En la pestaña Changes, pulsa "Commit…" en el grupo UNCOMMITTED.
-2. Se abre la hoja "Commit changes", con los archivos sin commit (solo para leer).
+2. Se abre el diálogo "Commit changes" (sección 2), con los archivos sin commit (solo para leer).
 3. Escribe el asunto en "Subject". Viene con el título del workspace, si ya tiene uno. Un contador cuenta hasta 72
    caracteres y se pone ámbar si te pasas; el commit se hace igual.
-4. Si quieres, escribe una descripción en "Description (optional)".
-5. Pulsa Commit o ⌘Return. Commit está apagado mientras el asunto está vacío. Cancel o Esc cierran la hoja.
+4. Si quieres, escribe una descripción en "Description (optional)". Return dentro de un campo agrega una línea, no
+   hace el commit.
+5. Pulsa Commit o ⌘Return. Commit está apagado mientras el asunto está vacío. Cancel, Esc o un clic fuera cierran el
+   diálogo.
 
 Rocky corre `git add -A` y después `git commit`, en el worktree y con las variables del workspace:
 
-- `git add -A` toma todo, también un archivo que el agente agregue mientras la hoja está abierta.
-- **Los hooks de git siempre corren**: Rocky nunca usa `--no-verify`. Lo que escriben aparece en la hoja mientras
-  corren, bajo "Running git commit…". Mientras git corre, la hoja no se puede cerrar.
-- Si el commit sale bien, la hoja se cierra, aparece el aviso "Committed" y Changes se actualiza.
-- Si falla, la hoja queda abierta con el error (por ejemplo "git commit exited 1") y lo que escribieron git y los
-  hooks. Tu mensaje se queda: corrige el problema y pulsa Commit otra vez.
+- `git add -A` toma todo, también un archivo que el agente agregue mientras el diálogo está abierto.
+- **Los hooks de git siempre corren**: Rocky nunca usa `--no-verify`. Lo que escriben aparece en el diálogo mientras
+  corren, bajo "Running git commit…". Mientras git corre, el diálogo no se puede cerrar.
+- Si el commit sale bien, el diálogo se cierra, aparece el aviso "Committed" y Changes se actualiza.
+- Si falla, el diálogo queda abierto con el error (por ejemplo "git commit exited 1") y lo que escribieron git y los
+  hooks. Tu mensaje se queda mientras el diálogo esté abierto; si el hook marcó algo que hay que cambiar, mira el
+  paso a paso de la sección de problemas.
 - Con un rebase o un merge a medias en el worktree, Rocky no hace el commit ni agrega nada: "A rebase or a merge is in
   progress in this worktree. Finish it first."
 
@@ -1334,6 +1413,7 @@ El commit usa la identidad de git que tengas configurada. M4 traerá una identid
 | ⌘- | Aleja | Menú View |
 | ⌘0 | Tamaño real (100 %) | Menú View |
 | ⌘J | Pliega o despliega el panel de terminal | Panel de terminal |
+| ⌃` | Toggle Terminal: pone el teclado en un terminal del panel, o lo pliega desde uno | Menú View |
 | Return | Envía (o pone en cola) | Cuadro de mensaje |
 | ⇧Return, ⌥Return | Nueva línea | Cuadro de mensaje |
 | ⇧Tab | Modo plan | Cuadro de mensaje |
@@ -1342,6 +1422,7 @@ El commit usa la identidad de git que tengas configurada. M4 traerá una identid
 | Esc | Detiene el turno del agente | Conversación |
 | ↑ / ↓, Return, Tab, Esc | Elegir, ejecutar, completar, cerrar | Lista de comandos "/" (M2.6) |
 | Return | Elige el primer modelo que coincide | Buscador del menú de modelos |
+| ↑ / ↓ | Cambian el agente que muestra el menú | Columna de agentes del menú de modelos |
 | ⌘S | Guarda | Ajustes del repositorio |
 | Return | Añade la ruta escrita | Ajustes del repositorio, "Path or glob" |
 | Esc | Cierra sin guardar | Settings y ajustes del repositorio |
@@ -1353,9 +1434,13 @@ El commit usa la identidad de git que tengas configurada. M4 traerá una identid
 | Tab | Inserta la sangría del archivo | Editor |
 | ⌘Return | Envía el comentario | Cuadro de comentario |
 | Esc | Cierra el cuadro (pregunta antes si tiene texto) | Cuadro de comentario |
-| ⌘Return | Hace el commit | Hoja de commit |
-| Esc | Cancela | Hoja de commit |
-| Return, Esc, ⌘D | Save All, Cancel, Don’t Save | Aviso de cambios sin guardar al salir |
+| Return | Pulsa el botón de la derecha (el que actúa) | Diálogos |
+| Esc | Cancela (en un error, OK) | Diálogos |
+| Tab / ⇧Tab, Space | Mueven el foco entre los botones, pulsan el enfocado | Diálogos |
+| ⌘D | Don’t Save | Diálogos de cambios sin guardar |
+| ⌘Return | Hace el commit | Diálogo de commit |
+| Esc | Cancela | Diálogo de commit |
+| Return, Esc, ⌘D | Save All, Cancel, Don’t Save | Pregunta de cambios sin guardar al salir |
 
 ---
 
@@ -1474,12 +1559,13 @@ Open in Finder. Ábrelo en otro editor.
 
 ### El commit falla por un hook
 
-La hoja de commit sigue abierta con el error, por ejemplo "git commit exited 1", y lo que escribió el hook. Tu mensaje
-se conserva.
+El diálogo de commit sigue abierto con el error, por ejemplo "git commit exited 1", y lo que escribió el hook. Mientras
+está abierto no puedes usar el resto de la ventana, y Cancel descarta el mensaje.
 
-1. Lee la salida del hook en la hoja.
-2. Corrige lo que pide, en el editor o en un terminal.
-3. Pulsa Commit otra vez. Rocky nunca salta los hooks.
+1. Lee la salida del hook en el diálogo.
+2. Si quieres conservar el mensaje, selecciónalo y cópialo (⌘A, ⌘C).
+3. Pulsa Cancel y corrige lo que pide el hook, en el editor, en una terminal o pidiéndoselo al agente.
+4. Abre Commit otra vez, pega el mensaje y pulsa Commit. Rocky nunca salta los hooks.
 
 ### "A rebase or a merge is in progress in this worktree. Finish it first."
 
@@ -1488,7 +1574,7 @@ actualiza.
 
 1. Termínalo o cancélalo en un terminal (`git rebase --continue` o `git rebase --abort`; `git merge --continue` o
    `git merge --abort`), o pídeselo al agente.
-2. Vuelve a abrir la hoja de commit.
+2. Vuelve a abrir el diálogo de commit.
 
 ### Un error de git en la pestaña Changes
 
@@ -1518,8 +1604,6 @@ leer cada vez que la abres.
 
 ## 22. Próximamente
 
-- **M2.8, conversaciones:** "+" abre una conversación enseguida con el último agente usado en el repositorio, y el
-  agente se elige desde el menú de modelos.
 - **M4, cuentas y energía:** la identidad de git y la llave SSH de cada cuenta, y la medición de energía de Rocky
   frente a Conductor.
 

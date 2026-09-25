@@ -73,20 +73,20 @@ struct DiffTabView: View {
             guard isUnchanged, model.diffMode(workspaceId: workspace.id, path: path) != .edit else { return }
             model.setDiffMode(.edit, workspaceId: workspace.id, path: path)
         }
-        .confirmationDialog(
-            "Discard changes to \((path as NSString).lastPathComponent)?",
-            isPresented: $asksToDiscard,
-            titleVisibility: .visible
-        ) {
-            Button("Discard Changes", role: .destructive) {
-                let model = self.model
-                let workspaceId = workspace.id
-                let path = self.path
-                Task { await model.discardChanges(workspaceId: workspaceId, paths: [path]) }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This cannot be undone.")
+        .rockyDialog(isPresented: $asksToDiscard) {
+            let model = self.model
+            let workspaceId = workspace.id
+            let path = self.path
+            return Dialog(
+                title: "Discard changes to \((path as NSString).lastPathComponent)?",
+                message: "This cannot be undone.",
+                buttons: [
+                    .cancel(),
+                    .destructive("Discard Changes") {
+                        Task { await model.discardChanges(workspaceId: workspaceId, paths: [path]) }
+                    },
+                ]
+            )
         }
     }
 

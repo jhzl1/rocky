@@ -17,6 +17,12 @@ public struct MessageHistory: Equatable, Sendable {
             self.files = files
             self.lineRange = lineRange
         }
+
+        /// No text, no file and no chip: an empty message box, which a pick in the model menu leaves where it is
+        /// (`AGM-02`, `AGM-03`).
+        public var isEmpty: Bool {
+            text.isEmpty && files.isEmpty && lineRange == nil
+        }
     }
 
     /// The conversation's user messages as entries, oldest first. A line comment is one too: before 2026-09-25 the

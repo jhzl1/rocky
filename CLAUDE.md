@@ -85,6 +85,10 @@ open build/Rocky.app
   or a working agent looks stuck. "Is the user looking at Rocky" (unread marks, the alert sound, the Dock badge) is
   `appearsActive`.
 - **Settings** is an in-app modal (`SettingsPresenter`, ⌘,), not a window.
+- **Dialogs are Rocky's own mini-modals** (`DialogPresenter`, `.rockyDialog`), never `.confirmationDialog`, `.alert`,
+  `.sheet` or `NSAlert`; the one exception is the quit prompt with no window. File pickers (`NSOpenPanel`) stay native.
+- **No scroll bar track anywhere**: `RockyApp.init()` sets `AppleShowScrollBars` to `WhenScrolling` in Rocky's own
+  defaults, so every scroll view shows only the knob, while scrolling. Never give a scroll view its own legacy style.
 - **Key monitors**: an `NSEvent` monitor added from a SwiftUI view keeps the view as it was when it was added;
   read live state through a reference (`LiveFlag`). Esc goes first to an open menu, the settings modal or a sheet,
   then stops the agent's turn.

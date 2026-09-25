@@ -1,6 +1,19 @@
 import RockyKit
 import SwiftUI
 
+/// TERM-05's fold of the terminal panel, global and kept across launches, which ⌘J, ⌃` (KBD-04), New Terminal and the
+/// settings share.
+enum TerminalPanelStorage {
+    static let collapsedKey = "terminalPanelCollapsed"
+}
+
+/// KBD-04: the panel terminal that is to take the keyboard, for the ⌃` press whose serial this is. The terminal takes
+/// it once, whether it is on screen already or appears with the panel, and the request is then dropped.
+struct TerminalFocusRequest: Equatable {
+    let sessionId: UUID
+    let serial: Int
+}
+
 /// The bottom panel of a workspace: Run, then one tab per script that ran (Setup, Run, Archive) and per terminal. It
 /// folds to its bar (⌘J) without stopping anything; choosing a tab, opening a terminal or Run unfolds it.
 /// `WorkspaceDetailView` sets its height and draws the line above it (`PanelDivider`).
@@ -13,6 +26,13 @@ struct WorkspacePanelView: View {
     /// folds or unfolds, so the animation slides it instead of resizing it on every frame, which the shell would get
     /// as a stream of window size changes.
     let openHeight: CGFloat
+    /// KBD-04: the terminal ⌃` gives the keyboard to, set by `WorkspaceDetailView` and cleared once it has it.
+    @Binding var focusRequest: TerminalFocusRequest?
+
+    /// The tab the panel shows: the chosen one, else the newest.
+    static func shownSession(among sessions: [PTYSession], selection: UUID?) -> PTYSession? {
+        sessions.first { $0.id == selection } ?? sessions.last
+    }
 
     /// The bar's height (TERM-02); folded or empty, the panel is only this. The same as the sidebar's footer.
     static var barHeight: CGFloat {
@@ -29,7 +49,7 @@ struct WorkspacePanelView: View {
 
     /// The chosen tab, else the newest one.
     private var selected: PTYSession? {
-        sessions.first { $0.id == selection } ?? sessions.last
+        Self.shownSession(among: sessions, selection: selection)
     }
 
     var body: some View {
@@ -132,7 +152,14 @@ struct WorkspacePanelView: View {
     /// ended, the end line sits under the output (TERM-03), drawn here instead of written into the PTY.
     private func terminal(for session: PTYSession) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            TerminalHostView(session: session, zoom: Zoom.shared.scale)
+            TerminalHostView(
+                session: session,
+                zoom: Zoom.shared.scale,
+                focusRequest: focusRequest?.sessionId == session.id ? focusRequest?.serial : nil,
+                onFocused: { serial in
+                    if focusRequest?.serial == serial { focusRequest = nil }
+                }
+            )
                 .id(session.id)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             if let end = ProcessOutcome(session).endLine {

@@ -6,11 +6,15 @@ import SwiftUI
 // `SettingsButton`, `SettingsMenuLabel` and `SettingsTextField` as their controls.
 
 /// The dimmed window under a settings panel, and the panel, while `isPresented`. A click on the dimmed part calls
-/// `onClose`; the presenter's own Esc monitor closes it too.
+/// `onClose`; the presenter's own Esc monitor closes it too. Rocky's mini-modals use it too (`DialogHost`, DLG-02).
 struct SettingsModalOverlay<Panel: View>: View {
     let isPresented: Bool
+    /// A mini-modal's motion (DLG-04): it closes in 120 ms, faster than it opens, and with Reduce Motion it only fades.
+    /// The settings panels keep theirs, 150 ms both ways.
+    var isDialog = false
     let onClose: () -> Void
     @ViewBuilder let panel: () -> Panel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ZStack {
@@ -21,11 +25,23 @@ struct SettingsModalOverlay<Panel: View>: View {
                     .transition(.opacity)
                 panel()
                     .padding(40)
-                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                    .transition(isDialog && reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98)))
             }
         }
         .ignoresSafeArea()
-        .animation(Theme.Motion.state, value: isPresented)
+        .animation(isDialog && !isPresented ? Theme.Motion.dialogClose : Theme.Motion.state, value: isPresented)
+    }
+}
+
+extension View {
+    /// The look of Rocky's modal panels, a settings panel's and a mini-modal's, so both match (DLG-02):
+    /// `rockyBackground` at radius 14, a 1-point `composerBorder` ring, and a black shadow at 50 %, radius 30, 12 down.
+    func modalPanel() -> some View {
+        background(Color.rockyBackground, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.composerBorder))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .shadow(color: .black.opacity(0.5), radius: 30, y: 12)
+            .accessibilityAddTraits(.isModal)
     }
 }
 
@@ -62,11 +78,7 @@ struct SettingsPanel<Content: View, Footer: View>: View {
         .font(.rocky(13))
         // As large as Settings was as a window, smaller when the window is.
         .frame(maxWidth: Zoom.shared(620), maxHeight: Zoom.shared(600))
-        .background(Color.rockyBackground, in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.composerBorder))
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-        .shadow(color: .black.opacity(0.5), radius: 30, y: 12)
-        .accessibilityAddTraits(.isModal)
+        .modalPanel()
     }
 }
 

@@ -17,6 +17,9 @@ final class MenuPresenter {
         let width: CGFloat
         /// The panel is as wide as its widest row, and never narrower than `width` (HDR-04's Create PR menu).
         var growsToFit = false
+        /// False: the content reaches the panel's edges, clipped to its shape (M2.8 Decision 7, the model menu's
+        /// agent rail, `AGM-01`).
+        var padded = true
         let content: AnyView
     }
 
@@ -94,7 +97,7 @@ struct MenuHost: View {
                         .contentShape(Rectangle())
                         .onTapGesture { presenter.dismiss() }
                     MenuPlacementLayout(anchor: anchor, placement: menu.placement, gap: Self.gap, margin: Self.margin) {
-                        MenuPanel(width: menu.width, growsToFit: menu.growsToFit) { menu.content }
+                        MenuPanel(width: menu.width, growsToFit: menu.growsToFit, padded: menu.padded) { menu.content }
                     }
                 }
                 .transition(.opacity)
@@ -132,19 +135,26 @@ private struct MenuPlacementLayout: Layout {
 }
 
 /// The panel every Rocky menu is drawn in: `width` wide, or with `growsToFit` as wide as its widest row and at least
-/// `width`.
+/// `width`. Without `padded`, the content touches the panel's edges and is clipped to its rounded shape, so a fill of
+/// its own (the model menu's agent rail) follows the corners.
 struct MenuPanel<Content: View>: View {
     let width: CGFloat
     var growsToFit = false
+    var padded = true
     @ViewBuilder let content: () -> Content
+
+    private static var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: 12)
+    }
 
     var body: some View {
         rows
             .font(.rocky(12))
-            .padding(6)
+            .padding(padded ? 6 : 0)
             .frame(width: growsToFit ? nil : width, alignment: .leading)
-            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.hairline))
+            .background(Theme.panel, in: Self.shape)
+            .modifier(PanelClip(isClipped: !padded, shape: Self.shape))
+            .overlay(Self.shape.strokeBorder(Theme.hairline))
             .shadow(color: .black.opacity(0.45), radius: 18, y: 10)
             .fixedSize(horizontal: false, vertical: true)
     }
@@ -156,6 +166,20 @@ struct MenuPanel<Content: View>: View {
             MenuFittingColumn(minWidth: max(0, width - 12)) { content() }
         } else {
             VStack(alignment: .leading, spacing: 0, content: content)
+        }
+    }
+}
+
+/// Clips an unpadded panel's content to the panel's shape; a padded panel is left as every menu was.
+private struct PanelClip: ViewModifier {
+    let isClipped: Bool
+    let shape: RoundedRectangle
+
+    func body(content: Content) -> some View {
+        if isClipped {
+            content.clipShape(shape)
+        } else {
+            content
         }
     }
 }
@@ -192,6 +216,8 @@ struct MenuButton<Label: View, Content: View>: View {
     var width: CGFloat = 240
     /// The menu is as wide as its widest row, at least `width` (`MenuPresenter.OpenMenu.growsToFit`).
     var growsToFit = false
+    /// False: no padding inside the panel (`MenuPresenter.OpenMenu.padded`).
+    var padded = true
     @ViewBuilder let label: (_ isOpen: Bool) -> Label
     @ViewBuilder let content: () -> Content
     @Environment(MenuPresenter.self) private var presenter: MenuPresenter?
@@ -205,6 +231,7 @@ struct MenuButton<Label: View, Content: View>: View {
                 placement: placement,
                 width: Zoom.shared(width),
                 growsToFit: growsToFit,
+                padded: padded,
                 content: AnyView(content())
             ))
         } label: {

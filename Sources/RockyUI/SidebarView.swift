@@ -90,28 +90,27 @@ struct SidebarView: View {
             // The search goes away with the sidebar, so ⌘1…⌘9 keep the order without it.
             publish(Self.order(of: repoSections(matching: "")))
         }
-        .confirmationDialog(
-            "Remove \(workspaceToRemove?.name ?? "")?",
-            isPresented: Binding(get: { workspaceToRemove != nil }, set: { if !$0 { workspaceToRemove = nil } }),
-            presenting: workspaceToRemove
-        ) { workspace in
-            Button("Remove Worktree", role: .destructive) {
-                Task { await model.removeWorkspace(id: workspace.id) }
-            }
-        } message: { workspace in
-            Text("Stops its agent, terminals and scripts, runs the archive script, then deletes the folder \(workspace.path). The branch \(workspace.branch) is kept. Git refuses while there are uncommitted changes.")
+        .rockyDialog(item: $workspaceToRemove) { [model] workspace in
+            Dialog(
+                title: "Remove \(workspace.name)?",
+                message: "Stops its agent, terminals and scripts, runs the archive script, then deletes the folder \(workspace.path). The branch \(workspace.branch) is kept. Git refuses while there are uncommitted changes.",
+                buttons: [
+                    .cancel(),
+                    .destructive("Remove Worktree") { Task { await model.removeWorkspace(id: workspace.id) } },
+                ]
+            )
         }
-        .alert(
-            "Archive script failed",
-            isPresented: Binding(get: { model.archiveFailure != nil }, set: { if !$0 { model.archiveFailure = nil } }),
-            presenting: model.archiveFailure
-        ) { failure in
-            Button("Remove Anyway", role: .destructive) {
-                Task { await model.removeWorkspace(id: failure.workspaceId, skipArchive: true) }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: { failure in
-            Text("\(failure.message) \(failure.workspaceName) was not removed; the Archive tab shows its output.")
+        .rockyDialog(item: Binding(get: { model.archiveFailure }, set: { model.archiveFailure = $0 })) { [model] failure in
+            Dialog(
+                title: "Archive script failed",
+                message: "\(failure.message) \(failure.workspaceName) was not removed; the Archive tab shows its output.",
+                buttons: [
+                    .cancel(),
+                    .destructive("Remove Anyway") {
+                        Task { await model.removeWorkspace(id: failure.workspaceId, skipArchive: true) }
+                    },
+                ]
+            )
         }
     }
 
@@ -419,7 +418,8 @@ struct SidebarView: View {
 
     private func commandKeyChanged(_ flags: NSEvent.ModifierFlags) {
         hideShortcutHints()
-        guard flags.intersection([.command, .shift, .option, .control]) == .command else { return }
+        // Behind a mini-modal ⌘1…⌘9 wait, and so do their hints (DLG-03): ⌘ is held there for ⌘D and ⌘Return.
+        guard flags.intersection([.command, .shift, .option, .control]) == .command, !DialogPresenter.shared.isShowing else { return }
         hintTask = Task {
             try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled else { return }

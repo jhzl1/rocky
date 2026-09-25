@@ -94,6 +94,8 @@ public struct RootView: View {
         .overlay { RepoSettingsModal(model: model) }
         // FIL-08: over the workspace and the settings, under the menus.
         .overlay { QuickOpenHost(model: model) }
+        // DLG-02: the mini-modals over everything but the menus and the toast, Settings included.
+        .overlay { DialogHost() }
         .overlay { MenuHost(presenter: menus) }
         .overlay { ToastHost(presenter: toasts) }
         .onChange(of: appearsActive, initial: true) { _, active in model.isWindowActive = active }
@@ -108,13 +110,10 @@ public struct RootView: View {
         .environment(menus)
         .environment(toasts)
         .environment(\.windowIsVisible, windowIsVisible)
-        .alert(
-            "Rocky",
-            isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })
-        ) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(model.errorMessage ?? "")
+        // DLG-01: an error, titled "Something went wrong" where the native alert said "Rocky" (the designer's call,
+        // 2026-09-25). Its message can be selected, and Return and Esc both press OK.
+        .rockyDialog(item: Binding(get: { model.errorMessage }, set: { model.errorMessage = $0 })) { message in
+            Dialog(title: "Something went wrong", message: message, isMessageSelectable: true, buttons: [.primary("OK")])
         }
     }
 

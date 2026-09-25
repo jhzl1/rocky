@@ -6,6 +6,11 @@ import Textual
 
 struct ChatView: View {
     let chat: ChatSessionModel
+    /// For the conversation's model menu (`AGM-01`…`AGM-07`), which reaches its chat through the model, and for a
+    /// draft a pick moved here (`AppModel.takePendingDraft`).
+    let model: AppModel
+    let workspaceId: String
+    let conversationId: String
     /// False while a file tab covers the conversation: the view stays, with its draft, but takes no shortcut.
     var isActive = true
     /// The slash commands the message box offers, `AppModel.commands(for:)`: the conversation's own list, or the last
@@ -44,12 +49,18 @@ struct ChatView: View {
 
     init(
         chat: ChatSessionModel,
+        model: AppModel,
+        workspaceId: String,
+        conversationId: String,
         isActive: Bool = true,
         commands: (commands: [SlashCommand], confirmed: Bool) = ([], false),
         terminal: EmbeddedTerminalHost,
         lineComment: @escaping @MainActor (LineRangeAttachment, String, [URL]) async -> LineComment
     ) {
         self.chat = chat
+        self.model = model
+        self.workspaceId = workspaceId
+        self.conversationId = conversationId
         self.isActive = isActive
         self.commands = commands.commands
         self.commandsConfirmed = commands.confirmed
@@ -136,7 +147,19 @@ struct ChatView: View {
             }
             liveActive.value = isActive
             keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { handleKey($0) }
-            if !sidebarHasKeyboardFocus { DispatchQueue.main.async { composerText.focus() } }
+            ConversationComposers.register(composerText, conversationId: conversationId)
+            // AGM-02, AGM-03: the draft a pick in the model menu moved here, taken once (M2.8 Decision 1). After this
+            // update, once the message box's text view exists.
+            let draft = model.takePendingDraft(conversationId: conversationId)
+            let focuses = !sidebarHasKeyboardFocus
+            if draft != nil || focuses {
+                DispatchQueue.main.async {
+                    if let draft { composerText.load(text: draft.text, files: draft.files, lineRange: draft.lineRange) }
+                    // A mini-modal on screen, such as the permission request this view shows as it appears, keeps the
+                    // keyboard: the message box behind it takes none (DLG-03).
+                    if focuses, !DialogPresenter.shared.isShowing { composerText.focus() }
+                }
+            }
             restoreTerminalCommand()
         }
         // CMD-08: the process ending by itself finishes the command; the terminal stays open until Done or ×.
@@ -153,14 +176,15 @@ struct ChatView: View {
             chat.isVisible = false
             if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
             keyMonitor = nil
+            ConversationComposers.unregister(composerText, conversationId: conversationId)
         }
-        .sheet(isPresented: Binding(
-            get: { chat.pendingPermission != nil },
-            set: { if !$0 { chat.answerPermission(optionId: nil) } }
-        )) {
-            if let request = chat.pendingPermission {
-                PermissionSheet(request: request) { chat.answerPermission(optionId: $0) }
-            }
+        // DLG-06: the agent's permission request, while this conversation is on screen, as the sheet was. Its answer
+        // goes to the agent; Cancel, Esc and a click outside answer no option.
+        .rockyDialog(item: Binding(
+            get: { chat.pendingPermission },
+            set: { if $0 == nil { chat.answerPermission(optionId: nil) } }
+        )) { [chat] request in
+            PermissionDialog.make(request: request, agent: chat.agent) { chat.answerPermission(optionId: $0) }
         }
     }
 
@@ -291,7 +315,7 @@ struct ChatView: View {
                 }
             }
             HStack(spacing: 8) {
-                ModelMenuButton(chat: chat)
+                ModelMenuButton(model: model, workspaceId: workspaceId, conversationId: conversationId, chat: chat)
                 if chat.isPlanMode {
                     PlanModeChip { Task { await chat.setPlanMode(false) } }
                 }
@@ -333,6 +357,9 @@ struct ChatView: View {
 
     private func send() {
         guard canSend else { return }
+        // AGM-07: sending closes the conversation's model menu, which a pick leaves open (M2.8 Decision 6).
+        let modelMenu = ModelMenuButton.menuId(conversationId: conversationId)
+        if menus?.isOpen(modelMenu) == true { menus?.dismiss() }
         // The box empties, files included, also for a terminal command.
         let message = composerText.takeMessage()
         // CMT-05 Resend: with its chip, the message is a line comment again. Its text is the comment, never a command.
@@ -437,14 +464,16 @@ struct ChatView: View {
     /// Esc stops the agent's turn, as in Claude Code; ⌘U attaches files. The message box handles its own keys
     /// (`ComposerTextView`).
     private func handleKey(_ event: NSEvent) -> NSEvent? {
-        // Quick Open takes Esc and the arrows while it shows, and ⌘U attaches nothing behind it (FIL-08). Its state is
-        // read from its presenter, a reference, at the key's time.
-        if QuickOpenPresenter.shared.isShown { return event }
+        // A mini-modal (a permission request, a confirmation, an error, the commit, DLG-01) keeps every key while it
+        // shows, Esc included, which cancels it before it could stop the turn (DLG-03), and ⌘U attaches nothing behind
+        // it. Quick Open takes Esc and the arrows while it shows, and ⌘U attaches nothing behind it (FIL-08). Their
+        // state is read from their presenters, references, at the key's time.
+        if DialogPresenter.shared.isShowing || QuickOpenPresenter.shared.isShown { return event }
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         guard liveActive.value, let window = event.window, window.isKeyWindow else { return event }
-        // A sheet (a permission request, an alert, the commit sheet, GIT-04) types in a window of its own, whose parent
-        // is this one, and so does the app-modal alert of quitting with unsaved edits: their keys are their own, Esc
-        // included, which closes them (KBD-02), and ⌘U attaches nothing behind them.
+        // A file picker types in a window of its own, and so does the app-modal alert of quitting with unsaved edits
+        // once the window was closed (DLG-05): their keys are their own, Esc included, and ⌘U attaches nothing behind
+        // them.
         if window.sheetParent != nil || NSApp.modalWindow != nil { return event }
         // A terminal with the keyboard gets every key, Esc included: the embedded terminal (CMD-08), whose Claude Code
         // screens use Esc to go back or quit, and the panel's terminals, where Esc belongs to the shell's programs.
@@ -457,11 +486,10 @@ struct ChatView: View {
         // and never stops the agent's turn (FIL-04). Its focus is read through a reference, at the key's time.
         if FileFilterFocus.hasKeyboard(in: window) { return event }
         // A diff's comment box with the keyboard gets its keys too: its Esc closes it, or asks first with text (CMT-02).
-        // KBD-02's order for Esc: an open menu, the settings, a sheet, the comment box, the filter, then the turn.
+        // KBD-02's order for Esc: an open menu, a mini-modal, the settings, the comment box, the filter, then the turn.
         if CommentComposerFocus.hasKeyboard(in: window) { return event }
-        // An open menu, the settings, a repository's settings, sheets (a permission request, an alert) and the slash
-        // command popup keep Esc for closing themselves (CMD-03). The popup's state is read from the controller, a
-        // reference, at the key's time.
+        // An open menu, the settings, a repository's settings and the slash command popup keep Esc for closing
+        // themselves (CMD-03). The popup's state is read from the controller, a reference, at the key's time.
         if event.keyCode == 53, modifiers.isEmpty, chat.state == .running, menus?.open == nil,
            !SettingsPresenter.shared.isPresented, !RepoSettingsPresenter.shared.isPresented, window.attachedSheet == nil,
            !composerText.popup.isOpen {
@@ -623,28 +651,48 @@ struct TurnFooterRow: View {
     }
 }
 
-struct PermissionSheet: View {
-    let request: PermissionRequest
-    let answer: (String?) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Permission needed").font(.rocky(13, weight: .semibold))
-            Text(request.title).textSelection(.enabled)
-            HStack {
-                Button("Cancel") { answer(nil) }.clickable()
-                Spacer()
-                ForEach(request.options) { option in
-                    if option.kind.hasPrefix("allow") {
-                        Button(option.name) { answer(option.id) }.buttonStyle(.borderedProminent).clickable()
-                    } else {
-                        Button(option.name) { answer(option.id) }.clickable()
-                    }
+/// DLG-06's permission request, the large mini-modal, 460 wide: the agent's mark and "Permission needed", the request's
+/// title in a mono block, and the buttons in `PermissionRequest.buttons`' order: Cancel and the rejects at the left, then
+/// at the right Always Allow and Allow, which Return presses.
+@MainActor
+enum PermissionDialog {
+    /// `answer` gets the option's id, or nil for Cancel.
+    static func make(request: PermissionRequest, agent: AgentKind, answer: @escaping @MainActor (String?) -> Void) -> Dialog {
+        Dialog(
+            title: "Permission needed",
+            agent: agent,
+            width: 460,
+            content: { AnyView(PermissionRequestBlock(text: request.title)) },
+            buttons: request.buttons.map { button in
+                DialogAction(title: button.option?.name ?? "Cancel", role: button.role, isLeading: button.isLeading) {
+                    answer(button.option?.id)
                 }
             }
+        )
+    }
+}
+
+/// The request's title, what the agent wants to run or change: 12.5 mono on `fillControl`, radius 8, padding 10,
+/// selectable, up to ten lines, then it scrolls (DLG-06).
+private struct PermissionRequestBlock: View {
+    let text: String
+
+    private static var tenLines: CGFloat {
+        let font = NSFont.monospacedSystemFont(ofSize: Zoom.shared(12.5), weight: .regular)
+        return ceil(font.ascender - font.descender + font.leading) * 10
+    }
+
+    var body: some View {
+        FittingScrollView(maxHeight: Self.tenLines + 20) {
+            Text(text)
+                .font(.rocky(12.5, design: .monospaced))
+                .foregroundStyle(Theme.textPrimary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
         }
-        .padding(20)
-        .frame(minWidth: 420)
+        .background(Theme.fillControl, in: RoundedRectangle(cornerRadius: 8))
     }
 }
 

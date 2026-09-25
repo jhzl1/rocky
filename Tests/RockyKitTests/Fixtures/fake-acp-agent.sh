@@ -1,8 +1,14 @@
 #!/bin/bash
 # Scripted ACP agent for ChatSessionModel tests.
 # Answers initialize, session/new, session/load (replaying one old message first), session/prompt and
-# session/set_config_option. session/new offers two models ("default", "opus"), two effort levels
-# ("low", "high") and two modes ("default", "plan") as Claude's adapter does; set_config_option answers without the list.
+# session/set_config_option. session/new and session/load offer the agent's models, the current model's effort levels
+# and two modes ("default", "plan"); set_config_option answers with the whole new list, as both adapters do (AGM-07).
+# FAKE_ACP_AGENT picks the lists (AGM-02):
+#   claude (the default): "default" (Default: Low, High; starts at High) and "opus" (Opus: Low, Medium, High, Max;
+#   starts at Medium).
+#   opencode: "claude-sonnet-5" (Claude Sonnet 5: High, Max, Default), "gpt-5.5" (GPT-5.5: Minimal, Low, Medium, High,
+#   Default), both starting at Default, and "qwen3-coder" (Qwen3 Coder), with no effort option.
+# A model change resets the effort to the new model's starting level, as OpenCode does.
 # The prompt's tool t1 is an "execute" call.
 # A prompt streams "Hel" + "lo", announces tool t1, asks permission, then reports t1 completed or failed.
 # FAKE_ACP_LOAD_SESSION=false makes initialize report loadSession=false.
@@ -19,12 +25,52 @@
 # with Claude's counts (+2 −1) in an update with only content, then completed; t3 completes without content, so its
 # optimistic diff stands (+3 −2). Rejected: t2 fails with a text content, and t3 fails.
 # A prompt "update edits" then sends t2 completed again without content, and t3 new content (+1 −1), and ends the turn.
+# A prompt "add a model" adds "haiku" (Haiku, no effort option) to the models, announces the list in a
+# config_option_update, and ends the turn.
 # FAKE_ACP_LOG=<file> appends every line the agent receives to that file, to tell what reached it.
 load_session="${FAKE_ACP_LOAD_SESSION:-true}"
 load_fails="${FAKE_ACP_LOAD_FAILS:-false}"
 asks="${FAKE_ACP_ASKS:-false}"
 commands_early="${FAKE_ACP_COMMANDS_EARLY:-false}"
 log="${FAKE_ACP_LOG:-}"
+agent="${FAKE_ACP_AGENT:-claude}"
+if [[ $agent == opencode ]]; then
+  models='[{"value":"claude-sonnet-5","name":"Claude Sonnet 5"},{"value":"gpt-5.5","name":"GPT-5.5"},{"value":"qwen3-coder","name":"Qwen3 Coder"}]'
+  model=claude-sonnet-5
+else
+  models='[{"value":"default","name":"Default"},{"value":"opus","name":"Opus"}]'
+  model=default
+fi
+# The effort levels of model $1, as a JSON list; nothing for a model without levels.
+efforts_of() {
+  case "$1" in
+    default) echo '[{"value":"low","name":"Low"},{"value":"high","name":"High"}]' ;;
+    opus) echo '[{"value":"low","name":"Low"},{"value":"medium","name":"Medium"},{"value":"high","name":"High"},{"value":"max","name":"Max"}]' ;;
+    claude-sonnet-5) echo '[{"value":"high","name":"High"},{"value":"max","name":"Max"},{"value":"default","name":"Default"}]' ;;
+    gpt-5.5) echo '[{"value":"minimal","name":"Minimal"},{"value":"low","name":"Low"},{"value":"medium","name":"Medium"},{"value":"high","name":"High"},{"value":"default","name":"Default"}]' ;;
+  esac
+}
+# The level model $1 starts at.
+starting_effort_of() {
+  case "$1" in
+    default) echo high ;;
+    opus) echo medium ;;
+    claude-sonnet-5|gpt-5.5) echo default ;;
+  esac
+}
+effort=$(starting_effort_of "$model")
+mode=default
+# The session's whole option list, from the state above.
+options() {
+  local list="[{\"id\":\"model\",\"name\":\"Model\",\"category\":\"model\",\"type\":\"select\",\"currentValue\":\"$model\",\"options\":$models}"
+  local levels
+  levels=$(efforts_of "$model")
+  if [[ -n $levels ]]; then
+    list+=",{\"id\":\"effort\",\"name\":\"Effort\",\"category\":\"thought_level\",\"type\":\"select\",\"currentValue\":\"$effort\",\"options\":$levels}"
+  fi
+  list+=",{\"id\":\"mode\",\"name\":\"Mode\",\"category\":\"mode\",\"type\":\"select\",\"currentValue\":\"$mode\",\"options\":[{\"value\":\"default\",\"name\":\"Manual\"},{\"value\":\"plan\",\"name\":\"Plan\"}]}]"
+  echo "$list"
+}
 update() {
   echo "{\"jsonrpc\":\"2.0\",\"method\":\"session/update\",\"params\":{\"sessionId\":\"fake-1\",\"update\":$1}}"
 }
@@ -42,22 +88,40 @@ while IFS= read -r line; do
       # Before the result: the client has no session id yet and drops it.
       update '{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"too early"}}'
       if [[ $commands_early == true ]]; then update "$commands"; fi
-      echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"sessionId\":\"fake-1\",\"configOptions\":[{\"id\":\"model\",\"name\":\"Model\",\"category\":\"model\",\"type\":\"select\",\"currentValue\":\"default\",\"options\":[{\"value\":\"default\",\"name\":\"Default\"},{\"value\":\"opus\",\"name\":\"Opus\"}]},{\"id\":\"effort\",\"name\":\"Effort\",\"category\":\"thought_level\",\"type\":\"select\",\"currentValue\":\"high\",\"options\":[{\"value\":\"low\",\"name\":\"Low\"},{\"value\":\"high\",\"name\":\"High\"}]},{\"id\":\"mode\",\"name\":\"Mode\",\"category\":\"mode\",\"type\":\"select\",\"currentValue\":\"default\",\"options\":[{\"value\":\"default\",\"name\":\"Manual\"},{\"value\":\"plan\",\"name\":\"Plan\"}]}]}}"
+      echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"sessionId\":\"fake-1\",\"configOptions\":$(options)}}"
       if [[ $commands_early != true ]]; then update "$commands"; fi
       ;;
     *'"method":"session/set_config_option"'*)
-      echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"configOptions\":[]}}"
+      config=""
+      value=""
+      if [[ $line =~ \"configId\":\"([^\"]+)\" ]]; then config="${BASH_REMATCH[1]}"; fi
+      if [[ $line =~ \"value\":\"([^\"]+)\" ]]; then value="${BASH_REMATCH[1]}"; fi
+      case "$config" in
+        model)
+          model="$value"
+          effort=$(starting_effort_of "$model")
+          ;;
+        effort) effort="$value" ;;
+        mode) mode="$value" ;;
+      esac
+      echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"configOptions\":$(options)}}"
       ;;
     *'"method":"session/load"'*)
       if [[ $load_fails == true ]]; then
         echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"error\":{\"code\":-32002,\"message\":\"Resource not found\"}}"
       else
         update '{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"replayed"}}'
-        echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":null}"
+        echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"configOptions\":$(options)}}"
         update "$commands"
       fi
       ;;
     *'"method":"session/prompt"'*)
+      if [[ $line == *'"text":"add a model"'* ]]; then
+        models="${models%]},{\"value\":\"haiku\",\"name\":\"Haiku\"}]"
+        update "{\"sessionUpdate\":\"config_option_update\",\"configOptions\":$(options)}"
+        echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"stopReason\":\"end_turn\"}}"
+        continue
+      fi
       if [[ $line == *'"text":"change commands"'* ]]; then
         update "$changed_commands"
         echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"stopReason\":\"end_turn\"}}"

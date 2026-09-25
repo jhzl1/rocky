@@ -21,32 +21,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Asks about unsaved edits first (EDIT-02), then stops every agent, terminal and script before quitting, so none
-    /// keeps running (and using energy) after Rocky. Save All that cannot save a file (it changed on disk, or the write
-    /// failed) cancels the quit and shows that file's tab, with its banner.
+    /// keeps running (and using energy) after Rocky. With the window, the question is Rocky's own mini-modal on it, and
+    /// its answer replies later (DLG-05); with no window, the native alert. Save All that cannot save a file (it changed
+    /// on disk, or the write failed) cancels the quit and shows that file's tab, with its banner.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model else { return .terminateNow }
+        // A second Quit while the prompt waits (Rocky ▸ Quit, clicked): the prompt already holds this quit.
+        if DialogPresenter.shared.isAskingToQuit { return .terminateCancel }
         let unsaved = model.unsavedEditors()
-        let answer: UnsavedEditsAnswer = unsaved.isEmpty ? .dontSave : Self.askAboutUnsavedEdits(unsaved)
-        if answer == .cancel { return .terminateCancel }
-        let saving = answer == .saveAll ? unsaved : []
-        Task {
-            if !saving.isEmpty, let first = await model.saveEditors(saving).first {
-                model.showUnsavedEditor(first)
-                sender.reply(toApplicationShouldTerminate: false)
-                return
-            }
-            await model.stopAllProcesses()
-            sender.reply(toApplicationShouldTerminate: true)
+        if unsaved.isEmpty {
+            quit(saving: [])
+            return .terminateLater
         }
+        let asked = DialogPresenter.shared.askToQuit(unsaved: unsaved) { [weak self] answer in
+            self?.answerQuitPrompt(answer, unsaved: unsaved)
+        }
+        if asked { return .terminateLater }
+        let answer = Self.askAboutUnsavedEdits(unsaved)
+        if answer == .cancel { return .terminateCancel }
+        quit(saving: answer == .saveAll ? unsaved : [])
         return .terminateLater
     }
 
-    enum UnsavedEditsAnswer {
-        case saveAll, dontSave, cancel
+    /// DLG-05: the mini-modal's answer, while AppKit waits for the reply.
+    private func answerQuitPrompt(_ answer: UnsavedEditsAnswer, unsaved: [UnsavedEditor]) {
+        switch answer {
+        case .saveAll: quit(saving: unsaved)
+        case .dontSave: quit(saving: [])
+        case .cancel: NSApp.reply(toApplicationShouldTerminate: false)
+        }
     }
 
-    /// The unsaved edits prompt, in the words of a tab's (`UnsavedChangesPrompt`): the files, then Save All, Cancel and
-    /// Don't Save. An app-modal alert, so it shows with or without a window (⌘W closes the window, not Rocky).
+    /// Saves `saving` first, then stops every process and lets Rocky quit. A file that cannot be saved cancels the quit
+    /// and shows its tab.
+    private func quit(saving: [UnsavedEditor]) {
+        guard let model else {
+            NSApp.reply(toApplicationShouldTerminate: true)
+            return
+        }
+        Task {
+            if !saving.isEmpty, let first = await model.saveEditors(saving).first {
+                model.showUnsavedEditor(first)
+                NSApp.reply(toApplicationShouldTerminate: false)
+                return
+            }
+            await model.stopAllProcesses()
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+    }
+
+    /// The unsaved edits prompt with no window (⌘W closes the window, not Rocky), the one native dialog left (DLG-05):
+    /// an app-modal alert in the words of a tab's (`UnsavedChangesPrompt`), the files, then Save All, Cancel and Don't
+    /// Save.
     private static func askAboutUnsavedEdits(_ unsaved: [UnsavedEditor]) -> UnsavedEditsAnswer {
         let alert = NSAlert()
         alert.messageText = UnsavedChangesPrompt.title(for: unsaved, quitting: true)
@@ -125,6 +151,7 @@ struct RockyApp: App {
                     SidebarCommand()
                     PullRequestPanelCommand(model: model)
                     ChangesTabCommand(model: model)
+                    TerminalToggleCommand(model: model)
                 }
                 Section {
                     ChangedFileCommands(model: model)
@@ -361,6 +388,25 @@ private struct ChangesTabCommand: View {
             }
         }
         .keyboardShortcut("c", modifiers: [.command, .shift])
+        .disabled(model.selectedWorkspace == nil)
+    }
+}
+
+/// View ▸ Toggle Terminal (⌃`, KBD-04), VS Code's pair to ⌘J's Toggle Panel (user request, 2026-09-25): from a terminal
+/// of the panel it folds the panel and gives the keyboard back to the selected tab; from anywhere else it unfolds the
+/// panel on a terminal and gives it the keyboard. The panel's selection and fold are the workspace view's, so the
+/// command only asks, through the model (M2.8 Decision 11). A menu command, so it reaches a terminal with the keyboard
+/// before the shell does, as ⌘J does; the shell no longer gets ⌃` (NUL), which ⌃Space still sends. Off without a
+/// selected workspace.
+private struct TerminalToggleCommand: View {
+    let model: AppModel
+
+    var body: some View {
+        Button("Toggle Terminal") {
+            guard let workspaceId = model.selectedWorkspaceId else { return }
+            model.requestTerminalToggle(workspaceId: workspaceId)
+        }
+        .keyboardShortcut("`", modifiers: .control)
         .disabled(model.selectedWorkspace == nil)
     }
 }

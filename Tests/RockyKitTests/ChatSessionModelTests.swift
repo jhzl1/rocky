@@ -660,6 +660,119 @@ struct ChatSessionModelTests {
         await model.stop()
     }
 
+    // MARK: Models and effort (AGM-02…AGM-07)
+
+    /// AGM-04: every new list of models reaches the hook: the session's first, and one a later update announces. A
+    /// change of the current model or the effort leaves the list as it is and reports nothing.
+    @Test func eachNewListOfModelsIsReported() async throws {
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(), flushInterval: .zero)
+        var reported: [[String]] = []
+        model.onModelOption = { reported.append($0.choices.map(\.value)) }
+        await model.start()
+        #expect(reported == [["default", "opus"]])
+
+        await model.setOption(SessionConfigOption.model, to: "opus")
+        await model.setOption(SessionConfigOption.effort, to: "max")
+        #expect(reported == [["default", "opus"]])
+
+        await model.send("add a model")
+        try await waitUntil { reported.count == 2 }
+        #expect(reported.last == ["default", "opus", "haiku"])
+        await model.stop()
+    }
+
+    /// AGM-04: a resumed session reports its models too (`session/load`).
+    @Test func aResumedSessionReportsItsModels() async {
+        let history = [ChatItem(kind: .user, text: "earlier")]
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(), history: history, resumeSessionId: "fake-1", flushInterval: .zero)
+        var reported: [[String]] = []
+        model.onModelOption = { reported.append($0.choices.map(\.value)) }
+        await model.start()
+        #expect(model.sessionId == "fake-1")
+        #expect(reported == [["default", "opus"]])
+        await model.stop()
+    }
+
+    /// The lines the fake agent received that set an option.
+    private func optionChanges(_ log: URL) -> [String] {
+        received(log).filter { $0.contains("session/set_config_option") }
+    }
+
+    /// KIT-11, AGM-02: the picked model is set once, as soon as the session reports its options and before the agent is
+    /// ready; a restart does not set it again.
+    @Test func thePendingModelIsSetOnceWhenTheOptionsArrive() async throws {
+        let log = Fixtures.stderrLog()
+        var chat: ChatSessionModel?
+        var modelWhenReady: String?
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(log: log), flushInterval: .zero, onSessionReady: { _ in
+            modelWhenReady = chat?.option(SessionConfigOption.model)?.current
+        })
+        chat = model
+        model.pendingModel = SessionConfigOption.Choice(value: "opus", name: "Opus")
+        await model.start()
+        #expect(modelWhenReady == "opus")
+        #expect(model.pendingModel == nil)
+        #expect(optionChanges(log).count == 1)
+
+        await model.restart()
+        #expect(model.state == .ready)
+        #expect(optionChanges(log).count == 1)
+        await model.stop()
+    }
+
+    /// AGM-02: a model the agent does not list leaves its default, and the toast says which one it uses.
+    @Test func aPendingModelTheAgentDoesNotHaveKeepsItsDefault() async throws {
+        let log = Fixtures.stderrLog()
+        let model = ChatSessionModel(agent: .opencode, launch: Fixtures.fakeACPLaunch(agent: .opencode, log: log), flushInterval: .zero)
+        var toasts: [String] = []
+        model.onToast = { toasts.append($0) }
+        model.pendingModel = SessionConfigOption.Choice(value: "openai/gpt-5.5", name: "GPT-5.5")
+        await model.start()
+        #expect(model.state == .ready)
+        #expect(model.option(SessionConfigOption.model)?.current == "claude-sonnet-5")
+        #expect(toasts == ["GPT-5.5 isn't available in OpenCode; using Claude Sonnet 5"])
+        #expect(optionChanges(log).isEmpty)
+        #expect(model.pendingModel == nil)
+        await model.stop()
+    }
+
+    /// AGM-07: after a model change the effort is what the agent answered, with the new model's levels in its order,
+    /// never the level picked before; a model without levels has no effort option.
+    @Test func afterAModelChangeTheEffortIsTheOneTheAgentAnswered() async throws {
+        let model = ChatSessionModel(agent: .opencode, launch: Fixtures.fakeACPLaunch(agent: .opencode), flushInterval: .zero)
+        await model.start()
+        #expect(model.option(SessionConfigOption.effort)?.choices.map(\.name) == ["High", "Max", "Default"])
+        await model.setOption(SessionConfigOption.effort, to: "high")
+        #expect(model.option(SessionConfigOption.effort)?.current == "high")
+
+        await model.setOption(SessionConfigOption.model, to: "gpt-5.5")
+        let effort = try #require(model.option(SessionConfigOption.effort))
+        #expect(effort.choices.map(\.name) == ["Minimal", "Low", "Medium", "High", "Default"])
+        #expect(effort.current == "default")
+
+        await model.setOption(SessionConfigOption.model, to: "qwen3-coder")
+        #expect(model.option(SessionConfigOption.effort) == nil)
+
+        await model.setOption(SessionConfigOption.model, to: "claude-sonnet-5")
+        #expect(model.option(SessionConfigOption.effort)?.current == "default")
+        await model.stop()
+    }
+
+    /// M2.8 Decision 3: an agent stopped while it starts (AGM-02 stops the conversation's old agent at once) stays
+    /// "Stopped", with no failure and no session reported to the store.
+    @Test func stoppingWhileStartingStaysStopped() async throws {
+        var ready: [String] = []
+        let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(), flushInterval: .zero, onSessionReady: { ready.append($0) })
+        let starting = Task { await model.start() }
+        for _ in 0..<10_000 where model.state == .idle { await Task.yield() }
+        try #require(model.state == .starting)
+        await model.stop()
+        await starting.value
+        #expect(model.state == .stopped("Stopped"))
+        #expect(model.failure == nil)
+        #expect(ready.isEmpty)
+    }
+
     /// A Refresh while the agent is still starting waits for that start to end, then starts again.
     @Test func restartWhileStartingStartsAgain() async throws {
         let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(), flushInterval: .zero)

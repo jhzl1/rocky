@@ -218,9 +218,8 @@ struct LineCommentBox: View {
         .task { isFocused = true }
         .onChange(of: isFocused, initial: true) { _, focused in CommentComposerFocus.isFocused = focused }
         .onDisappear { CommentComposerFocus.isFocused = false }
-        .confirmationDialog("Discard this comment?", isPresented: $commenting.asksToDiscard, titleVisibility: .visible) {
-            Button("Discard", role: .destructive) { commenting.cancel() }
-            Button("Keep Editing", role: .cancel) {}
+        .rockyDialog(isPresented: $commenting.asksToDiscard) { [commenting] in
+            Dialog(title: "Discard this comment?", buttons: [.cancel("Keep Editing"), .destructive("Discard") { commenting.cancel() }])
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Comment on \(range.rangeLabel)")

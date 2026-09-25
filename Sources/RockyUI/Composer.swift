@@ -49,6 +49,15 @@ final class ComposerController {
         textView?.load(MessageHistory.Entry(text: text, files: files, lineRange: lineRange))
     }
 
+    /// The unsent message as it would come back with ↑, left in the box: its text, its files and its chip. nil for an
+    /// empty box. A pick of another agent's model moves it to the conversation that takes over (`AGM-02`, `AGM-03`).
+    var draft: MessageHistory.Entry? {
+        guard let textView else { return nil }
+        let message = textView.message()
+        let entry = MessageHistory.Entry(text: message.text, files: message.files.map(\.path), lineRange: message.lineRange)
+        return entry.isEmpty ? nil : entry
+    }
+
     /// The message to send, its files and its line chip's range, then an empty box. Each file's place in the text is a
     /// `PromptAttachment.marker`; the chip has none.
     func takeMessage() -> ComposerMessage {
@@ -138,6 +147,29 @@ final class ComposerController {
         guard let choice = popup.choose(isReturn: true) else { return }
         focus()
         textView?.apply(choice)
+    }
+}
+
+/// The message box of each conversation on screen, by conversation id. The model menu captures its content when it
+/// opens and outlives the `ChatView` an agent switch rebuilds (`AGM-02`), so it looks the box up at each pick, as it
+/// looks up the chat (M2.8 Decision 4), to move its draft (`AGM-02`, `AGM-03`); ⌃` gives the keyboard back to it
+/// (`KBD-04`). Held weakly: a box that went with its view is never found.
+@MainActor
+enum ConversationComposers {
+    private static let controllers = NSMapTable<NSString, ComposerController>.strongToWeakObjects()
+
+    static func register(_ controller: ComposerController, conversationId: String) {
+        controllers.setObject(controller, forKey: conversationId as NSString)
+    }
+
+    /// Only the box registered last goes: the view a switch rebuilt may have registered its own already.
+    static func unregister(_ controller: ComposerController, conversationId: String) {
+        guard controllers.object(forKey: conversationId as NSString) === controller else { return }
+        controllers.removeObject(forKey: conversationId as NSString)
+    }
+
+    static func controller(conversationId: String) -> ComposerController? {
+        controllers.object(forKey: conversationId as NSString)
     }
 }
 

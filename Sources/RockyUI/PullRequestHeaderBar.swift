@@ -369,19 +369,19 @@ private struct ArchiveButton: View {
         .buttonStyle(HeaderButtonStyle(kind: .archive))
         .disabled(running || isChecking)
         .help("Run the archive script and remove the worktree; the branch is kept")
-        .confirmationDialog(
-            AppModel.archiveQuestion(workspaceName: workspace.name, uncommitted: uncommitted ?? 0),
-            isPresented: Binding(get: { uncommitted != nil }, set: { if !$0 { uncommitted = nil } }),
-            titleVisibility: .visible
-        ) {
-            Button("Archive", role: .destructive) {
-                let model = self.model
-                let workspaceId = workspace.id
-                Task { await model.archiveMergedWorkspace(workspaceId: workspaceId, stashingChanges: true) }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Rocky puts them in a git stash of the repository first, then removes the worktree. The branch \(workspace.branch) is kept.")
+        .rockyDialog(item: $uncommitted) { count in
+            let model = self.model
+            let workspaceId = workspace.id
+            return Dialog(
+                title: AppModel.archiveQuestion(workspaceName: workspace.name, uncommitted: count),
+                message: "Rocky puts them in a git stash of the repository first, then removes the worktree. The branch \(workspace.branch) is kept.",
+                buttons: [
+                    .cancel(),
+                    .destructive("Archive") {
+                        Task { await model.archiveMergedWorkspace(workspaceId: workspaceId, stashingChanges: true) }
+                    },
+                ]
+            )
         }
     }
 

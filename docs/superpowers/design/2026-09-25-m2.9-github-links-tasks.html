@@ -1,0 +1,904 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rocky · GitHub links and tasks spec</title>
+<!--
+==========================================================================================================
+HOW TO READ THIS FILE (for the agent that implements it)
+==========================================================================================================
+Visual, behavioral and technical source of truth for M2.9. dev-1 writes the plan from these requirement ids
+(docs/superpowers/plans/2026-09-25-m2.9-github-links-tasks.md).
+
+- What changes: (A) the message box's "+" links a GitHub issue, pull request or branch: the issue or pull request
+  arrives as a Markdown file attached like a pasted image, and a pull request or branch switches the worktree to
+  it. (B) The terminal panel's Run button runs VS Code tasks from .vscode/tasks.json, with their dependencies,
+  background readiness patterns and input pickers.
+- User decisions (2026-09-25, relayed by dev-1): no modal before the worktree, the link lives in "+"; the chip
+  looks like an attached image; Rocky never renames branches, writes "closes #N" or edits a pull request (the
+  agent does that from its own CLAUDE.md / AGENTS.md); the workspace's name comes from the issue; only tasks.json,
+  never launch.json; Run becomes a split button whose click runs the Run script or the last task used, and whose
+  menu hides tasks whose label starts with "_".
+- The sidebar, tabs, chat, message box and terminal panel are M2.5's, M2.7's and M2.8's, simplified. Only the "+"
+  menu, the picker, the chips, the Run split button, its menus and the task tabs are specified here.
+- Requirement ids: GHL (GitHub links), TSK (tasks), KIT (RockyKit), OUT. Pins: button "Requirement pins". When the
+  mock and a requirement's text disagree, the text wins.
+==========================================================================================================
+-->
+<style>
+:root {
+  --page: #131519; --bg: #23272E; --sidebar: #1E2127; --panel: #1A1D22; --composer: #2A2F37; --composer-border: rgba(255,255,255,0.10);
+  --hairline: rgba(255,255,255,0.08); --hairline-soft: rgba(255,255,255,0.06); --panel-bar: rgba(255,255,255,0.03);
+  --text: #E6E8EB; --text-2: #A3A9B1; --text-3: #858C95; --sep: #5C636C;
+  --fill-hover: rgba(255,255,255,0.04); --fill-selected: rgba(255,255,255,0.08); --fill-control: rgba(255,255,255,0.05);
+  --fill-icon-hover: rgba(255,255,255,0.06); --fill-button: rgba(255,255,255,0.08); --fill-button-hover: rgba(255,255,255,0.12);
+  --accent: #78BDF5; --attention: #E8A94B; --danger: #F0876A; --success: #7CC08A; --merged: #B48CF2;
+  --titlebar: 38px; --row: 28px; --r-row: 7px; --r-btn: 6px;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --dur-fast: 120ms; --dur-base: 150ms; --dur-enter: 220ms; --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--page); color: var(--text); font: 13px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; -webkit-font-smoothing: antialiased; display: flex; overflow: hidden; }
+[hidden] { display: none !important; }
+button { font: inherit; color: inherit; background: none; border: 0; margin: 0; padding: 0; text-align: left; cursor: pointer; }
+button:disabled { cursor: default; opacity: 0.45; }
+input { font: inherit; color: inherit; }
+svg { display: block; flex-shrink: 0; }
+code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 4px; }
+.grow { flex-grow: 1; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.stage { flex: 1 0 auto; overflow: auto; padding: 20px 24px 48px; }
+.doc-title { width: 1100px; margin: 0 0 4px; font-size: 18px; font-weight: 600; }
+.doc-sub { width: 1100px; margin: 0 0 14px; color: var(--text-2); font-size: 12.5px; line-height: 1.5; }
+.demo { width: 1100px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
+.demo-label { font-size: 10.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.07em; margin-right: 4px; }
+.demo button { height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.14); color: var(--text-2); font-size: 12px; }
+.demo button:hover { color: var(--text); border-color: rgba(255,255,255,0.3); }
+.demo button[aria-pressed="true"] { background: rgba(120,189,245,0.14); border-color: rgba(120,189,245,0.55); color: var(--text); }
+
+/* window: the M2.5 / M2.7 shell, simplified */
+.window { position: relative; width: 1100px; height: 760px; display: flex; background: var(--bg); border-radius: 10px; overflow: hidden; box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 24px 60px rgba(0,0,0,0.45); }
+.lights { display: inline-flex; gap: 8px; } .light { width: 12px; height: 12px; border-radius: 50%; }
+.light.close { background: #FF5F57; } .light.min { background: #FEBC2E; } .light.zoom { background: #28C840; }
+.sidebar { width: 240px; flex-shrink: 0; display: flex; flex-direction: column; background: var(--sidebar); border-right: 1px solid var(--hairline); }
+.sb-top { height: var(--titlebar); display: flex; align-items: center; padding: 0 16px; }
+.sb-list { flex-grow: 1; overflow-y: auto; padding: 4px 8px; display: flex; flex-direction: column; gap: 2px; }
+.repo { height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 8px; margin-top: 8px; font-weight: 600; }
+.monogram { width: 16px; height: 16px; border-radius: 4px; color: #fff; font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.row { width: 100%; height: var(--row); display: flex; align-items: center; gap: 8px; padding: 0 8px 0 32px; border-radius: var(--r-row); transition: background var(--dur-fast); }
+.row span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .city { color: var(--text-3); font-size: 11.5px; flex-shrink: 0; }
+.row:hover { background: var(--fill-hover); } .row.selected { background: var(--fill-selected); }
+.row.renamed span:first-child { animation: enter var(--dur-enter) var(--ease-out) both; }
+.main { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; }
+.topbar { height: var(--titlebar); flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 0 12px 0 16px; }
+.crumb { color: var(--text-2); } .br { font: 12px var(--mono); display: inline-flex; align-items: center; gap: 5px; }
+.br.changed { animation: flash-text 900ms ease-out; }
+@keyframes flash-text { 0% { color: var(--accent); } 100% { color: var(--text); } }
+.tabs { height: 34px; flex-shrink: 0; display: flex; align-items: stretch; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--hairline); }
+.tab-wrap { position: relative; display: flex; align-items: center; }
+.tab-wrap.selected::before { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--text); }
+.tab { height: 100%; display: flex; align-items: center; gap: 7px; padding: 0 12px 0 10px; font-size: 12.5px; color: var(--text); }
+.agent { width: 14px; height: 14px; border-radius: 4px; font-size: 9px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: #1E2127; background: #D97757; }
+.chat { flex-grow: 1; min-height: 0; overflow-y: auto; padding: 18px 24px 10px; display: flex; flex-direction: column; align-items: center; }
+.col { width: 100%; max-width: 620px; display: flex; flex-direction: column; gap: 14px; font-size: 14px; }
+.chat-empty { color: var(--text-3); text-align: center; margin-top: 70px; font-size: 13px; line-height: 1.6; }
+.msg-user { align-self: flex-end; max-width: 480px; padding: 10px 14px; border-radius: 12px; background: rgba(255,255,255,0.06); line-height: 1.5; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.msg-user .chips-line { display: flex; flex-wrap: wrap; gap: 6px; }
+.msg-agent { line-height: 1.6; color: #D5D8DC; }
+.enter { animation: enter var(--dur-enter) var(--ease-out) both; }
+@keyframes enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.spinner { animation: spin 0.9s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
+.composer-wrap { flex-shrink: 0; display: flex; justify-content: center; padding: 6px 24px 12px; position: relative; }
+.composer { width: 100%; max-width: 620px; border-radius: 12px; background: var(--composer); border: 1px solid var(--composer-border); padding: 10px 12px 8px; display: flex; flex-direction: column; gap: 8px; }
+.c-text { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 24px; }
+.c-text input { flex: 1 1 160px; min-width: 120px; border: 0; outline: none; background: transparent; font-size: 14px; padding: 2px; }
+.c-text input::placeholder { color: var(--text-3); }
+.c-row { display: flex; align-items: center; gap: 8px; }
+.model-btn { height: 26px; display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; border-radius: 6px; background: rgba(255,255,255,0.06); font-size: 12px; }
+.model-btn .dim { color: var(--text-2); }
+.c-plus { width: 28px; height: 28px; margin-left: auto; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r-btn); color: var(--text-2); transition: background var(--dur-fast), color var(--dur-fast); }
+.c-plus:hover, .c-plus.on { background: var(--fill-icon-hover); color: var(--text); }
+.send { width: 28px; height: 28px; border-radius: 7px; background: rgba(255,255,255,0.1); display: flex; align-items: center; justify-content: center; color: var(--text-2); }
+.send.ready { background: #FFFFFF; color: #111316; }
+
+/* GHL-04: the attachment chip, as a pasted image's (FileBadge) with the GitHub mark */
+.fchip { height: 22px; display: inline-flex; align-items: center; border-radius: 6px; background: rgba(255,255,255,0.04); box-shadow: inset 0 0 0 1px var(--hairline); font-size: 12px; color: var(--text); overflow: hidden; }
+.fchip .seg { width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; border-right: 1px solid var(--hairline); color: var(--text); }
+.fchip .nm { padding: 0 8px; white-space: nowrap; }
+.fchip.enter { animation: enter var(--dur-enter) var(--ease-out) both; }
+
+/* terminal panel (M2.5 TERM, M2.7 LAY-01's Run in its bar) */
+.panel { height: 190px; flex-shrink: 0; display: flex; flex-direction: column; border-top: 1px solid var(--hairline); background: var(--bg); }
+.pbar { height: 36px; flex-shrink: 0; display: flex; align-items: center; gap: 4px; padding: 0 6px 0 8px; background: var(--panel-bar); border-bottom: 1px solid var(--hairline); }
+.pbar .sep { width: 1px; height: 16px; background: var(--hairline); margin: 0 4px; }
+.run-mini { height: 24px; display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; border-radius: 5px; background: var(--fill-button); color: var(--text); font-size: 12px; font-weight: 500; white-space: nowrap; transition: background var(--dur-fast); }
+.run-mini:hover { background: var(--fill-button-hover); }
+.run-split { display: inline-flex; align-items: stretch; height: 24px; border-radius: 5px; overflow: hidden; background: var(--fill-button); }
+.run-split button { display: inline-flex; align-items: center; gap: 5px; color: var(--text); font-size: 12px; font-weight: 500; transition: background var(--dur-fast); }
+.run-split button:hover, .run-split .rs-chev.on { background: rgba(255,255,255,0.06); }
+.run-split .rs-main { padding: 0 8px; max-width: 200px; }
+.run-split .rs-main span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.run-split .rs-div { width: 1px; background: rgba(0,0,0,0.35); }
+.run-split .rs-chev { width: 20px; justify-content: center; color: var(--text-2); }
+.term-tab { height: 24px; display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; border-radius: 6px; font-size: 12px; color: var(--text-2); white-space: nowrap; max-width: 210px; transition: background var(--dur-fast); }
+.term-tab span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.term-tab:hover { background: var(--fill-hover); } .term-tab.sel { background: var(--fill-selected); color: var(--text); }
+.term-tab.enter { animation: enter var(--dur-enter) var(--ease-out) both; }
+.sdot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; background: var(--text-3); }
+.sdot.run { background: var(--success); animation: pulse 1.6s ease-in-out infinite; } .sdot.fail { background: var(--danger); } .sdot.done { background: var(--text-3); }
+@keyframes pulse { 50% { opacity: 0.45; } }
+.term { flex-grow: 1; min-height: 0; overflow-y: auto; padding: 6px 12px 8px; font: 11.5px/1.55 var(--mono); color: #C9CDD2; white-space: pre-wrap; }
+.term .echo, .term .end { color: var(--text-3); } .term .ready { color: var(--success); }
+.term .blank { color: var(--text-3); font-family: -apple-system, sans-serif; font-size: 12px; padding-top: 40px; text-align: center; }
+
+/* Rocky's menus (MenuButton / MenuItem): PR-05's look, a check at the right end on the current item */
+.menu { position: absolute; z-index: 50; min-width: 220px; padding: 5px; border-radius: 10px; background: var(--panel); box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 12px 34px rgba(0,0,0,0.55); animation: menu-in 120ms var(--ease-out); }
+@keyframes menu-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.menu .m-title { padding: 6px 8px 4px; font-size: 10.5px; font-weight: 500; color: var(--text-3); }
+.menu-item { width: 100%; min-height: 28px; display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 6px; font-size: 13px; color: var(--text); }
+.menu-item > svg, .menu-item > .ico { color: var(--text-2); }
+.menu-item .txt { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; }
+.menu-item .txt span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.menu-item .txt small { font-size: 11.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.menu-item .m-kbd { font-size: 11.5px; color: var(--text-3); padding-left: 14px; }
+.menu-item .m-end { display: flex; align-items: center; gap: 6px; color: var(--text-2); }
+.menu-item:hover:not(:disabled), .menu-item.hl { background: rgba(255,255,255,0.07); }
+.menu-sep { height: 1px; background: var(--hairline); margin: 5px 4px; }
+
+/* GHL-02: the picker, Quick Open's panel (M3 FIL-08) */
+.picker { position: absolute; z-index: 45; width: 520px; border-radius: 12px; background: var(--panel); box-shadow: 0 0 0 1px var(--hairline), 0 10px 36px rgba(0,0,0,0.45); animation: menu-in 120ms var(--ease-out); display: flex; flex-direction: column; overflow: hidden; }
+.pk-search { height: 40px; display: flex; align-items: center; gap: 8px; padding: 0 14px; color: var(--text-3); border-bottom: 1px solid var(--hairline); }
+.pk-search input { flex-grow: 1; border: 0; outline: none; background: transparent; font-size: 13.5px; color: var(--text); }
+.pk-search input::placeholder { color: var(--text-3); }
+.pk-tabs { display: flex; gap: 2px; padding: 6px 8px; border-bottom: 1px solid var(--hairline); }
+.pk-tabs button { height: 24px; padding: 0 10px; border-radius: 6px; font-size: 12.5px; color: var(--text-2); transition: background var(--dur-fast), color var(--dur-fast); }
+.pk-tabs button:hover { color: var(--text); background: var(--fill-hover); }
+.pk-tabs button.sel { background: var(--fill-selected); color: var(--text); }
+.pk-list { max-height: 300px; min-height: 120px; overflow-y: auto; padding: 5px; }
+.pk-row { width: 100%; height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-radius: 7px; font-size: 13px; transition: background var(--dur-fast); }
+.pk-row:hover:not(:disabled), .pk-row.hl { background: var(--fill-selected); }
+.pk-row .num { width: 52px; flex-shrink: 0; font: 12.5px var(--mono); color: var(--text-3); font-variant-numeric: tabular-nums; }
+.pk-row .ttl { flex-grow: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pk-row .bname { flex-grow: 1; min-width: 0; font: 12.5px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pk-row .tag { font-size: 11px; color: var(--text-3); flex-shrink: 0; }
+.pk-row .why { font-size: 11px; color: var(--text-3); flex-shrink: 0; max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pk-notice { display: flex; gap: 8px; align-items: flex-start; margin: 2px 2px 6px; padding: 8px 10px; border-radius: 7px; background: rgba(232,169,75,0.08); color: var(--text-2); font-size: 12px; line-height: 1.45; }
+.pk-notice svg { color: var(--attention); margin-top: 1px; }
+.pk-center { padding: 34px 12px; display: flex; justify-content: center; color: var(--text-2); font-size: 12.5px; }
+.st-open { color: var(--success); } .st-draft { color: var(--text-3); } .st-merged { color: var(--merged); } .gh { color: var(--text); }
+
+/* TSK-04: promptString's field */
+.prompt { position: absolute; z-index: 50; width: 300px; padding: 10px; border-radius: 10px; background: var(--panel); box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 12px 34px rgba(0,0,0,0.55); animation: menu-in 120ms var(--ease-out); }
+.prompt label { display: block; font-size: 11px; color: var(--text-3); margin-bottom: 6px; }
+.prompt input { width: 100%; height: 28px; border-radius: 6px; border: 0; outline: none; background: var(--fill-control); box-shadow: inset 0 0 0 1px var(--hairline); padding: 0 8px; font-size: 13px; }
+
+.toast { position: absolute; left: 50%; top: 84px; z-index: 60; max-width: 560px; transform: translateX(-50%); padding: 8px 12px; border-radius: 8px; background: var(--panel); box-shadow: 0 0 0 1px rgba(255,255,255,0.1), 0 8px 24px rgba(0,0,0,0.45); font-size: 12px; color: var(--text-2); opacity: 0; pointer-events: none; transition: opacity var(--dur-base); }
+.toast.show { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .enter, .fchip.enter, .term-tab.enter, .menu, .picker, .prompt, .row.renamed span:first-child { animation: none; } .sdot.run { animation: none; } }
+
+.spec-on .window [data-req] { outline: 1px dashed rgba(120,189,245,0.6); outline-offset: -1px; position: relative; }
+.spec-on .window [data-req]::after { content: attr(data-req); position: absolute; top: 1px; right: 1px; z-index: 55; padding: 2px 4px; border-radius: 3px; background: var(--accent); color: #0E1116; font: 600 9px/1 var(--mono); pointer-events: none; }
+
+/* spec */
+.spec { flex: 0 1 480px; min-width: 340px; overflow-y: auto; overflow-x: hidden; background: #16181C; border-left: 1px solid var(--hairline); padding: 22px 24px 80px; font-size: 12.5px; line-height: 1.55; color: var(--text-2); }
+.spec h1 { margin: 0 0 6px; font-size: 16px; color: var(--text); }
+.spec h2 { margin: 30px 0 8px; font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); }
+.spec p { margin: 6px 0; } .spec strong { color: var(--text); font-weight: 600; } .spec code { overflow-wrap: anywhere; }
+.spec pre { margin: 6px 0; padding: 8px 10px; border-radius: 6px; background: rgba(0,0,0,0.28); font: 11px/1.55 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+.req { margin: 0 -12px 6px; padding: 12px 12px 10px; border: 1px solid transparent; border-radius: 8px; transition: background 0.3s, border-color 0.3s; scroll-margin-top: 12px; }
+.req.flash { background: rgba(120,189,245,0.08); border-color: rgba(120,189,245,0.4); }
+.req > header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.req .id { font: 600 10.5px var(--mono); color: var(--accent); background: none; padding: 0; }
+.req h3 { flex-grow: 1; margin: 0; font-size: 13px; font-weight: 600; color: var(--text); }
+.scope { font-size: 10px; padding: 1px 6px; border-radius: 4px; border: 1px solid; white-space: nowrap; }
+.scope.in { color: var(--success); border-color: rgba(124,192,138,0.4); } .scope.out { color: var(--attention); border-color: rgba(232,169,75,0.5); }
+.scope.tech { color: var(--accent); border-color: rgba(120,189,245,0.45); }
+.req dl { display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 5px 10px; margin: 8px 0 0; }
+.req dt { padding-top: 1px; font-size: 11px; color: var(--text-3); } .req dd { margin: 0; }
+.req ol, .req ul { margin: 2px 0 0; padding-left: 18px; } .req li { margin: 2px 0; }
+.spec table { width: 100%; border-collapse: collapse; margin: 6px 0; font-size: 11.5px; }
+.spec th { text-align: left; font-weight: 600; color: var(--text-3); padding: 4px 6px 4px 0; border-bottom: 1px solid var(--hairline); }
+.spec td { padding: 4px 6px 4px 0; border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: top; }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <h1 class="doc-title">Rocky · GitHub links and VS Code tasks (M2.9)</h1>
+  <p class="doc-sub"><strong>+ ▸ Link GitHub issue</strong> in the message box picks an issue, a pull request or a branch. An issue or pull request arrives as a Markdown file, attached like a pasted image; a pull request or branch also switches the worktree to it, while the workspace has nothing of its own. The terminal panel's <strong>Run</strong> becomes a split button: its menu runs the repository's <code>.vscode/tasks.json</code> tasks, with their dependencies, readiness patterns and pickers. Try it: select "lima", open + in the message box; then Run's chevron ▸ "Run: API Core + Web Client".</p>
+  <div class="demo" aria-label="Demo controls">
+    <span class="demo-label">Demo controls, not part of Rocky</span>
+    <button type="button" id="demoDirty" aria-pressed="false">lima has uncommitted changes</button>
+    <button type="button" id="demoBadJson" aria-pressed="false">tasks.json can't be read</button>
+    <button type="button" id="demoPins" aria-pressed="false">Requirement pins</button>
+  </div>
+
+  <div class="window" id="win">
+    <nav class="sidebar" aria-label="Workspaces">
+      <div class="sb-top"><span class="lights"><span class="light close"></span><span class="light min"></span><span class="light zoom"></span></span></div>
+      <div class="sb-list" id="sbList"></div>
+    </nav>
+    <main class="main">
+      <header class="topbar" id="topbar"></header>
+      <div class="tabs" id="tabs"></div>
+      <div class="chat" id="chat"><div class="col" id="chatCol"></div></div>
+      <div class="composer-wrap" id="composerWrap">
+        <div class="composer" id="composer">
+          <div class="c-text" id="cText"><input id="input" placeholder="Ask Claude Code to make changes…" autocomplete="off" aria-label="Message"></div>
+          <div class="c-row"><span class="model-btn"><span class="agent">C</span>Opus 5.5 <span class="dim">High</span></span><button class="c-plus" id="plusBtn" data-action="plus" data-req="GHL-01" aria-label="Attach or link" title="Attach files, link GitHub, plan mode"></button><button class="send" id="sendBtn" aria-label="Send"></button></div>
+        </div>
+      </div>
+      <div class="panel" id="panel">
+        <div class="pbar" id="pbar"></div>
+        <div class="term" id="term"></div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<aside class="spec" id="spec">
+  <h1>Requirements</h1>
+  <p>Plan (dev-1): <code>docs/superpowers/plans/2026-09-25-m2.9-github-links-tasks.md</code>. After M2.8. The user's words (2026-09-25): "Faltan dos cosas importantes para dejar el proyecto funcional". Labels: <span class="scope tech">Technical</span> for data and process facts; <span class="scope in">In scope</span> for behavior and UI.</p>
+  <p><strong>User decisions (2026-09-25, relayed by dev-1):</strong> the link lives in the message box's "+", not in a modal before the worktree · it shows as a chip "como si fuera que adjuntamos una imagen" · a pull request or branch switches the worktree, only while it has nothing of its own · Rocky does not rename branches, write "closes #N" or touch the pull request ("muchas de las cosas que pides el agente las hace basadas en su claude.md o agents.md") · the workspace's name comes from the issue ("Del issue") · tasks only from <code>tasks.json</code>, never <code>launch.json</code> · Run becomes a split button; tasks whose label starts with "_" stay out of its menu.</p>
+
+  <h2>A · Link GitHub</h2>
+  <section class="req" id="REQ-GHL-01">
+    <header><code class="id">GHL-01</code><h3>"Link GitHub issue" in "+"</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Where</dt><dd>The message box's "+" menu, right after "Add attachment" (⌘U) and before "Plan mode" (⇧Tab): <strong>Link GitHub issue</strong>, with the GitHub mark (<code>Resources/Icons/github.svg</code>) at 14 pt in the menu's icon color. No shortcut. It opens the picker (GHL-02) on Issues; pull requests and branches are its other tabs.</dd>
+      <dt>Disabled</dt><dd>The repository has no GitHub remote: tooltip "This repository has no GitHub remote". No account can read it (M2.7 ACC-01): "Add a GitHub account that can read this repository in Settings".</dd>
+      <dt>SwiftUI</dt><dd>One more <code>MenuItem</code> in <code>ChatView</code>'s "+" menu (<code>ChatView.swift:344</code>), <code>icon: .image(…)</code> with the bundled mark.</dd>
+      <dt>Done when</dt><dd>"+" shows three items, and "Link GitHub issue" opens the picker with the search field focused.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-GHL-02">
+    <header><code class="id">GHL-02</code><h3>The picker</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Panel</dt><dd>Above the message box, its left edge on the box's: 520 wide, Quick Open's panel (M3 FIL-08: radius 12, a 1 px <code>hairline</code> ring, black 0.45 shadow radius 18 y 10), entering with the menus' 120 ms fade. Esc, a click outside or a pick closes it; Esc reaches it first (CLAUDE.md, key monitors).</dd>
+      <dt>Search</dt><dd>40 pt, <code>magnifyingglass</code> 13 in <code>textTertiary</code>, field 13.5, placeholder "Search by number, title or description" (Conductor's). Focused on open.</dd>
+      <dt>Tabs</dt><dd><strong>Issues</strong> · <strong>Pull requests</strong> · <strong>Branches</strong>, 24 pt pills, 12.5, <code>fillSelected</code> on the chosen; Issues on open. Tab and ⇧Tab move between them; the search text stays.</dd>
+      <dt>Rows</dt><dd>32 pt, radius 7, padding 0 10, gap 8, list up to 300 tall. Issues and pull requests: the GitHub mark 14, the state glyph 14 (open issue <code>success</code>; open pull request <code>git-pull-request</code> <code>success</code>, draft <code>textTertiary</code>; a closed or merged one found by number <code>merged</code>), "#4573" 12.5 mono tabular <code>textTertiary</code> in 52 pt, the title 13 truncating. Branches: <code>git-branch</code> 14, the name 12.5 mono, then "origin" (11 <code>textTertiary</code>) for a branch only on the remote. ↑↓ move the highlight (<code>fillSelected</code>), Return picks.</dd>
+      <dt>States</dt><dd>Loading: one <code>CircularProgress</code> 14 centred, nothing else. Empty: "No open issues" / "No open pull requests" / "No matches", 12.5 <code>textSecondary</code>, centred. Error: "Couldn't load issues: <em>reason</em>", centred; typing or reopening retries.</dd>
+      <dt>Disabled rows</dt><dd>With a reason at the row's end (11 <code>textTertiary</code>) and as its tooltip: "Checked out in celes-platform-worktrees/tokyo", "From a fork", "Current branch" (GHL-05).</dd>
+      <dt>Done when</dt><dd>The picker opens over the box, the three tabs switch with Tab, and typing "4573" or "filtro" narrows Issues.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-GHL-03">
+    <header><code class="id">GHL-03</code><h3>What the picker fetches</h3><span class="scope tech">Technical</span></header>
+    <dl>
+      <dt>Account</dt><dd>The repository's GitHub account (M2.7 ACC-01), over <code>URLSession</code> GraphQL (<code>GitHubClient</code>), never a <code>gh</code> process.</dd>
+      <dt>Lists</dt><dd>When a tab first shows in an opening of the picker: Issues, <code>repository.issues(states: OPEN, first: 30, orderBy: {field: UPDATED_AT, direction: DESC})</code> with number, title, state; Pull requests, <code>pullRequests(states: OPEN, …)</code> with number, title, isDraft, headRefName, baseRefName, isCrossRepository.</dd>
+      <dt>Search</dt><dd>Typing, debounced 250 ms: <code>search(type: ISSUE, first: 30, query: "repo:owner/name is:issue is:open <em>text</em>")</code> (<code>is:pr</code> for pull requests). Text that is a number, "4573" or "#4573", also asks <code>issue(number:)</code> / <code>pullRequest(number:)</code> directly, in any state, and shows it first. A newer keystroke and closing the picker cancel the request in flight. GitHub's search allows 30 requests a minute; the debounce keeps ordinary typing under it, and a rate-limit answer shows as the error.</dd>
+      <dt>Branches</dt><dd>From git, no GitHub call: <code>git for-each-ref refs/heads refs/remotes/origin --sort=-committerdate</code> (name, upstream), filtered in memory; a remote branch with a local one of the same name shows once, as local; <code>origin/HEAD</code> is left out. When the tab first shows, one <code>git fetch origin --prune</code> runs in the background and the list refreshes when it ends. <code>git worktree list --porcelain</code> tells which branches another worktree holds.</dd>
+      <dt>At rest</dt><dd>Nothing: no polling and no cache after the picker closes (spec Section 1).</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-GHL-04">
+    <header><code class="id">GHL-04</code><h3>Linking an issue</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Pick</dt><dd>Rocky fetches the issue in full: title, URL, state and <code>stateReason</code>, author, dates, labels (first 20), assignees (first 10), body, and comments (first 100, with the total). The row's state glyph turns into a <code>CircularProgress</code> 14 meanwhile; then the picker closes.</dd>
+      <dt>File</dt><dd>Markdown at <code>~/Library/Caches/Rocky/Pasted/<em>UUID</em>/[GITHUB]-3655.md</code>, the folder scheme of pasted images (<code>PastedAttachments</code>), so links never overwrite each other. A snapshot at pick time, not refreshed. It holds what GitHub shows, never a token. Format (the heading is what GHL-06 reads):</dd>
+    </dl>
+<pre># #3655 Look and feel 3/6: Components
+
+- URL: https://github.com/owner/celes-platform/issues/3655
+- State: open
+- Author: @jhzl1, opened 2026-09-20
+- Labels: ui, design
+- Assignees: @jhzl1
+
+## Description
+
+<em>body</em>
+
+## Comments (2)
+
+### @reviewer, 2026-09-21
+
+<em>body</em></pre>
+    <dl>
+      <dt>More</dt><dd>Over 100 comments, the file ends with "…and 43 more comments on GitHub: <em>URL</em>".</dd>
+      <dt>Chip</dt><dd>The file is attached at the caret as a normal file attachment, exactly as a pasted image is: the chip is <code>FileBadge</code> with the GitHub mark in place of the file's icon and the file name as its label, "[GITHUB]-3655.md" (Conductor's); tooltip "#3655 Look and feel 3/6: Components". The agent gets a <code>resource_link</code> and reads the file like any attachment. In the transcript it is the same chip, and a click opens the file's tab.</dd>
+      <dt>Several</dt><dd>Several issues in one message are fine, one chip each; picking one already in the box only closes the picker. One pull request or branch at most (GHL-05).</dd>
+      <dt>Not shown</dt><dd>No other place shows the linked issue: no header chip like Conductor's modal (OUT-50). The chip, the transcript and the workspace's name (GHL-06) are enough, and the user asked for fewer duplicate indicators (2026-09-25).</dd>
+      <dt>Done when</dt><dd>Picking #4573 puts "[GITHUB]-4573.md" in the box; sent, the agent reads the issue's body and comments from it.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-GHL-05">
+    <header><code class="id">GHL-05</code><h3>Linking a pull request or a branch</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Does</dt><dd>Switches the worktree to that branch, then attaches a file like GHL-04's: a pull request, <code>[GITHUB]-PR-4536.md</code> (GHL-04's format plus "- Branch: fix/test-pr-validation → development" and "- Draft: yes" when it is one); a branch, <code>[BRANCH]-feat-look-and-feel-3.md</code> ("/" becomes "-"), with its name, upstream, and <code>git log --oneline</code> of its commits the base lacks (the last 20). The chip shows the <code>git-pull-request</code> or <code>git-branch</code> mark.</dd>
+      <dt>Only when</dt><dd>The workspace has nothing of its own: no uncommitted changes, no commits its base lacks (<code>LocalGitStatus.uncommitted</code> and <code>commitsAheadOfBase</code> both 0, HDR-02's "No changes yet"), and no file tab with unsaved edits (EDIT-02). Otherwise the Pull requests and Branches tabs start with a notice, "This workspace has changes of its own. Switching needs one with none: create a workspace for it.", in an <code>attention</code> 8 % box, and their rows are disabled. Checked again at pick time.</dd>
+      <dt>How</dt><dd>A local branch: <code>git switch <em>branch</em></code>. A remote-only branch: <code>git switch --track origin/<em>branch</em></code>. A pull request: <code>git fetch origin <em>headRefName</em></code>, then the same as its branch. Rows Rocky cannot switch to are disabled with the reason: a branch another worktree holds (git refuses it: "Checked out in <em>path</em>"), the current branch, a pull request from a fork (<code>isCrossRepository</code>, OUT-50).</dd>
+      <dt>After</dt><dd>
+        <ul>
+          <li>The workspace's own branch (<code>rocky/lima</code>), empty as just checked, is deleted locally, so switched workspaces leave no empty branches behind (user decision, 2026-09-25: "Borrarla").</li>
+          <li>A pull request sets the workspace's <code>baseRef</code> to <code>origin/<em>baseRefName</em></code>, so Changes (M3 GIT-01) and the header compare against the pull request's base. A branch keeps the workspace's base.</li>
+          <li>The top bar's branch shows the new name; All files and Changes refresh through FSEvents; the pull request panel looks the branch up at once (M2.7 PR-01) instead of waiting for its next poll.</li>
+          <li>Running scripts, tasks and terminals keep running, now on the new branch's files. Removing the chip does not switch back.</li>
+          <li>A git failure shows a toast with git's message; nothing is attached and the workspace stays as it was.</li>
+        </ul>
+      </dd>
+      <dt>Not done</dt><dd>Rocky does not rename the branch, write "closes #N" or edit the pull request (user decision; the agent does it from its own instructions).</dd>
+      <dt>Done when</dt><dd>In a new workspace, picking #4536 switches it to <code>fix/test-pr-validation</code>, the right panel shows that pull request, and <code>rocky/<em>city</em></code> is gone from <code>git branch</code>. In a workspace with changes, the rows are disabled under the notice.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-GHL-06">
+    <header><code class="id">GHL-06</code><h3>The workspace's name from the issue</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Rule</dt><dd>Today the sidebar title comes from the workspace's first message (<code>AppModel.title(from:commands:)</code>, <code>AppModel.swift:1311</code>). When that message carries a linked issue, the title is "#4573 " plus the issue's title, truncated by the row as any title. With several issues, the first chip's. A pull request or branch link leaves today's rule (the decision covers issues).</dd>
+      <dt>Source</dt><dd>The heading of the attached <code>[GITHUB]-<em>n</em>.md</code> (GHL-04's first line, <code>KIT-14</code>), so titles rebuilt from stored messages keep it.</dd>
+      <dt>Done when</dt><dd>The first message of "lima" with #4573 renames its row to "#4573 Un filtro negativo de proveedor…".</dd>
+    </dl>
+  </section>
+
+  <h2>B · VS Code tasks</h2>
+  <section class="req" id="REQ-TSK-01">
+    <header><code class="id">TSK-01</code><h3>Reading tasks.json</h3><span class="scope tech">Technical</span></header>
+    <dl>
+      <dt>Where</dt><dd><code><em>worktree</em>/.vscode/tasks.json</code>; when the worktree has none, the main clone's, since <code>.vscode</code> is often ignored and <code>WorktreeLinker</code> links only what <code>links</code> names. <code>${workspaceFolder}</code> is always the worktree.</dd>
+      <dt>When</dt><dd>Each time the Run menu opens or its main part is clicked. No file watching, no polling; the file is small.</dd>
+      <dt>Format</dt><dd>JSON with comments and trailing commas, as VS Code reads it: <code>JSONDecoder</code> with <code>allowsJSON5 = true</code> (native, macOS 12+) accepts both. <code>version</code> must be "2.0.0". celes-platform's file (checked 2026-09-25): 27 tasks, 19 of them "_", <code>//</code> comments, no trailing commas.</dd>
+      <dt>Read</dt><dd><code>label</code>, <code>type</code>, <code>command</code>, <code>args</code>, <code>options.cwd</code>, <code>options.env</code>, <code>dependsOn</code>, <code>dependsOrder</code>, <code>isBackground</code>, <code>problemMatcher[].background.beginsPattern / endsPattern</code> (a string, or an object with <code>regexp</code>), <code>presentation.reveal / focus / panel / clear / echo</code>, <code>detail</code>, <code>hide</code>, <code>group</code> (only <code>isDefault</code>), <code>osx</code> (merged over the task), and <code>inputs</code> (<code>id</code>, <code>type</code>, <code>description</code>, <code>options</code>, <code>default</code>, <code>password</code>). Anything else is ignored.</dd>
+      <dt>Listed</dt><dd>In file order, every task whose label does not start with "_" and without <code>"hide": true</code> (VS Code's own way to hide one). Hidden tasks still run as dependencies.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-TSK-02">
+    <header><code class="id">TSK-02</code><h3>Run, a split button</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Where</dt><dd>M2.7 LAY-01's Run, in the terminal panel bar. A repository without <code>tasks.json</code> keeps today's plain button.</dd>
+      <dt>Main part</dt><dd>Runs the default: the last item run from the menu in this repository; else the Run script (<code>rocky.json</code> or the repository settings); else the task with <code>group: {kind: "build", isDefault: true}</code>; else it opens the menu. Label: "▶ Run" for the Run script, "▶ <em>label</em>" for a task, truncated at 180 pt. While the default runs: "■ Stop" (TSK-06). Tooltip: "Run the run script" / "Run the task “Run: Web Client”".</dd>
+      <dt>Values</dt><dd>24 pt, radius 5, <code>fillButton</code> (today's <code>runStyle</code>). Main part padding 0 8, <code>play.fill</code> 10 + 12 medium. A 1 px divider (black 35 %, PR-05's split). Chevron part 20 wide, <code>chevron.down</code> 9 pt semibold in <code>textSecondary</code>; it keeps a 6 % white fill while the menu is open.</dd>
+      <dt>Menu</dt><dd>Rocky's menu above the button (the bar is at the window's bottom), 300 wide. "Run script" with the script as its second line (11.5 <code>textTertiary</code>), when there is one; a divider; the caption "Tasks" (10.5 <code>textTertiary</code>); the listed tasks (TSK-01), each with its <code>detail</code> as a second line. The default item has a check at its right end, as PR-05's menu; a running item a 6 pt <code>success</code> dot before it.</dd>
+      <dt>Choosing</dt><dd>Runs the item and makes it the repository's default. A running item is not started twice: choosing it selects its tab and unfolds the panel. Stored per repository in <code>@AppStorage("lastRunItemByRepo")</code> (JSON, repository id → task label or "run-script"); a label that is no longer in the file falls back as above.</dd>
+      <dt>SwiftUI</dt><dd>An <code>HStack(spacing: 0)</code> clipped to radius 5: a <code>Button</code> and a <code>MenuButton(placement: .aboveLeading, width: 300)</code> with the chevron as its label.</dd>
+      <dt>Done when</dt><dd>In celes-platform, the chevron lists 8 tasks and no "_" one; after running "Run: Web Client", the main part reads "▶ Run: Web Client", and still does after a relaunch.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-TSK-03">
+    <header><code class="id">TSK-03</code><h3>Running a task</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Process</dt><dd><code>type: "shell"</code>: <code>command</code> and its <code>args</code> joined by spaces, each arg (a string, or an object's <code>value</code>) in single quotes when it holds spaces or shell characters (VS Code's "strong" quoting), run as scripts run today: <code>/bin/zsh -c</code> in a <code>PTYSession</code> (<code>PTYSession.swift:21</code>). <code>type: "process"</code>: the command runs directly with its args, no shell. Environment: the workspace's (ENV-01, with <code>PORT</code> and <code>ROCKY_*</code>), then <code>options.env</code> on top. Directory: <code>options.cwd</code>, else the worktree.</dd>
+      <dt>Tab</dt><dd>Each task, dependencies included, runs in a panel tab titled with its label, with the script tabs' status dot and end line (TERM-03). <code>presentation.panel</code>: "dedicated", the task's own tab, reused on its next run; "new", a new tab each run; "shared" (VS Code's default), one tab the shared tasks reuse once its last task ended (else a new one), titled with the task it runs. Closing a task's tab stops that process.</dd>
+      <dt>Presentation</dt><dd><code>reveal</code> "always" (the default) selects the tab and unfolds the panel; "silent" and "never" do neither, and the dot still shows. <code>focus: true</code> gives the terminal the keyboard. <code>clear: true</code> clears a reused tab first. <code>echo</code> (default true) writes "&gt; <em>resolved command</em>" first, in <code>textTertiary</code>, like VS Code's "Executing task".</dd>
+      <dt>Run mode</dt><dd>When the repository's run scripts do not run concurrently (<code>runScriptMode</code>), starting a task first stops the other workspaces' Run script and tasks in that repository, as the Run script does today: tasks bind ports too (8000 and 6379 in celes-platform).</dd>
+      <dt>Done when</dt><dd>"Run: Web Client" asks the frontend mode, runs "_Dev: Cleanup orphans" in a shared tab without selecting it, then opens a "Run: Web Client" tab running <code>pnpm dev-local</code> in <code>apps/web-client</code>.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-TSK-04">
+    <header><code class="id">TSK-04</code><h3>Variables and inputs</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Variables</dt><dd>In <code>command</code>, <code>args</code>, <code>options.cwd</code> and <code>options.env</code>: <code>${workspaceFolder}</code> (and its old name <code>${workspaceRoot}</code>), <code>${workspaceFolderBasename}</code>, <code>${userHome}</code>, <code>${cwd}</code> (the worktree), <code>${pathSeparator}</code>, <code>${env:NAME}</code> (from the task's environment), <code>${input:id}</code>. Any other is an error before anything starts (TSK-07).</dd>
+      <dt>pickString</dt><dd>Rocky's menu above the Run button, with the input's <code>description</code> as its caption and one item per option (its <code>label</code>, or the string); the <code>default</code> is checked and highlighted, so Return takes it. Esc cancels the whole run.</dd>
+      <dt>promptString</dt><dd>A small field above the Run button, 300 wide, MenuPanel's look: the <code>description</code> as its label (11 <code>textTertiary</code>), the field 28 pt with the <code>default</code> selected; <code>password: true</code> makes it a secure field. Return confirms, Esc cancels the run.</dd>
+      <dt>Once</dt><dd>Every <code>${input:…}</code> of the task and its whole dependency chain is asked before anything starts, in order of first use, and one id gets one answer for the whole chain: celes-platform's "Run: API Core + Web Client" and its dependency "_API Core: Run (mode)" both read <code>runModeLocal</code>, and must agree. Answers are not remembered between runs, as in VS Code; the default is preselected.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-TSK-05">
+    <header><code class="id">TSK-05</code><h3>Dependencies</h3><span class="scope tech">Technical</span></header>
+    <dl>
+      <dt>Order</dt><dd><code>dependsOn</code> (a label or a list) runs first, recursively. <code>dependsOrder</code> "sequence": one after another, in the list's order; "parallel" (the default): all at once. The task starts when all are done. A task reached twice in one chain runs once.</dd>
+      <dt>Done</dt><dd>A normal task: it exits with code 0. A background task (<code>isBackground: true</code>): a line of its output, ANSI escapes removed, matches its <code>endsPattern</code> (a regular expression); its process keeps running. A background task without an <code>endsPattern</code> counts as done as soon as it starts: Rocky does not guess a wait (VS Code needs the pattern for this too).</dd>
+      <dt>Already running</dt><dd>A dependency already running in this workspace is not started again: a background one that matched its pattern counts as done, one still starting is waited for, a normal one still running is waited for.</dd>
+      <dt>Failure</dt><dd>A dependency that exits non-zero, or a background one that exits before its pattern, stops the chain: what has not started does not start, its tab shows the <code>danger</code> dot, and a toast says "“_Dev: Cleanup orphans” failed, so “Run: Web Client” didn't start", with Show (selects that tab). Dependencies already running keep running.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-TSK-06">
+    <header><code class="id">TSK-06</code><h3>Stopping</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Stop</dt><dd>The main part's "■ Stop" stops the default task and the dependencies this run started that no other running task needs, newest first, with the Run script's stop (today's <code>stopRun</code> path) and its end line "Process stopped".</dd>
+      <dt>Tab</dt><dd>Closing a task's tab stops only that process.</dd>
+      <dt>Always</dt><dd>Removing the workspace and quitting Rocky stop its tasks, as they stop its scripts and terminals today.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-TSK-07">
+    <header><code class="id">TSK-07</code><h3>Errors</h3><span class="scope in">In scope</span></header>
+    <table>
+      <tr><th>Case</th><th>What Rocky shows</th></tr>
+      <tr><td>tasks.json does not parse, or its <code>version</code> is not 2.0.0</td><td>The menu's tasks part is one disabled item, "tasks.json can't be read", with the decoder's message as its second line ("Line 41: …"). The Run script still runs; a task default falls back (TSK-02).</td></tr>
+      <tr><td>A <code>type</code> other than shell or process</td><td>That item is disabled; tooltip "Type “npm” isn't supported: Rocky runs shell and process tasks".</td></tr>
+      <tr><td>An unknown variable, an input of <code>type: "command"</code>, or an <code>${input:id}</code> with no such input</td><td>Nothing starts; toast "“Run: X” uses ${file}, which Rocky doesn't support".</td></tr>
+      <tr><td>A <code>dependsOn</code> label the file lacks</td><td>Nothing starts; toast "“Run: X” depends on “_Y”, which tasks.json doesn't have".</td></tr>
+      <tr><td>A dependency cycle</td><td>Nothing starts; toast "“A” and “B” depend on each other".</td></tr>
+      <tr><td>An <code>endsPattern</code> that is not a valid regular expression</td><td>Nothing starts; toast "“_API Core: Run (mode)” has an invalid endsPattern".</td></tr>
+    </table>
+  </section>
+
+  <h2>RockyKit</h2>
+  <section class="req" id="REQ-KIT-14">
+    <header><code class="id">KIT-14</code><h3>GitHub links</h3><span class="scope tech">Technical</span></header>
+<pre>// GitHubClient
+func issues(repository:query:) async throws -> [IssueSummary]          // list or search, GHL-03
+func pullRequests(repository:query:) async throws -> [PullRequestSummary]
+func issue(repository:number:) async throws -> GitHubIssue             // full, with comments, GHL-04
+func pullRequest(repository:number:) async throws -> GitHubIssue
+
+enum GitHubLinkDocument {
+  static func issue(_:) -> (fileName: String, markdown: String)
+  static func pullRequest(_:) -> (fileName: String, markdown: String)
+  static func branch(name:upstream:commits:) -> (fileName: String, markdown: String)
+  static func heading(of markdown: String) -> (number: Int, title: String)?   // GHL-06
+}</pre>
+    <p>Tests: the exact Markdown of an issue with labels, assignees and comments; the "more comments" line; the three file names ("/" in a branch); <code>heading</code> on a document and on text without one; a search query built from "#4573" and from words.</p>
+  </section>
+  <section class="req" id="REQ-KIT-15">
+    <header><code class="id">KIT-15</code><h3>Switching branches</h3><span class="scope tech">Technical</span></header>
+<pre>// GitBranchService
+func branches(worktree:) throws -> [BranchRef]      // name, isRemoteOnly, upstream, heldBy: URL?
+func canSwitch(status: LocalGitStatus, unsavedEdits: Bool) -> Bool
+func switchTo(_ target: SwitchTarget, worktree:, dropping ownBranch: String) throws
+enum SwitchTarget { case local(String), remote(String), pullRequest(head: String) }</pre>
+    <p>Tests on a temporary repository: to a local branch; to a remote-only one (creates the tracking branch); a branch another worktree holds is refused; the empty own branch is deleted; <code>canSwitch</code> false with changes, with own commits, with unsaved edits.</p>
+  </section>
+  <section class="req" id="REQ-KIT-16">
+    <header><code class="id">KIT-16</code><h3>VS Code tasks</h3><span class="scope tech">Technical</span></header>
+<pre>enum VSCodeTasks {
+  static func parse(_ data: Data) throws -> TaskFile            // JSON5, version 2.0.0, osx merged
+  static func listed(_ file: TaskFile) -> [VSCodeTask]           // no "_", no hide
+  static func plan(_ label: String, in file: TaskFile) throws -> TaskPlan   // steps, order, dedupe
+  static func inputsNeeded(for plan: TaskPlan) -> [TaskInput]    // first use order, once per id
+  static func resolve(_ text: String, context: VariableContext) throws -> String
+  static func shellCommand(command: String, args: [String]) -> String   // strong quoting
+}</pre>
+    <p>Tests: a trimmed copy of celes-platform's file as a fixture; comments and trailing commas; "_" and <code>hide</code>; <code>osx</code> overriding; sequence and parallel plans; a diamond runs once; a cycle; an unknown label; every supported variable; an unknown one; one answer per input id across a chain; quoting.</p>
+  </section>
+  <section class="req" id="REQ-KIT-17">
+    <header><code class="id">KIT-17</code><h3>Task runner</h3><span class="scope tech">Technical</span></header>
+    <p>In <code>AppModel</code>: runs a <code>TaskPlan</code> on <code>PTYSession</code>s, waits for each step's exit or for its <code>endsPattern</code> on the output (<code>PTYSession.attach(_:onOutput:)</code>, lines with ANSI escapes removed), maps <code>presentation</code> to tabs, remembers which run started which dependency for TSK-06, and follows <code>runScriptMode</code>. Tests with a fake process launcher: a sequence waits for exit 0; a background step waits for its pattern; one without a pattern does not wait; a failure stops the chain; Stop leaves a dependency another running task needs.</p>
+  </section>
+
+  <h2>Out of scope</h2>
+  <section class="req" id="REQ-OUT-50">
+    <header><code class="id">OUT-50</code><h3>Not in M2.9</h3><span class="scope out">Later</span></header>
+    <p><code>launch.json</code> and debugging (Rocky has no debugger; user decision) · problem matchers beyond the background patterns (no Problems panel) · task types other than shell and process (npm, gulp, …) · <code>${file}</code> and the other editor variables, <code>${config:…}</code>, <code>${command:…}</code>, command inputs · a shortcut or palette for tasks (VS Code's ⇧⌘B) · Rocky naming branches, writing "closes #N" or editing a pull request (user decision) · a header chip for the linked issue (Conductor's modal) · pull requests from forks · Linear (Conductor's "Set up Linear").</p>
+  </section>
+</aside>
+
+<script>
+/* Demo behavior. Issues, branches, tasks, output and timings are canned; the requirements on the right are what matters. */
+(() => {
+  'use strict';
+  const $ = (s) => document.querySelector(s);
+  const win = $('#win');
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const svg = (s, body, w = 1.5) => `<svg width="${s}" height="${s}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+  const spinner = (s) => `<svg class="spinner" width="${s}" height="${s}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" role="img" aria-label="Loading"><circle cx="8" cy="8" r="5.5" stroke-opacity="0.22"/><path d="M8 2.5a5.5 5.5 0 0 1 5.5 5.5"/></svg>`;
+  const I = {
+    plus: svg(14, '<path d="M8 3v10M3 8h10"/>', 1.6),
+    up: svg(13, '<path d="M8 13V3.5M3.75 7.5L8 3.25l4.25 4.25"/>', 2.2),
+    chev: svg(9, '<path d="M3.5 6l4.5 4.5L12.5 6"/>', 2.2),
+    check: svg(11, '<path d="M3.5 8.5l3 3 6-7"/>', 2.2),
+    play: '<svg width="10" height="10" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z" fill="currentColor"/></svg>',
+    stop: '<svg width="10" height="10" viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="1.5" fill="currentColor"/></svg>',
+    clip: svg(14, '<path d="M13 7.5l-5.2 5.2a3.2 3.2 0 0 1-4.5-4.5l5.6-5.6a2.1 2.1 0 0 1 3 3L6.3 11.2a1 1 0 0 1-1.5-1.5L10 4.5"/>', 1.3),
+    map: svg(14, '<path d="M2 4l4-1.5 4 1.5 4-1.5v9.5l-4 1.5-4-1.5-4 1.5z M6 2.5v9.5M10 4v9.5"/>', 1.3),
+    search: svg(13, '<circle cx="7" cy="7" r="4.5"/><path d="M10.4 10.4l3.35 3.35"/>'),
+    warn: svg(14, '<path d="M8 2.5l6 10.5H2z M8 6.5v3M8 11.3v.2"/>', 1.4),
+    branch: svg(14, '<circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="5.5" r="1.5"/><path d="M4.5 5v6M11.5 7c0 2.5-3 2.5-7 4"/>', 1.3),
+    pr: svg(14, '<circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="12.5" r="1.5"/><path d="M4.5 5v6M11.5 11V6.5a2 2 0 0 0-2-2H7.5M9 3l-1.5 1.5L9 6"/>', 1.3),
+    issueOpen: svg(14, '<circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="1.2" fill="currentColor"/>', 1.4),
+    gh: '<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>',
+  };
+
+  // ---------- data ----------
+  const repos = {
+    celes: { name: 'celes-platform', color: '#4C7BD9', hasTasks: true, runScript: 'pnpm dev --port $PORT' },
+    veritas: { name: 'veritas', color: '#8E6BE0', hasTasks: false, runScript: 'uv run app.py' },
+  };
+  const workspaces = [
+    { id: 'w1', repo: 'celes', city: 'tokyo', title: 'OpenAPI export for providers', branch: 'jhzl/openapi-export', dirty: true, msgs: [{ k: 'user', t: 'Export the provider endpoints as OpenAPI 3.1.' }, { k: 'agent', t: 'Done: buildDocument() emits OpenAPI 3.1 and a test validates it.' }] },
+    { id: 'w2', repo: 'celes', city: 'lima', title: '', branch: 'rocky/lima', dirty: false, msgs: [] },
+    { id: 'w3', repo: 'veritas', city: 'quito', title: 'Retry OCR on timeouts', branch: 'jhzl/ocr-retry', dirty: false, msgs: [{ k: 'user', t: 'Retry OCR twice when the provider times out.' }] },
+  ];
+  workspaces.forEach((w) => { w.chips = []; w.draft = ''; w.tabs = [{ id: w.id + '-setup', title: 'Setup', kind: 'script', st: 'done', lines: [['echo', '> pnpm install'], ['', 'Done in 4.2s'], ['end', 'Process exited with code 0']] }]; w.sel = w.tabs[0].id; });
+  const ISSUES = [
+    [4573, 'Un filtro negativo de proveedor aplica también a los productos sin proveedor'], [3842, 'Compras: la pantalla de Creación de órdenes no guarda el borrador'],
+    [4571, '«Ver definiciones» de una tienda abre la de otra'], [4365, 'Task 3: Filter the General Parameters by company'], [4411, 'Task 3: Measure the web-client first load'],
+    [4377, 'Task 7: Carry Portuguese end to end'], [4375, 'Task 5: Fail the build when one language is missing a key'], [3655, 'Look and feel 3/6: Components'],
+  ].map(([n, t]) => ({ n, t }));
+  const PRS = [
+    { n: 4536, t: 'Validate the PR comment flow', head: 'fix/test-pr-validation', base: 'development' },
+    { n: 4525, t: 'OpenAPI export for providers', head: 'jhzl/openapi-export', base: 'development', why: 'Checked out in celes-platform-worktrees/tokyo' },
+    { n: 4490, t: 'Spike: a task runner for the stack', head: 'spike/task-runner', base: 'development', draft: true },
+    { n: 4402, t: 'Fix typo in README', head: 'patch-1', base: 'development', why: 'From a fork' },
+  ];
+  const BRANCHES = [
+    { name: 'development', why: 'Checked out in ~/dev/celes-platform' }, { name: 'jhzl/openapi-export', why: 'Checked out in celes-platform-worktrees/tokyo' },
+    { name: 'feat/look-and-feel-3' }, { name: 'fix/test-pr-validation', remote: true }, { name: 'spike/task-runner', remote: true },
+  ];
+
+  // TSK: celes-platform's tasks.json, trimmed to what the mock runs. "_" tasks stay out of the menu (TSK-01).
+  const INPUTS = {
+    runModeLocal: { desc: 'Select environment and mode', options: [['DEV — Local', 'dev-local'], ['QAS — Local', 'qas-local'], ['PRD — Local', 'prd-local']], def: 'dev-local' },
+    apiEnv: { desc: 'Select API environment', options: [['DEV', 'dev'], ['QAS', 'qas'], ['PRD', 'prd']], def: 'dev' },
+    frontendMode: { desc: 'Select frontend mode', options: [['DEV — Local', 'dev-local'], ['DEV — Server', 'dev-server'], ['QAS — Local', 'qas-local'], ['QAS — Server', 'qas-server'], ['PRD — Local', 'prd-local'], ['PRD — Server', 'prd-server']], def: 'dev-local' },
+  };
+  const T = (label, o) => ({ label, deps: [], seq: false, bg: false, ends: null, panel: 'shared', reveal: 'always', inputs: [], cmd: '', out: [], ms: 700, ...o });
+  const TASKS = [
+    T('Setup: Local DB (Docker copy)', { panel: 'dedicated', inputs: ['apiEnv'], cmd: 'apps/api-core/scripts/setup-local-db.sh ${input:apiEnv}', out: ['Pulling postgres:16…', 'Restoring a copy of the ${apiEnv} database…', 'Local DB ready on :5433'], ms: 1600 }),
+    T('Run: API Core + Web Client', { deps: ['_Dev: Cleanup orphans', '_API Core: Run (mode)'], seq: true, bg: true, ends: 'ready in \\d+', panel: 'dedicated', inputs: ['runModeLocal'], cmd: 'pnpm ${input:runModeLocal}', out: ['ROLLDOWN-VITE v7.1.2 dev server', 'ready in 812 ms', '➜  Local:   http://localhost:5173/'] }),
+    T('Run: API Core + Web Client (single console)', { panel: 'dedicated', inputs: ['runModeLocal'], cmd: 'scripts/run-stack.sh web-client …', bg: true, out: ['Starting API and web-client…'] }),
+    T('Run: API Core + Web Studio', { deps: ['_Dev: Cleanup orphans', '_API Core: Run (mode)'], seq: true, bg: true, ends: 'ready in \\d+', panel: 'dedicated', inputs: ['runModeLocal'], cmd: 'pnpm ${input:runModeLocal}', out: ['ROLLDOWN-VITE v7.1.2 dev server', 'ready in 790 ms', '➜  Local:   http://localhost:5174/'] }),
+    T('Run: API Core + Web Studio (single console)', { panel: 'dedicated', inputs: ['runModeLocal'], cmd: 'scripts/run-stack.sh web-studio …', bg: true, out: ['Starting API and web-studio…'] }),
+    T('Run: API Core', { deps: ['_Dev: Cleanup orphans', '_API Core: Setup'], seq: true, bg: true, panel: 'dedicated', inputs: ['apiEnv'], cmd: 'uvicorn src.main:api --port 8000 --reload', out: ['INFO:     Uvicorn running on http://0.0.0.0:8000', 'INFO:     Application startup complete.'] }),
+    T('Run: Web Client', { deps: ['_Dev: Cleanup orphans'], seq: true, bg: true, ends: 'ready in \\d+', panel: 'dedicated', inputs: ['frontendMode'], cmd: 'pnpm ${input:frontendMode}', out: ['ROLLDOWN-VITE v7.1.2 dev server', 'ready in 812 ms', '➜  Local:   http://localhost:5173/'] }),
+    T('Run: Web Studio', { deps: ['_Dev: Cleanup orphans'], seq: true, bg: true, ends: 'ready in \\d+', panel: 'dedicated', inputs: ['frontendMode'], cmd: 'pnpm ${input:frontendMode}', out: ['ROLLDOWN-VITE v7.1.2 dev server', 'ready in 790 ms', '➜  Local:   http://localhost:5174/'] }),
+    T('_Dev: Cleanup orphans', { reveal: 'silent', cmd: 'scripts/dev/cleanup-orphans.sh', out: ['No orphaned dev processes.'], ms: 600 }),
+    T('_API Core: Ensure celesight', { reveal: 'silent', cmd: 'apps/api-core/scripts/ensure-celesight.sh', out: ['celesight 2.4.1 already installed'], ms: 500 }),
+    T('_API Core: Ensure pre-commit', { reveal: 'silent', cmd: 'apps/api-core/scripts/ensure-pre-commit.sh', out: ['pre-commit hooks present'], ms: 400 }),
+    T('_API Core: Setup', { reveal: 'silent', inputs: ['apiEnv'], cmd: 'redis-server --daemonize yes --port 6379; ensure-tunnel.sh ${input:apiEnv}', out: ['Tunnel to ${apiEnv} is up'], ms: 700 }),
+    T('_API Core: Run (mode)', { deps: ['_API Core: Ensure celesight', '_API Core: Ensure pre-commit'], bg: true, ends: 'Application startup complete', panel: 'dedicated', reveal: 'always', inputs: ['runModeLocal'], cmd: 'uvicorn src.main:api --host 0.0.0.0 --port 8000 --reload', out: ['INFO:     Uvicorn running on http://0.0.0.0:8000', 'INFO:     Application startup complete.'], ms: 900 }),
+  ];
+  const taskOf = (label) => TASKS.find((t) => t.label === label);
+  const listed = () => TASKS.filter((t) => !t.label.startsWith('_'));
+
+  const state = { selected: 'w2', menu: null, picker: null, badJson: false, lastRun: {}, running: {} };
+  const W = () => workspaces.find((w) => w.id === state.selected);
+  const R = () => repos[W().repo];
+
+  // ---------- render ----------
+  function renderSidebar() {
+    let html = '';
+    for (const rid of Object.keys(repos)) {
+      html += `<div class="repo"><span class="monogram" style="background:${repos[rid].color}">${repos[rid].name[0].toUpperCase()}</span>${esc(repos[rid].name)}</div>`;
+      for (const w of workspaces.filter((x) => x.repo === rid)) {
+        html += `<button class="row${w.id === state.selected ? ' selected' : ''}${w.renamed ? ' renamed' : ''}" data-action="select" data-ws="${w.id}"${w.renamed ? ' data-req="GHL-06"' : ''} title="${esc(w.title || w.city)}"><span>${esc(w.title || 'New workspace')}</span><span class="city">${esc(w.city)}</span></button>`;
+        w.renamed = false;
+      }
+    }
+    $('#sbList').innerHTML = html;
+  }
+  function renderTopbar() {
+    const w = W();
+    $('#topbar').innerHTML = `<span class="crumb">${esc(R().name)}</span><span style="color:var(--sep)">/</span><span class="br${w.branchChanged ? ' changed' : ''}"${w.branchChanged ? ' data-req="GHL-05"' : ''}>${I.branch}${esc(w.branch)}</span><span class="grow"></span>`;
+    w.branchChanged = false;
+  }
+  function renderTabs() { $('#tabs').innerHTML = `<div class="tab-wrap selected"><button class="tab"><span class="agent">C</span><span>${esc(W().msgs.length ? 'Conversation' : 'New conversation')}</span></button></div>`; }
+  const chipHTML = (c, enter) => `<span class="fchip${enter ? ' enter' : ''}" data-req="${c.kind === 'issue' ? 'GHL-04' : 'GHL-05'}" title="${esc(c.tip)}"><span class="seg">${c.kind === 'issue' ? I.gh : c.kind === 'pr' ? I.pr : I.branch}</span><span class="nm">${esc(c.file)}</span></span>`;
+  function renderChat() {
+    const w = W();
+    const items = w.msgs.map((m) => m.k === 'user'
+      ? `<div class="msg-user${m.enter ? ' enter' : ''}">${m.chips && m.chips.length ? `<div class="chips-line">${m.chips.map((c) => chipHTML(c)).join('')}</div>` : ''}${m.t ? `<span>${esc(m.t)}</span>` : ''}</div>`
+      : `<div class="msg-agent${m.enter ? ' enter' : ''}">${esc(m.t)}</div>`).join('');
+    w.msgs.forEach((m) => { m.enter = false; });
+    $('#chatCol').innerHTML = items || '<p class="chat-empty">A new workspace on <code>rocky/lima</code>.<br>Open + ▸ Link GitHub issue to start from an issue, a pull request or a branch.</p>';
+    $('#chat').scrollTop = $('#chat').scrollHeight;
+  }
+  function renderComposer(focus) {
+    const w = W();
+    const input = $('#input');
+    $('#cText').querySelectorAll('.fchip').forEach((n) => n.remove());
+    w.chips.forEach((c) => input.insertAdjacentHTML('beforebegin', chipHTML(c, c.enter)));
+    w.chips.forEach((c) => { c.enter = false; });
+    input.value = w.draft;
+    $('#sendBtn').classList.toggle('ready', Boolean(w.draft.trim() || w.chips.length));
+    $('#plusBtn').classList.toggle('on', state.menu === 'plus');
+    if (focus) input.focus();
+  }
+  function tabDot(t) { return t.st === 'running' ? 'run' : t.st === 'failed' ? 'fail' : 'done'; }
+  function defaultItem(w) {
+    const r = repos[w.repo];
+    const last = state.lastRun[w.repo];
+    if (last && (last === 'run-script' || (!state.badJson && taskOf(last)))) return last;
+    return r.runScript ? 'run-script' : null;
+  }
+  function isRunning(w, label) { return w.tabs.some((t) => t.task === label && t.st === 'running'); }
+  function renderPanel() {
+    const w = W(); const r = R();
+    let run;
+    if (!r.hasTasks) {
+      run = `<button class="run-mini" data-action="run-script">${I.play}<span>Run</span></button>`;   // no tasks.json: today's button
+    } else {
+      const def = defaultItem(w);
+      const running = def && (def === 'run-script' ? isRunning(w, 'run-script') : isRunning(w, def));
+      const label = def === 'run-script' ? 'Run' : def || 'Run';
+      const tip = def === 'run-script' ? 'Run the run script' : def ? `Run the task “${def}”` : 'Choose what to run';
+      run = `<span class="run-split" data-req="TSK-02"><button class="rs-main" data-action="${running ? 'stop' : 'run-default'}" title="${running ? 'Stop' : esc(tip)}">${running ? I.stop : I.play}<span>${running ? 'Stop' : esc(label)}</span></button><span class="rs-div"></span><button class="rs-chev${state.menu === 'run' ? ' on' : ''}" data-action="run-menu" aria-label="Choose what Run runs" title="Run a task">${I.chev}</button></span>`;
+    }
+    const tabs = w.tabs.map((t) => `<button class="term-tab${t.id === w.sel ? ' sel' : ''}${t.enter ? ' enter' : ''}" data-action="term-tab" data-tab="${t.id}"${t.kind === 'task' ? ' data-req="TSK-03"' : ''} title="${esc(t.title)}"><span class="sdot ${tabDot(t)}"></span><span>${esc(t.title)}</span></button>`).join('');
+    w.tabs.forEach((t) => { t.enter = false; });
+    $('#pbar').innerHTML = run + '<span class="sep"></span>' + tabs;
+    renderTerm();
+  }
+  function renderTerm() {
+    const w = W(); const t = w.tabs.find((x) => x.id === w.sel);
+    const el = $('#term');
+    el.innerHTML = t ? t.lines.map(([cls, s]) => `<div class="${cls}">${esc(s)}</div>`).join('') : '<div class="blank">No terminal yet</div>';
+    el.scrollTop = el.scrollHeight;
+  }
+  function renderAll(focus) { renderSidebar(); renderTopbar(); renderTabs(); renderChat(); renderComposer(focus); renderPanel(); }
+
+  // ---------- menus ----------
+  let menuEl = null;
+  function closeMenu() { if (menuEl) { menuEl.remove(); menuEl = null; } if (state.menu) { state.menu = null; renderComposer(); renderPanel(); } }
+  function openMenu(kind, anchor, items, { width = 240, above = true, title = '' } = {}) {
+    if (menuEl) menuEl.remove();
+    state.menu = kind;
+    const m = document.createElement('div'); m.className = 'menu'; m.setAttribute('role', 'menu'); m.style.width = width + 'px';
+    m.innerHTML = (title ? `<div class="m-title">${esc(title)}</div>` : '') + items.map((it, i) => it === '-' ? '<div class="menu-sep"></div>'
+      : it.caption ? `<div class="m-title">${esc(it.caption)}</div>`
+      : `<button class="menu-item${it.hl ? ' hl' : ''}" data-i="${i}"${it.disabled ? ' disabled' : ''}${it.tip ? ` title="${esc(it.tip)}"` : ''}${it.req ? ` data-req="${it.req}"` : ''}>${it.icon ? `<span class="ico">${it.icon}</span>` : ''}<span class="txt"><span>${esc(it.label)}</span>${it.detail ? `<small>${esc(it.detail)}</small>` : ''}</span>${it.kbd ? `<span class="m-kbd">${it.kbd}</span>` : ''}<span class="m-end">${it.dot ? '<span class="sdot run"></span>' : ''}${it.check ? I.check : ''}</span></button>`).join('');
+    win.appendChild(m);
+    const a = anchor.getBoundingClientRect(); const box = win.getBoundingClientRect();
+    m.style.left = Math.max(6, Math.min(a.left - box.left, box.width - m.offsetWidth - 6)) + 'px';
+    m.style.top = (above ? a.top - box.top - m.offsetHeight - 6 : a.bottom - box.top + 6) + 'px';
+    m.addEventListener('click', (e) => { const b = e.target.closest('.menu-item'); if (!b || b.disabled) return; const it = items[Number(b.dataset.i)]; closeMenu(); it.run && it.run(); });
+    menuEl = m;
+    renderComposer(); renderPanel();
+    return m;
+  }
+
+  // ---------- GHL: the picker ----------
+  let pickerEl = null; let searchTimer = null;
+  function closePicker() { if (pickerEl) { pickerEl.remove(); pickerEl = null; } state.picker = null; }
+  function openPicker() {
+    closePicker();
+    state.picker = { tab: 'issues', q: '', hl: 0, loading: true, busy: null };
+    const p = document.createElement('div'); p.className = 'picker'; p.dataset.req = 'GHL-02';
+    p.innerHTML = `<div class="pk-search">${I.search}<input id="pkInput" placeholder="Search by number, title or description" autocomplete="off" aria-label="Search GitHub"></div><div class="pk-tabs" role="tablist"></div><div class="pk-list" id="pkList" data-req="GHL-03"></div>`;
+    win.appendChild(p); pickerEl = p;
+    const c = $('#composer').getBoundingClientRect(); const box = win.getBoundingClientRect();
+    p.style.left = (c.left - box.left) + 'px';
+    p.style.top = (c.top - box.top - 6) + 'px';
+    p.style.transform = 'translateY(-100%)';
+    const input = p.querySelector('#pkInput');
+    input.addEventListener('input', () => { state.picker.q = input.value; state.picker.hl = 0; state.picker.loading = true; renderPicker(); clearTimeout(searchTimer); searchTimer = setTimeout(() => { if (state.picker) { state.picker.loading = false; renderPicker(); } }, 250 + 250); });
+    input.addEventListener('keydown', pickerKey);
+    renderPicker(); input.focus();
+    setTimeout(() => { if (state.picker) { state.picker.loading = false; renderPicker(); } }, 450);   // GHL-03: the first page, once per opening
+  }
+  function pickerRows() {
+    const w = W(); const pk = state.picker; const q = pk.q.trim().replace(/^#/, '').toLowerCase();
+    const match = (n, t) => !q || String(n).startsWith(q) || t.toLowerCase().includes(q);
+    const blocked = w.dirty ? 'dirty' : null;
+    if (pk.tab === 'issues') return { rows: ISSUES.filter((i) => match(i.n, i.t)).map((i) => ({ kind: 'issue', key: i.n, html: `<span class="gh">${I.gh}</span><span class="st-open">${pk.busy === i.n ? spinner(14) : I.issueOpen}</span><span class="num">#${i.n}</span><span class="ttl">${esc(i.t)}</span>`, item: i })) };
+    if (pk.tab === 'prs') return { blocked, rows: PRS.filter((p) => match(p.n, p.t)).map((p) => ({ kind: 'pr', key: p.n, why: blocked ? '' : p.why, disabled: Boolean(blocked || p.why), html: `<span class="gh">${I.gh}</span><span class="${p.draft ? 'st-draft' : 'st-open'}">${pk.busy === p.n ? spinner(14) : I.pr}</span><span class="num">#${p.n}</span><span class="ttl">${esc(p.t)}</span>${!blocked && p.why ? `<span class="why">${esc(p.why)}</span>` : ''}`, item: p })) };
+    const current = { name: w.branch, why: 'Current branch' };
+    const all = [current, ...BRANCHES.filter((b) => b.name !== w.branch)];
+    return { blocked, rows: all.filter((b) => !q || b.name.toLowerCase().includes(q)).map((b) => ({ kind: 'branch', key: b.name, why: blocked && b !== current ? '' : b.why, disabled: Boolean(blocked || b.why), html: `<span style="color:var(--text-2)">${pk.busy === b.name ? spinner(14) : I.branch}</span><span class="bname">${esc(b.name)}</span>${b.remote ? '<span class="tag">origin</span>' : ''}${(b.why && (!blocked || b === current)) ? `<span class="why">${esc(b.why)}</span>` : ''}`, item: b })) };
+  }
+  function renderPicker() {
+    if (!pickerEl) return;
+    const pk = state.picker;
+    pickerEl.querySelector('.pk-tabs').innerHTML = [['issues', 'Issues'], ['prs', 'Pull requests'], ['branches', 'Branches']].map(([k, l]) => `<button role="tab" class="${pk.tab === k ? 'sel' : ''}" data-tab="${k}">${l}</button>`).join('');
+    const list = pickerEl.querySelector('#pkList');
+    if (pk.loading) { list.innerHTML = `<div class="pk-center">${spinner(14)}</div>`; return; }   // GHL-02: one spinner, nothing else
+    const { rows, blocked } = pickerRows();
+    const enabled = rows.filter((r) => !r.disabled);
+    pk.hl = Math.max(0, Math.min(pk.hl, enabled.length - 1));
+    let html = blocked ? `<div class="pk-notice" data-req="GHL-05">${I.warn}<span>This workspace has changes of its own. Switching needs one with none: create a workspace for it.</span></div>` : '';
+    if (!rows.length) html += `<div class="pk-center">${pk.q ? 'No matches' : pk.tab === 'issues' ? 'No open issues' : 'No open pull requests'}</div>`;
+    let e = -1;
+    html += rows.map((r, i) => { if (!r.disabled) e++; return `<button class="pk-row${!r.disabled && e === pk.hl ? ' hl' : ''}" data-row="${i}"${r.disabled ? ' disabled' : ''}${r.why ? ` title="${esc(r.why)}"` : ''}>${r.html}</button>`; }).join('');
+    list.innerHTML = html;
+    list.onclick = (ev) => { const b = ev.target.closest('.pk-row'); if (!b || b.disabled) return; pick(rows[Number(b.dataset.row)]); };
+    pickerEl.querySelector('.pk-tabs').onclick = (ev) => { const b = ev.target.closest('[data-tab]'); if (!b) return; switchTab(b.dataset.tab); };
+  }
+  function switchTab(tab) {
+    state.picker.tab = tab; state.picker.hl = 0; state.picker.loading = true; renderPicker();
+    setTimeout(() => { if (state.picker) { state.picker.loading = false; renderPicker(); } }, tab === 'branches' ? 350 : 450);
+    pickerEl.querySelector('#pkInput').focus();
+  }
+  function pickerKey(e) {
+    const pk = state.picker; if (!pk) return;
+    const order = ['issues', 'prs', 'branches'];
+    if (e.key === 'Tab') { e.preventDefault(); switchTab(order[(order.indexOf(pk.tab) + (e.shiftKey ? 2 : 1)) % 3]); return; }
+    if (e.key === 'Escape') { e.preventDefault(); closePicker(); $('#input').focus(); return; }
+    if (pk.loading) return;
+    const enabled = pickerRows().rows.filter((r) => !r.disabled);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); pk.hl = (pk.hl + (e.key === 'ArrowDown' ? 1 : -1) + enabled.length) % Math.max(1, enabled.length); renderPicker(); }
+    if (e.key === 'Enter' && enabled[pk.hl]) { e.preventDefault(); pick(enabled[pk.hl]); }
+  }
+  async function pick(row) {
+    const w = W(); const pk = state.picker;
+    if (row.kind === 'issue' && w.chips.some((c) => c.key === 'i' + row.key)) { closePicker(); renderComposer(true); return; }   // already in the box
+    if (row.kind !== 'issue' && w.chips.some((c) => c.kind !== 'issue')) { toast('One pull request or branch per message.'); return; }
+    pk.busy = row.key; renderPicker();
+    await wait(row.kind === 'issue' ? 500 : 800);
+    closePicker();
+    if (row.kind === 'issue') {
+      w.chips.push({ kind: 'issue', key: 'i' + row.key, file: `[GITHUB]-${row.key}.md`, tip: `#${row.key} ${row.item.t}`, title: row.item.t, n: row.key, enter: true });
+      toast(`Attached [GITHUB]-${row.key}.md: the issue, its labels and 3 comments, as Markdown.`);
+    } else {
+      const target = row.kind === 'pr' ? row.item.head : row.item.name;
+      const old = w.branch;
+      w.branch = target; w.branchChanged = true;
+      const file = row.kind === 'pr' ? `[GITHUB]-PR-${row.key}.md` : `[BRANCH]-${target.replace(/\//g, '-')}.md`;
+      w.chips.push({ kind: row.kind, key: 'b', file, tip: row.kind === 'pr' ? `#${row.key} ${row.item.t}` : target, enter: true });
+      toast(`Switched ${w.city} to ${target}${old.startsWith('rocky/') ? `; the empty ${old} was deleted` : ''}${row.kind === 'pr' ? `; Changes now compare with origin/${row.item.base}` : ''}.`);
+      renderTopbar();
+    }
+    renderComposer(true);
+  }
+
+  // ---------- send ----------
+  function send() {
+    const w = W();
+    if (!w.draft.trim() && !w.chips.length) return;
+    const first = !w.msgs.some((m) => m.k === 'user');
+    const chips = w.chips.slice(); const text = w.draft.trim();
+    w.msgs.push({ k: 'user', t: text, chips, enter: true });
+    w.chips = []; w.draft = '';
+    const issue = chips.find((c) => c.kind === 'issue');
+    if (first) {   // GHL-06: the name comes from the issue; otherwise from the text, as today
+      if (issue) { w.title = `#${issue.n} ${issue.title}`; w.renamed = true; } else if (text) { w.title = text.slice(0, 40); }
+    }
+    renderAll(true);
+    setTimeout(() => {
+      w.msgs.push({ k: 'agent', t: issue ? `I read #${issue.n} from ${issue.file}: the description and its comments. Starting with a failing test for it.` : 'On it.', enter: true });
+      if (w.id === state.selected) renderChat();
+    }, 1200);
+  }
+
+  // ---------- TSK: running tasks ----------
+  function runMenu(anchor) {
+    const w = W(); const r = R(); const def = defaultItem(w);
+    const items = [];
+    if (r.runScript) items.push({ label: 'Run script', detail: r.runScript, icon: I.play, check: def === 'run-script', dot: isRunning(w, 'run-script'), run: () => runItem('run-script') });
+    items.push('-');
+    if (state.badJson) items.push({ label: 'tasks.json can\'t be read', detail: 'Line 41: Unexpected character “}”', disabled: true, req: 'TSK-07' });
+    else {
+      items.push({ caption: 'Tasks' });
+      listed().forEach((t) => items.push({ label: t.label, check: def === t.label, dot: isRunning(w, t.label), req: 'TSK-01', run: () => runItem(t.label) }));
+    }
+    openMenu('run', anchor, items, { width: 300 });
+  }
+  function chainOf(label, seen = new Set(), out = []) {   // TSK-05: dependencies first, each once
+    const t = taskOf(label); if (!t || seen.has(label)) return out; seen.add(label);
+    t.deps.forEach((d) => chainOf(d, seen, out)); out.push(t); return out;
+  }
+  async function askInputs(chain) {   // TSK-04: every input of the chain, once, in order of first use
+    const ids = []; chain.forEach((t) => t.inputs.forEach((id) => { if (!ids.includes(id)) ids.push(id); }));
+    const answers = {};
+    for (const id of ids) {
+      const inp = INPUTS[id];
+      const value = await new Promise((resolve) => {
+        const anchor = $('.run-split') || $('#pbar');
+        const m = openMenu('input', anchor, inp.options.map(([label, v]) => ({ label, check: v === inp.def, hl: v === inp.def, req: 'TSK-04', run: () => resolve(v) })), { width: 260, title: inp.desc });
+        m.dataset.cancel = '1';
+        const onKey = (e) => {
+          if (!menuEl || menuEl !== m) { document.removeEventListener('keydown', onKey, true); return; }
+          if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); document.removeEventListener('keydown', onKey, true); closeMenu(); resolve(null); }
+          if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); document.removeEventListener('keydown', onKey, true); closeMenu(); resolve(inp.def); }
+        };
+        document.addEventListener('keydown', onKey, true);
+        m.addEventListener('cancel-run', () => resolve(null));
+      });
+      if (value == null) { toast('Run cancelled.'); return null; }
+      answers[id] = value;
+    }
+    return answers;
+  }
+  function tabFor(w, t) {   // TSK-03: presentation.panel
+    if (t.panel === 'dedicated') {
+      let tab = w.tabs.find((x) => x.task === t.label);
+      if (!tab) { tab = { id: w.id + '-' + Math.random().toString(36).slice(2, 7), kind: 'task', enter: true }; w.tabs.push(tab); }
+      Object.assign(tab, { title: t.label, task: t.label, st: 'running', lines: [] });
+      return tab;
+    }
+    let tab = w.tabs.find((x) => x.shared && x.st !== 'running');
+    if (!tab) { tab = { id: w.id + '-' + Math.random().toString(36).slice(2, 7), kind: 'task', shared: true, enter: true }; w.tabs.push(tab); }
+    Object.assign(tab, { title: t.label, task: t.label, st: 'running', lines: [] });
+    return tab;
+  }
+  async function runStep(w, t, answers, run) {
+    const tab = tabFor(w, t); run.tabs.push(tab);
+    if (t.reveal === 'always') w.sel = tab.id;
+    const sub = (s) => s.replace(/\$\{input:(\w+)\}/g, (_, id) => answers[id]).replace(/\$\{(\w+)\}/g, (_, id) => answers[id] || id);
+    tab.lines.push(['echo', '> ' + sub(t.cmd)]);
+    if (w.id === state.selected) renderPanel();
+    for (const line of t.out) {
+      await wait(t.ms / t.out.length);
+      if (tab.st !== 'running') return false;   // stopped meanwhile
+      const text = sub(line);
+      const ready = t.ends && new RegExp(t.ends).test(text);
+      tab.lines.push([ready ? 'ready' : '', text]);
+      if (w.id === state.selected) renderTerm();
+      if (ready) return true;   // TSK-05: a background task is done once its endsPattern matches; it keeps running
+    }
+    if (t.bg) return true;   // background without endsPattern: done as soon as it starts (and it keeps running)
+    tab.st = 'done'; tab.lines.push(['end', 'Process exited with code 0']);
+    if (w.id === state.selected) renderPanel();
+    return true;
+  }
+  async function runItem(item) {
+    const w = W();
+    state.lastRun[w.repo] = item;   // TSK-02: the repository's default from now on
+    if (item === 'run-script') {
+      if (isRunning(w, 'run-script')) { w.sel = w.tabs.find((x) => x.task === 'run-script').id; renderPanel(); return; }
+      let tab = w.tabs.find((x) => x.task === 'run-script');
+      if (!tab) { tab = { id: w.id + '-run', kind: 'script', enter: true }; w.tabs.push(tab); }
+      Object.assign(tab, { title: 'Run', task: 'run-script', st: 'running', lines: [['echo', '> ' + R().runScript], ['', 'Listening on http://localhost:41010']] });
+      w.sel = tab.id; renderPanel(); return;
+    }
+    if (isRunning(w, item)) { w.sel = w.tabs.find((x) => x.task === item && x.st === 'running').id; renderPanel(); toast(`“${item}” is already running.`); return; }
+    const chain = chainOf(item);
+    const answers = await askInputs(chain);
+    if (!answers) { renderPanel(); return; }
+    const run = { tabs: [] };
+    renderPanel();
+    for (const t of chain) {
+      if (isRunning(w, t.label) && t.bg) continue;   // TSK-05: already running and ready
+      const ok = await runStep(w, t, answers, run);
+      if (!ok) return;
+    }
+    renderPanel();
+  }
+  function stopDefault() {   // TSK-06: the default and the dependencies this run started that nothing else needs
+    const w = W(); const def = defaultItem(w);
+    if (def === 'run-script') { const t = w.tabs.find((x) => x.task === 'run-script'); if (t) { t.st = 'done'; t.lines.push(['end', 'Process stopped']); } renderPanel(); return; }
+    const labels = chainOf(def).map((t) => t.label).reverse();
+    const othersNeed = new Set(w.tabs.filter((x) => x.st === 'running' && x.task !== def && listed().some((l) => l.label === x.task)).flatMap((x) => chainOf(x.task).map((t) => t.label)));
+    labels.forEach((l) => { if (l !== def && othersNeed.has(l)) return; w.tabs.filter((x) => x.task === l && x.st === 'running').forEach((x) => { x.st = 'done'; x.lines.push(['end', 'Process stopped']); }); });
+    renderPanel();
+  }
+
+  // ---------- events ----------
+  win.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-action]'); if (!b || !win.contains(b) || b.disabled) return;
+    const w = W();
+    switch (b.dataset.action) {
+      case 'select': state.selected = b.dataset.ws; closeMenu(); closePicker(); renderAll(); break;
+      case 'plus':
+        if (state.menu === 'plus') { closeMenu(); break; }
+        openMenu('plus', b, [
+          { label: 'Add attachment', icon: I.clip, kbd: '⌘U', run: () => toast('Opens the file picker, as today.') },
+          { label: 'Link GitHub issue', icon: I.gh, req: 'GHL-01', run: openPicker },
+          { label: 'Plan mode', icon: I.map, kbd: '⇧Tab', run: () => toast('Switches plan mode, as today.') },
+        ], { width: 230 });
+        break;
+      case 'run-menu': if (state.menu === 'run') closeMenu(); else runMenu(b.closest('.run-split')); break;
+      case 'run-default': { const def = defaultItem(w); if (def) runItem(def); else runMenu(b.closest('.run-split')); break; }
+      case 'stop': stopDefault(); break;
+      case 'run-script': runItem('run-script'); break;
+      case 'term-tab': w.sel = b.dataset.tab; renderPanel(); break;
+      default: break;
+    }
+  });
+  document.addEventListener('mousedown', (e) => {
+    if (menuEl && !menuEl.contains(e.target) && !e.target.closest('[data-action="plus"],[data-action="run-menu"]')) { const m = menuEl; closeMenu(); m.dispatchEvent(new Event('cancel-run')); }
+    if (pickerEl && !pickerEl.contains(e.target)) closePicker();
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && menuEl && state.menu !== 'input') closeMenu(); });
+  const input = $('#input');
+  input.addEventListener('input', () => { W().draft = input.value; $('#sendBtn').classList.toggle('ready', Boolean(input.value.trim() || W().chips.length)); });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); send(); }
+    if (e.key === 'Backspace' && !input.value && W().chips.length) { W().chips.pop(); renderComposer(true); }   // a chip goes like an attachment
+  });
+  $('#sendBtn').addEventListener('click', send);
+  let toastTimer = null;
+  function toast(msg) { let t = win.querySelector('.toast'); if (!t) { t = document.createElement('div'); t.className = 'toast'; win.appendChild(t); } t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 3200); }
+  $('#demoDirty').addEventListener('click', (e) => { const w = workspaces.find((x) => x.id === 'w2'); w.dirty = !w.dirty; e.currentTarget.setAttribute('aria-pressed', String(w.dirty)); if (state.picker) renderPicker(); });
+  $('#demoBadJson').addEventListener('click', (e) => { state.badJson = !state.badJson; e.currentTarget.setAttribute('aria-pressed', String(state.badJson)); renderPanel(); });
+  $('#demoPins').addEventListener('click', (e) => { e.currentTarget.setAttribute('aria-pressed', String(document.body.classList.toggle('spec-on'))); });
+  document.addEventListener('click', (e) => {
+    if (!document.body.classList.contains('spec-on')) return;
+    const el = e.target.closest('[data-req]'); if (!el) return;
+    const s = document.getElementById('REQ-' + el.dataset.req); if (!s) return;
+    s.scrollIntoView({ behavior: 'smooth', block: 'start' }); s.classList.add('flash'); setTimeout(() => s.classList.remove('flash'), 1400);
+  }, true);
+
+  $('#plusBtn').innerHTML = I.plus;
+  $('#sendBtn').innerHTML = I.up;
+  renderAll();
+})();
+</script>
+</body>
+</html>

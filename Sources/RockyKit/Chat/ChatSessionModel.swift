@@ -106,7 +106,13 @@ public final class ChatSessionModel {
     public private(set) var sessionId: String?
     public private(set) var capabilities = AgentCapabilities(loadSession: false)
     /// The settings the agent offers for this session (model, effort, fast mode…); empty until the session exists.
-    public private(set) var configOptions: [SessionConfigOption] = []
+    public private(set) var configOptions: [SessionConfigOption] = [] {
+        didSet { reportModels(replacing: oldValue) }
+    }
+    /// `AGM-02`, `AGM-03`, `AGM-05`: a model picked before the session reported its options. It is set once, as soon as
+    /// they come and before the agent is ready, then cleared. A model the agent does not list leaves its default, and
+    /// `onToast` says so.
+    public internal(set) var pendingModel: SessionConfigOption.Choice?
     /// The slash commands the agent announced for this session (KIT-01), replaced on every update.
     public private(set) var commands: [SlashCommand] = []
     /// False until the agent's first command list arrives; until then `AppModel.commands(for:)` offers the last list
@@ -138,6 +144,12 @@ public final class ChatSessionModel {
     }
     /// Called with every command list the agent announces, for `AppModel`'s cache per repository and agent.
     @ObservationIgnored public var onCommands: (@MainActor ([SlashCommand]) -> Void)?
+    /// `AGM-04`: called with the `model` option each time its list of models changes, whichever answer or update
+    /// brought it (`session/new`, `session/load`, `config_option_update`, a `session/set_config_option` answer), for
+    /// `AppModel`'s catalog.
+    @ObservationIgnored public var onModelOption: (@MainActor (SessionConfigOption) -> Void)?
+    /// A line for the window's toast (`AppModel.onToast`): a picked model the agent does not have (`AGM-02`).
+    @ObservationIgnored public var onToast: (@MainActor (String) -> Void)?
 
     @ObservationIgnored private let launch: AgentLaunch
     @ObservationIgnored private let flushInterval: Duration
@@ -273,11 +285,39 @@ public final class ChatSessionModel {
             } else {
                 try await startNewSession(on: connection)
             }
+            await applyPendingModel()
+            // Stopped while it started (AGM-02 stops an agent that may still be starting): it stays stopped, and the
+            // session it got never reaches the store.
+            if isStopped {
+                await connection.terminate()
+                return
+            }
             state = .ready
             if let sessionId { onSessionReady(sessionId) }
         } catch {
-            fail(Self.describe(error))
+            // Stopped while it started: the stop says what happened, not the exit it caused (M2.8 Decision 3).
+            if !isStopped { fail(Self.describe(error)) }
             await connection?.terminate()
+        }
+    }
+
+    private var isStopped: Bool {
+        if case .stopped = state { return true }
+        return false
+    }
+
+    /// `pendingModel`, once the session has reported its options. A pick made meanwhile (the menu stays open while the
+    /// agent starts, `AGM-05`) is applied after it. A model the agent does not list keeps its default: "GPT-5.5 isn't
+    /// available in OpenCode; using Claude Sonnet 5".
+    private func applyPendingModel() async {
+        while let pending = pendingModel, !isStopped {
+            pendingModel = nil
+            guard let model = option(SessionConfigOption.model) else { return }
+            if model.choices.contains(where: { $0.value == pending.value }) {
+                await setOption(model.id, to: pending.value)
+            } else {
+                onToast?("\(pending.name) isn't available in \(agent.displayName); using \(model.currentName)")
+            }
         }
     }
 
@@ -307,6 +347,14 @@ public final class ChatSessionModel {
 
     public func option(_ id: String) -> SessionConfigOption? {
         configOptions.first { $0.id == id }
+    }
+
+    /// `AGM-04`: a list of models the catalog has not seen from this session goes to `onModelOption`. A change of the
+    /// current model alone reports nothing.
+    private func reportModels(replacing old: [SessionConfigOption]) {
+        guard let model = option(SessionConfigOption.model),
+              old.first(where: { $0.id == SessionConfigOption.model })?.choices != model.choices else { return }
+        onModelOption?(model)
     }
 
     /// Changes one of `configOptions` (for example the model or the effort). The agent answers with the whole

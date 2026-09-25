@@ -1,113 +1,121 @@
 import RockyKit
 import SwiftUI
 
-/// GIT-04's sheet, opened from "Commit…" in the Changes tab's Uncommitted header: a macOS sheet, which slides from the
-/// top of the window, 500 wide on `panel`. "Commit changes"; the uncommitted files (status letter and path,
-/// read-only); the subject, prefilled with the workspace's title, with a 72-character counter that turns `attention`
-/// past 72; an optional description; then "git add -A, then git commit", Cancel and Commit (⌘Return, off with an empty
-/// subject). While git runs: "Running git commit…" and what git and the hooks write. On failure the sheet stays open
-/// with that output and git's exit status (ERR-02). The state lives in the model (`AppModel.commits`), so the sheet
-/// comes back as it was if its tab went away meanwhile.
-struct CommitSheet: View {
+/// GIT-04's commit, opened from "Commit…" in the Changes tab's Uncommitted header: DLG-06's large mini-modal, 500 wide,
+/// where it was a macOS sheet (user decision, 2026-09-25). "Commit changes"; the uncommitted files (status letter and
+/// path, read-only); the subject, prefilled with the workspace's title, with a 72-character counter that turns
+/// `attention` past 72; an optional description; then "git add -A, then git commit", Cancel and Commit (⌘Return, off
+/// with an empty subject; Return in a field types a line). While git runs: "Running git commit…" and what git and the
+/// hooks write, and neither Cancel, Esc nor a click outside closes it, as the commit cannot be taken back halfway. On
+/// failure it stays open with that output and git's exit status (ERR-02). The state lives in the model
+/// (`AppModel.commits`), so the dialog comes back as it was if its tab went away meanwhile.
+@MainActor
+enum CommitDialog {
+    /// Git's convention for a subject line; past it the counter turns `attention`, and the commit still goes.
+    static let subjectLimit = 72
+
+    /// `close` runs once a commit worked; Cancel closes it through the call site's binding.
+    static func make(model: AppModel, workspace: Workspace, close: @escaping @MainActor () -> Void) -> Dialog {
+        // A dialog that comes back (its commit running or failed) shows the message it was given.
+        let progress = model.commits[workspace.id]
+        let title = model.title(for: workspace)
+        let draft = CommitDraft(subject: progress?.subject ?? (title.isFallback ? "" : title.text), description: progress?.description ?? "")
+        let workspaceId = workspace.id
+        let isRunning = { model.commits[workspaceId]?.isRunning == true }
+        return Dialog(
+            title: "Commit changes",
+            width: 500,
+            content: { AnyView(CommitDialogBody(model: model, workspace: workspace, draft: draft)) },
+            footnote: "git add -A, then git commit",
+            hasTextFields: true,
+            buttons: [
+                .cancel(isEnabled: { !isRunning() }),
+                DialogAction(
+                    title: "Commit",
+                    role: .primary,
+                    help: "Commit (⌘Return)",
+                    isEnabled: { !draft.isEmpty && !isRunning() },
+                    dismisses: false
+                ) {
+                    let subject = draft.subject
+                    let description = draft.description
+                    Task {
+                        if await model.commitChanges(workspaceId: workspaceId, subject: subject, description: description) {
+                            close()
+                        }
+                    }
+                },
+            ]
+        )
+    }
+}
+
+/// The message being written, a reference: the dialog's fields edit it, and its Commit button reads it, live.
+@MainActor
+@Observable
+final class CommitDraft {
+    var subject: String
+    var description: String
+
+    init(subject: String, description: String) {
+        self.subject = subject
+        self.description = description
+    }
+
+    var isEmpty: Bool {
+        subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
+/// The commit dialog's body, under its title: the files, the subject and its counter, the description, and git's output.
+private struct CommitDialogBody: View {
     let model: AppModel
     let workspace: Workspace
-    /// Closes the sheet: Cancel, Esc, or a commit that worked.
-    let close: () -> Void
-    @State private var subject: String
-    @State private var description: String
+    @Bindable var draft: CommitDraft
     @FocusState private var focus: Field?
 
     private enum Field {
         case subject, description
     }
 
-    /// Git's convention for a subject line; past it the counter turns `attention`, and the commit still goes.
-    static let subjectLimit = 72
-
-    init(model: AppModel, workspace: Workspace, close: @escaping () -> Void) {
-        self.model = model
-        self.workspace = workspace
-        self.close = close
-        // A sheet that comes back (its commit running or failed) shows the message it was given.
-        let progress = model.commits[workspace.id]
-        let title = model.title(for: workspace)
-        _subject = State(initialValue: progress?.subject ?? (title.isFallback ? "" : title.text))
-        _description = State(initialValue: progress?.description ?? "")
-    }
-
     var body: some View {
         let progress = model.commits[workspace.id]
-        let isRunning = progress?.isRunning == true
-        let isEmpty = subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Commit changes")
-                    .font(.rocky(15, weight: .semibold))
+        let limit = CommitDialog.subjectLimit
+        VStack(alignment: .leading, spacing: 12) {
+            CommitSheetFiles(files: model.changes[workspace.id]?.uncommitted ?? [])
+            VStack(alignment: .leading, spacing: 5) {
+                fieldLabel("Subject")
+                TextField("Subject", text: $draft.subject, prompt: Text(""))
+                    .labelsHidden()
+                    .textFieldStyle(.plain)
+                    .font(.rocky(13))
                     .foregroundStyle(Theme.textPrimary)
-                CommitSheetFiles(files: model.changes[workspace.id]?.uncommitted ?? [])
-                VStack(alignment: .leading, spacing: 5) {
-                    fieldLabel("Subject")
-                    TextField("Subject", text: $subject, prompt: Text(""))
-                        .labelsHidden()
-                        .textFieldStyle(.plain)
-                        .font(.rocky(13))
-                        .foregroundStyle(Theme.textPrimary)
-                        .focused($focus, equals: .subject)
-                        .modifier(CommitFieldBox(isFocused: focus == .subject))
-                }
-                Text(verbatim: "\(subject.count) / \(Self.subjectLimit)")
-                    .font(.rocky(11, design: .monospaced))
-                    .monospacedDigit()
-                    .foregroundStyle(subject.count > Self.subjectLimit ? Theme.attention : Theme.textTertiary)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-                    .padding(.top, -4)
-                    .accessibilityLabel("\(subject.count) of \(Self.subjectLimit) characters")
-                VStack(alignment: .leading, spacing: 5) {
-                    fieldLabel("Description (optional)")
-                    TextEditor(text: $description)
-                        .font(.rocky(13))
-                        .foregroundStyle(Theme.textPrimary)
-                        .scrollContentBackground(.hidden)
-                        .focused($focus, equals: .description)
-                        .frame(height: Zoom.shared(64))
-                        .modifier(CommitFieldBox(isFocused: focus == .description, horizontalPadding: 5, verticalPadding: 6))
-                        .accessibilityLabel("Description")
-                }
-                if let progress {
-                    CommitOutputView(progress: progress)
-                }
+                    .focused($focus, equals: .subject)
+                    .modifier(CommitFieldBox(isFocused: focus == .subject))
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 18)
-            .padding(.bottom, 6)
-            HStack(spacing: 8) {
-                Text("git add -A, then git commit")
-                    .font(.rocky(11.5))
-                    .foregroundStyle(Theme.textTertiary)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-                // Esc is Cancel's; while git runs neither closes the sheet, as the commit cannot be taken back halfway.
-                Button("Cancel", action: close)
-                    .font(.rocky(12.5))
-                    .buttonStyle(RockyTextButtonStyle(height: 26))
-                    .keyboardShortcut(.cancelAction)
-                    .disabled(isRunning)
-                Button("Commit", action: commit)
-                    .font(.rocky(12.5, weight: .medium))
-                    .buttonStyle(RockyPrimaryButtonStyle())
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .disabled(isEmpty || isRunning)
-                    .help("Commit (⌘Return)")
+            Text(verbatim: "\(draft.subject.count) / \(limit)")
+                .font(.rocky(11, design: .monospaced))
+                .monospacedDigit()
+                .foregroundStyle(draft.subject.count > limit ? Theme.attention : Theme.textTertiary)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.top, -4)
+                .accessibilityLabel("\(draft.subject.count) of \(limit) characters")
+            VStack(alignment: .leading, spacing: 5) {
+                fieldLabel("Description (optional)")
+                TextEditor(text: $draft.description)
+                    .font(.rocky(13))
+                    .foregroundStyle(Theme.textPrimary)
+                    .scrollContentBackground(.hidden)
+                    .focused($focus, equals: .description)
+                    .frame(height: Zoom.shared(64))
+                    .modifier(CommitFieldBox(isFocused: focus == .description, horizontalPadding: 5, verticalPadding: 6))
+                    .accessibilityLabel("Description")
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 14)
-            .padding(.bottom, 16)
+            if let progress {
+                CommitOutputView(progress: progress)
+            }
         }
-        .frame(width: Zoom.shared(500))
-        .background(Theme.panel)
-        .preferredColorScheme(.dark)
-        .interactiveDismissDisabled(isRunning)
-        // After the sheet is in its window, or the focus does not take.
+        // After the dialog is in its window, or the focus does not take.
         .task { focus = .subject }
     }
 
@@ -118,22 +126,10 @@ struct CommitSheet: View {
             .foregroundStyle(Theme.textSecondary)
             .accessibilityHidden(true)
     }
-
-    private func commit() {
-        let model = self.model
-        let workspaceId = workspace.id
-        let subject = self.subject
-        let description = self.description
-        Task {
-            if await model.commitChanges(workspaceId: workspaceId, subject: subject, description: description) {
-                close()
-            }
-        }
-    }
 }
 
-/// The mock's text fields in a sheet: black at 20 % under a `hairline` border, radius 6, 7 × 10 padding; the border
-/// turns `accent` at 55 % while the field has the keyboard.
+/// The mock's text fields in the commit dialog: black at 20 % under a `hairline` border, radius 6, 7 × 10 padding; the
+/// border turns `accent` at 55 % while the field has the keyboard.
 private struct CommitFieldBox: ViewModifier {
     let isFocused: Bool
     var horizontalPadding: CGFloat = 10

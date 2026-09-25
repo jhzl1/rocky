@@ -65,6 +65,24 @@ struct CodeEditor: NSViewRepresentable {
         return false
     }
 
+    /// KBD-04: the keyboard back to the editor on screen, a file or diff tab's, when ⌃` folds the terminal panel. False
+    /// when no editor shows.
+    @discardableResult
+    static func focusShownEditor(in window: NSWindow) -> Bool {
+        guard let root = window.contentView, let editor = shownEditor(in: root), let textView = editor.documentView else {
+            return false
+        }
+        return window.makeFirstResponder(textView)
+    }
+
+    private static func shownEditor(in view: NSView) -> CodeEditorScrollView? {
+        if let editor = view as? CodeEditorScrollView, !editor.isHiddenOrHasHiddenAncestor { return editor }
+        for subview in view.subviews {
+            if let editor = shownEditor(in: subview) { return editor }
+        }
+        return nil
+    }
+
     @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
         private var parent: CodeEditor

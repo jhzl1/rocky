@@ -10,11 +10,11 @@ struct ChangesTab: View {
     let workspace: Workspace
     /// GIT-05's confirmation, for one file or for every uncommitted one.
     @State private var discardRequest: DiscardRequest?
-    /// GIT-04's sheet, opened by "Commit…". It also shows while the model holds a commit for the workspace (running, or
-    /// failed until closed), so it comes back with the tab if the tab went away meanwhile.
+    /// GIT-04's commit dialog (DLG-06), opened by "Commit…". It also shows while the model holds a commit for the
+    /// workspace (running, or failed until closed), so it comes back with the tab if the tab went away meanwhile.
     @State private var showsCommitSheet = false
 
-    private struct DiscardRequest {
+    private struct DiscardRequest: Equatable {
         let paths: [String]
         let title: String
         let button: String
@@ -46,30 +46,30 @@ struct ChangesTab: View {
             }
             .frame(maxHeight: .infinity)
         }
-        .confirmationDialog(
-            discardRequest?.title ?? "",
-            isPresented: Binding(get: { discardRequest != nil }, set: { if !$0 { discardRequest = nil } }),
-            titleVisibility: .visible,
-            presenting: discardRequest
-        ) { request in
-            Button(request.button, role: .destructive) {
-                let model = self.model
-                let workspaceId = workspace.id
-                Task { await model.discardChanges(workspaceId: workspaceId, paths: request.paths) }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: { _ in
-            Text("This cannot be undone.")
+        .rockyDialog(item: $discardRequest) { request in
+            let model = self.model
+            let workspaceId = workspace.id
+            return Dialog(
+                title: request.title,
+                message: "This cannot be undone.",
+                buttons: [
+                    .cancel(),
+                    .destructive(request.button) {
+                        Task { await model.discardChanges(workspaceId: workspaceId, paths: request.paths) }
+                    },
+                ]
+            )
         }
-        .sheet(isPresented: Binding(
+        // DLG-06: the commit's large mini-modal.
+        .rockyDialog(isPresented: Binding(
             get: { showsCommitSheet || model.commits[workspace.id] != nil },
             set: { shown in if !shown { closeCommitSheet() } }
         )) {
-            CommitSheet(model: model, workspace: workspace, close: closeCommitSheet)
+            CommitDialog.make(model: model, workspace: workspace, close: closeCommitSheet)
         }
     }
 
-    /// Cancel, Esc or a commit that worked: the sheet goes, with a failure it showed. A commit still running keeps it.
+    /// Cancel, Esc or a commit that worked: the dialog goes, with a failure it showed. A commit still running keeps it.
     private func closeCommitSheet() {
         showsCommitSheet = false
         model.dismissCommit(workspaceId: workspace.id)

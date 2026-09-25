@@ -22,9 +22,9 @@ final class RepoSettingsPresenter {
         escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.keyCode == 53 else { return event }   // Esc
             // A Rocky menu open over the panel (the run mode, the Claude instance, the account) takes this Esc alone;
-            // its own monitor closes it.
+            // its own monitor closes it. So does a mini-modal, which comes before the settings (DLG-03).
             let closed = MainActor.assumeIsolated { () -> Bool in
-                guard !MenuPresenter.isAnyMenuOpen else { return false }
+                guard !MenuPresenter.isAnyMenuOpen, !DialogPresenter.shared.isShowing else { return false }
                 self?.dismiss()
                 return true
             }

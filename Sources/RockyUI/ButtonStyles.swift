@@ -120,17 +120,22 @@ struct RockyOutlineButtonStyle: ButtonStyle {
 }
 
 /// A white filled button for a view's one primary action (M3's "white filled": the comment box's Send, CMT-02): white
-/// with #111316 text, #DADDE1 on hover; 26 points high, padding 10, radius 6. 45 % when disabled.
+/// with #111316 text, #DADDE1 on hover; 26 points high, padding 10, radius 6. 45 % when disabled. A mini-modal's
+/// primary button is 28 high, padding 14, radius 7 (DLG-02).
 struct RockyPrimaryButtonStyle: ButtonStyle {
     var height: CGFloat = 26
+    var horizontalPadding: CGFloat = 10
+    var cornerRadius: CGFloat = 6
 
     func makeBody(configuration: Configuration) -> some View {
-        RockyPrimaryButton(configuration: configuration, height: height)
+        RockyPrimaryButton(configuration: configuration, height: height, horizontalPadding: horizontalPadding, cornerRadius: cornerRadius)
     }
 
     private struct RockyPrimaryButton: View {
         let configuration: Configuration
         let height: CGFloat
+        let horizontalPadding: CGFloat
+        let cornerRadius: CGFloat
         @State private var hovering = false
         @Environment(\.isEnabled) private var isEnabled
 
@@ -140,11 +145,11 @@ struct RockyPrimaryButtonStyle: ButtonStyle {
         var body: some View {
             configuration.label
                 .foregroundStyle(Self.text)
-                .padding(.horizontal, 10)
+                .padding(.horizontal, horizontalPadding)
                 .frame(height: Zoom.shared(height))
                 .background(
                     (configuration.isPressed || (hovering && isEnabled)) ? Self.hoverFill : Color.white,
-                    in: RoundedRectangle(cornerRadius: 6)
+                    in: RoundedRectangle(cornerRadius: cornerRadius)
                 )
                 .opacity(isEnabled ? 1 : 0.45)
                 .contentShape(Rectangle())
@@ -184,6 +189,42 @@ struct RockyFilledButtonStyle: ButtonStyle {
                     in: RoundedRectangle(cornerRadius: cornerRadius)
                 )
                 .opacity(isEnabled ? 1 : 0.5)
+                .contentShape(Rectangle())
+                .onHover { inside in withAnimation(Theme.Motion.hover) { hovering = inside } }
+                .clickable()
+        }
+    }
+}
+
+/// A mini-modal's destructive button (DLG-02): `danger` text on `fillDestructive`, `fillDestructiveHover` on hover and
+/// pressed; 28 points high, padding 14, radius 7, like the dialog's other buttons. 45 % when disabled.
+struct RockyDestructiveButtonStyle: ButtonStyle {
+    var height: CGFloat = 28
+    var horizontalPadding: CGFloat = 14
+    var cornerRadius: CGFloat = 7
+
+    func makeBody(configuration: Configuration) -> some View {
+        RockyDestructiveButton(configuration: configuration, height: height, horizontalPadding: horizontalPadding, cornerRadius: cornerRadius)
+    }
+
+    private struct RockyDestructiveButton: View {
+        let configuration: Configuration
+        let height: CGFloat
+        let horizontalPadding: CGFloat
+        let cornerRadius: CGFloat
+        @State private var hovering = false
+        @Environment(\.isEnabled) private var isEnabled
+
+        var body: some View {
+            configuration.label
+                .foregroundStyle(Theme.danger)
+                .padding(.horizontal, horizontalPadding)
+                .frame(height: Zoom.shared(height))
+                .background(
+                    configuration.isPressed || (hovering && isEnabled) ? Theme.fillDestructiveHover : Theme.fillDestructive,
+                    in: RoundedRectangle(cornerRadius: cornerRadius)
+                )
+                .opacity(isEnabled ? 1 : 0.45)
                 .contentShape(Rectangle())
                 .onHover { inside in withAnimation(Theme.Motion.hover) { hovering = inside } }
                 .clickable()

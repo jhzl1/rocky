@@ -18,9 +18,10 @@ public final class SettingsPresenter {
         guard escMonitor == nil else { return }
         escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.keyCode == 53 else { return event }   // Esc
-            // A Rocky menu open over the panel takes this Esc alone; its own monitor closes it.
+            // A Rocky menu open over the panel takes this Esc alone; its own monitor closes it. So does a mini-modal,
+            // which comes before the settings in DLG-03's order.
             let closed = MainActor.assumeIsolated { () -> Bool in
-                guard !MenuPresenter.isAnyMenuOpen else { return false }
+                guard !MenuPresenter.isAnyMenuOpen, !DialogPresenter.shared.isShowing else { return false }
                 self?.dismiss()
                 return true
             }
@@ -61,7 +62,7 @@ struct SettingsModal: View {
 /// The sections of the settings.
 struct SettingsContent: View {
     let model: AppModel
-    @AppStorage("terminalPanelCollapsed") private var panelCollapsed = false
+    @AppStorage(TerminalPanelStorage.collapsedKey) private var panelCollapsed = false
     @AppStorage(AlertSound.defaultsKey) private var alertSound = AlertSound.defaultName
     @State private var refreshing = false
 

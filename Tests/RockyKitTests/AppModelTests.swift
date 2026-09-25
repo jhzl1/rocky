@@ -275,9 +275,9 @@ struct AppModelTests {
             store: try store ?? RockyStore.inMemory(),
             paths: paths,
             captureEnvironment: capture,
-            makeLaunch: { _, cwd, environment, _ in
+            makeLaunch: { kind, cwd, environment, _ in
                 launches.record(environment)
-                let fake = Fixtures.fakeACPLaunch()
+                let fake = Fixtures.fakeACPLaunch(agent: kind)
                 return AgentLaunch(executable: fake.executable, arguments: fake.arguments, environment: fake.environment, cwd: cwd, stderrLog: fake.stderrLog)
             },
             installAdapter: { _, _, _, _ in },
@@ -732,6 +732,235 @@ struct AppModelTests {
         #expect(model.conversations[second.id]?.map(\.agent) == ["opencode"])
         #expect(model.existingChat(workspaceId: second.id)?.agent == .opencode)
         await model.stopAllAgents()
+    }
+
+    // MARK: Agents and models (AGM-01…AGM-07, KIT-11, KIT-12)
+
+    /// AGM-04, KIT-12: the models a session reports reach the catalog and its file, each agent's apart, and a list
+    /// announced later replaces the one before.
+    @Test func aSessionsModelsReachTheCatalog() async throws {
+        let (model, workspace) = try await emptyWorkspace(store: try RockyStore.inMemory())
+        #expect(model.knownModels(agent: .claude, workspaceId: workspace.id) == nil)
+
+        let claude = try #require(await model.openChat(workspace: workspace, agent: .claude))
+        #expect(model.knownModels(agent: .claude, workspaceId: workspace.id)?.map(\.value) == ["default", "opus"])
+        #expect(model.knownModels(agent: .opencode, workspaceId: workspace.id) == nil)
+        _ = try #require(await model.openChat(workspace: workspace, agent: .opencode))
+        #expect(model.knownModels(agent: .opencode, workspaceId: workspace.id)?.map(\.name) == ["Claude Sonnet 5", "GPT-5.5", "Qwen3 Coder"])
+
+        await claude.send("add a model")
+        #expect(model.knownModels(agent: .claude, workspaceId: workspace.id)?.map(\.value) == ["default", "opus", "haiku"])
+        let reread = AgentModelCatalog(file: model.paths.agentModels)
+        #expect(reread.models(agent: .claude, claudeInstance: nil)?.map(\.value) == ["default", "opus", "haiku"])
+        #expect(reread.models(agent: .opencode, claudeInstance: nil)?.count == 3)
+        await model.stopAllAgents()
+    }
+
+    /// AGM-04 without a button (user decision, 2026-09-25): an agent with no list reports one by itself, in no
+    /// conversation, and a second call while it runs starts nothing more.
+    @Test func anAgentWithNoListLoadsItsModelsByItself() async throws {
+        let (model, workspace) = try await emptyWorkspace(store: try RockyStore.inMemory())
+        let conversations = model.conversations[workspace.id] ?? []
+        #expect(model.knownModels(agent: .opencode, workspaceId: workspace.id) == nil)
+
+        model.loadModelsIfNeeded(agent: .opencode, workspaceId: workspace.id)
+        model.loadModelsIfNeeded(agent: .opencode, workspaceId: workspace.id)
+        try await waitUntil { model.knownModels(agent: .opencode, workspaceId: workspace.id) != nil }
+        #expect(model.knownModels(agent: .opencode, workspaceId: workspace.id)?.map(\.name) == ["Claude Sonnet 5", "GPT-5.5", "Qwen3 Coder"])
+        #expect(model.modelsFailure(agent: .opencode, workspaceId: workspace.id) == nil)
+        #expect((model.conversations[workspace.id] ?? []) == conversations)
+        await model.stopAllAgents()
+    }
+
+    /// AGM-04: a repository with its own Claude instance keeps that instance's list.
+    @Test func claudesModelsAreKeptUnderTheRepositorysInstance() async throws {
+        let (model, workspace) = try await emptyWorkspace(store: try RockyStore.inMemory())
+        await model.setClaudeConfigDir(repoId: workspace.repoId, "/Users/me/.claude-celes")
+        _ = try #require(await model.openChat(workspace: workspace, agent: .claude))
+        #expect(model.knownModels(agent: .claude, workspaceId: workspace.id)?.map(\.value) == ["default", "opus"])
+        #expect(model.modelCatalog.models(agent: .claude, claudeInstance: "/Users/me/.claude-celes")?.count == 2)
+        #expect(model.modelCatalog.models(agent: .claude, claudeInstance: nil) == nil)
+        await model.stopAllAgents()
+    }
+
+    private func waitUntilReady(_ chat: ChatSessionModel) async throws {
+        try await waitUntil { chat.state == .ready }
+    }
+
+    /// KIT-11, AGM-02: a pick of another agent's model in an empty conversation switches it in place: the same record
+    /// and tab, in its place and selected, its agent and its session id changed, and a chat in `chats` at every moment.
+    /// The old agent stops, the new one gets the picked model once its session reports its options, and the draft,
+    /// chip included, waits for the new message box.
+    @Test func aPickInAnEmptyConversationSwitchesItInPlace() async throws {
+        let store = try RockyStore.inMemory()
+        let (model, workspace) = try await emptyWorkspace(store: store)
+        let old = try #require(await model.newConversation(workspace: workspace, agent: .claude))
+        let conversationId = try #require(model.selectedConversationIds[workspace.id])
+        let other = try #require(await model.newConversation(workspace: workspace, agent: .claude))
+        await model.showConversation(workspace: workspace, conversationId: conversationId)
+        try await waitUntilReady(old)
+        try await waitUntilReady(other)
+        try await waitUntil { (try? store.session(id: conversationId))?.acpSessionId == "fake-1" }
+        let tabs = try #require(model.conversations[workspace.id]?.map(\.id))
+
+        let draft = MessageHistory.Entry(
+            text: "Fix \(PromptAttachment.marker) too",
+            files: ["/repo/notes.md"],
+            lineRange: LineRangeAttachment(path: "/repo/a.swift", side: .new, start: 3, end: 5)
+        )
+        let finished = SharedFlag()
+        let missing = SharedFlag()
+        let watcher = Task { @MainActor in
+            while !finished.isSet {
+                if model.chat(conversationId: conversationId) == nil { missing.set() }
+                try? await Task.sleep(for: .milliseconds(1))
+            }
+        }
+        let pick = await model.pickModel(conversationId: conversationId, agent: .opencode, model: "gpt-5.5", draft: draft)
+        // Read before the new agent's start runs: the session id went with the old agent.
+        let stored = try #require(try store.session(id: conversationId))
+        finished.set()
+        await watcher.value
+
+        #expect(pick == .switchedInPlace)
+        #expect(!missing.isSet)
+        #expect(stored.agent == "opencode")
+        #expect(stored.acpSessionId == nil)
+        #expect(model.conversations[workspace.id]?.map(\.id) == tabs)
+        #expect(model.conversations[workspace.id]?.map(\.agent) == ["opencode", "claude"])
+        #expect(model.selectedConversationIds[workspace.id] == conversationId)
+        #expect(old.state == .stopped("Stopped"))
+        #expect(other.state == .ready)
+        let fresh = try #require(model.chat(conversationId: conversationId))
+        #expect(fresh !== old)
+        #expect(fresh.agent == .opencode)
+        #expect(model.existingChat(workspaceId: workspace.id) === fresh)
+
+        #expect(model.pendingDrafts[conversationId] == draft)
+        #expect(model.takePendingDraft(conversationId: conversationId) == draft)
+        #expect(model.takePendingDraft(conversationId: conversationId) == nil)
+
+        try await waitUntilReady(fresh)
+        #expect(fresh.option(SessionConfigOption.model)?.current == "gpt-5.5")
+        #expect(fresh.option(SessionConfigOption.effort)?.choices.map(\.value) == ["minimal", "low", "medium", "high", "default"])
+        #expect(fresh.pendingModel == nil)
+        await model.stopAllAgents()
+    }
+
+    /// AGM-02: an agent still starting is stopped by the switch and stays stopped, and a switch while the first one's
+    /// agent starts switches again.
+    @Test func aSwitchStopsAnAgentThatIsStillStarting() async throws {
+        let (model, workspace) = try await emptyWorkspace(store: try RockyStore.inMemory())
+        let starting = try #require(await model.newConversation(workspace: workspace, agent: .claude))
+        let conversationId = try #require(model.selectedConversationIds[workspace.id])
+        #expect(await model.pickModel(conversationId: conversationId, agent: .opencode, model: nil) == .switchedInPlace)
+        let opencode = try #require(model.chat(conversationId: conversationId))
+        #expect(await model.pickModel(conversationId: conversationId, agent: .claude, model: "opus") == .switchedInPlace)
+        let claude = try #require(model.chat(conversationId: conversationId))
+
+        try await waitUntilReady(claude)
+        #expect(starting.state == .stopped("Stopped"))
+        #expect(starting.failure == nil)
+        #expect(opencode.state == .stopped("Stopped"))
+        #expect(opencode.failure == nil)
+        #expect(claude.option(SessionConfigOption.model)?.current == "opus")
+        #expect(model.conversations[workspace.id]?.map(\.agent) == ["claude"])
+        await model.stopAllAgents()
+    }
+
+    /// KIT-11, AGM-03: with a message sent, another agent's model opens a new conversation at the end, selected, with
+    /// the picked model and the draft; the conversation left behind keeps its agent, its session and its chat.
+    @Test func aPickWithMessagesOpensANewConversationAndLeavesTheOldOne() async throws {
+        let store = try RockyStore.inMemory()
+        let (model, workspace, first) = try await workspaceWithAConversation(store: store)
+        let firstId = try #require(model.selectedConversationIds[workspace.id])
+        let draft = MessageHistory.Entry(text: "Now the tests", files: [], lineRange: LineRangeAttachment(path: "/repo/a.swift", side: .old, start: 2, end: 2))
+
+        let pick = await model.pickModel(conversationId: firstId, agent: .opencode, model: "qwen3-coder", draft: draft)
+        #expect(pick == .openedConversation)
+        let tabs = try #require(model.conversations[workspace.id])
+        #expect(tabs.map(\.agent) == ["claude", "opencode"])
+        #expect(tabs.first?.id == firstId)
+        let newId = try #require(tabs.last?.id)
+        #expect(model.selectedConversationIds[workspace.id] == newId)
+        #expect(model.takePendingDraft(conversationId: newId) == draft)
+        #expect(model.takePendingDraft(conversationId: firstId) == nil)
+
+        #expect(model.chat(conversationId: firstId) === first)
+        #expect(first.state == .ready)
+        #expect(first.agent == .claude)
+        let stored = try #require(try store.session(id: firstId))
+        #expect(stored.agent == "claude")
+        #expect(stored.acpSessionId == "fake-1")
+
+        let opened = try #require(model.chat(conversationId: newId))
+        try await waitUntilReady(opened)
+        #expect(opened.agent == .opencode)
+        #expect(opened.option(SessionConfigOption.model)?.current == "qwen3-coder")
+        #expect(opened.option(SessionConfigOption.effort) == nil)
+        await model.stopAllAgents()
+    }
+
+    /// AGM-03, AGM-06: a queued message counts as a message, so the pick opens a new conversation and the queue stays.
+    @Test func aQueuedMessageCountsAsAMessage() async throws {
+        let (model, workspace) = try await emptyWorkspace(store: try RockyStore.inMemory())
+        let chat = try #require(await model.newConversation(workspace: workspace, agent: .claude))
+        let conversationId = try #require(model.selectedConversationIds[workspace.id])
+        try await waitUntilReady(chat)
+        chat.enqueue("after this turn")
+
+        #expect(await model.pickModel(conversationId: conversationId, agent: .opencode, model: nil) == .openedConversation)
+        #expect(model.conversations[workspace.id]?.map(\.agent) == ["claude", "opencode"])
+        #expect(model.chat(conversationId: conversationId) === chat)
+        #expect(chat.queue.map(\.text) == ["after this turn"])
+        await model.stopAllAgents()
+    }
+
+    /// AGM-05, AGM-07: a model of the conversation's own agent changes it in place, and the effort shown is the one the
+    /// agent answered, never the level before; picked while the agent starts, it waits for the session.
+    @Test func aPickOfTheSameAgentSetsTheModel() async throws {
+        let (model, workspace) = try await emptyWorkspace(store: try RockyStore.inMemory())
+        let chat = try #require(await model.newConversation(workspace: workspace, agent: .claude))
+        let conversationId = try #require(model.selectedConversationIds[workspace.id])
+        #expect(chat.state != .ready)
+        #expect(await model.pickModel(conversationId: conversationId, agent: .claude, model: "opus") == .setModel)
+        #expect(chat.pendingModel?.value == "opus")
+        try await waitUntilReady(chat)
+        #expect(chat.option(SessionConfigOption.model)?.current == "opus")
+        #expect(chat.option(SessionConfigOption.effort)?.current == "medium")
+
+        await chat.setOption(SessionConfigOption.effort, to: "max")
+        #expect(await model.pickModel(conversationId: conversationId, agent: .claude, model: "default") == .setModel)
+        #expect(chat.option(SessionConfigOption.model)?.current == "default")
+        #expect(chat.option(SessionConfigOption.effort)?.current == "high")
+        #expect(model.chat(conversationId: conversationId) === chat)
+        await model.stopAllAgents()
+    }
+
+    /// AGM-02: a picked model the new agent does not list keeps its default, and the toast says so.
+    @Test func aPickedModelTheAgentDoesNotHaveKeepsItsDefault() async throws {
+        let (model, workspace) = try await emptyWorkspace(store: try RockyStore.inMemory())
+        var toasts: [String] = []
+        model.onToast = { toasts.append($0) }
+        _ = try #require(await model.newConversation(workspace: workspace, agent: .claude))
+        let conversationId = try #require(model.selectedConversationIds[workspace.id])
+
+        #expect(await model.pickModel(conversationId: conversationId, agent: .opencode, model: "gpt-9") == .switchedInPlace)
+        let fresh = try #require(model.chat(conversationId: conversationId))
+        try await waitUntilReady(fresh)
+        #expect(fresh.option(SessionConfigOption.model)?.current == "claude-sonnet-5")
+        #expect(toasts == ["gpt-9 isn't available in OpenCode; using Claude Sonnet 5"])
+        await model.stopAllAgents()
+    }
+
+    /// KBD-04: each ⌃` press bumps its workspace's serial, and only its own, so the workspace's view acts on every press.
+    @Test func terminalToggleRequestsCountPerWorkspace() throws {
+        let model = try makeModel()
+        #expect(model.terminalToggleRequests.isEmpty)
+        model.requestTerminalToggle(workspaceId: "tokyo")
+        model.requestTerminalToggle(workspaceId: "tokyo")
+        model.requestTerminalToggle(workspaceId: "lima")
+        #expect(model.terminalToggleRequests == ["tokyo": 2, "lima": 1])
     }
 
     @Test func closingATabStopsItsAgentAndKeepsTheConversation() async throws {

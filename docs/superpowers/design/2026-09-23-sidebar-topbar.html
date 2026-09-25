@@ -870,7 +870,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
   <section class="req" id="REQ-TERM-05">
     <header><code class="id">TERM-05</code><h3>Folding the panel</h3><span class="scope in">In scope</span></header>
     <dl>
-      <dt>Behavior</dt><dd>The chevron (down while open, up while folded; tooltip "Hide the terminal panel; its terminals keep running (⌘J)") and ⌘J fold the panel to its bar and back without stopping anything; the choice is global and remembered (<code>terminalPanelCollapsed</code>). Choosing a tab, opening a terminal or Run unfolds it. All of this exists.</dd>
+      <dt>Behavior</dt><dd>The chevron (down while open, up while folded; tooltip "Hide the terminal panel; its terminals keep running (⌘J)") and ⌘J fold the panel to its bar and back without stopping anything; the choice is global and remembered (<code>terminalPanelCollapsed</code>). Choosing a tab, opening a terminal or Run unfolds it. All of this exists. M2.8 adds ⌃` (KBD-04): it unfolds the panel on a terminal and focuses it, and folds it again from that terminal.</dd>
       <dt>Motion</dt><dd>New: folding and unfolding animate the height, 150 ms ease-out, and the chat takes the space; instant with Reduce Motion. Switching workspaces never animates it (each workspace's view is rebuilt, <code>.id(workspace.id)</code> in <code>RootView</code>). Folded, no tab shows as selected (exists); the dots keep showing each process's state.</dd>
     </dl>
   </section>

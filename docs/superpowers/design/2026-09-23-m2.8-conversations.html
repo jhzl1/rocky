@@ -169,6 +169,24 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
 .fill-btn { height: 26px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border-radius: var(--r-btn); background: #FFFFFF; color: #111316; font-size: 12.5px; font-weight: 500; }
 .starting { padding: 22px 12px; display: flex; justify-content: center; color: var(--text-2); }
 
+/* DLG: Rocky's mini-modals */
+.dlg-scrim { position: absolute; inset: 0; z-index: 70; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.45); animation: fade-in 150ms ease-out both; }
+.dlg-scrim.out { animation: fade-out 120ms ease-in both; }
+@keyframes fade-in { from { opacity: 0; } } @keyframes fade-out { to { opacity: 0; } }
+.dlg { width: 360px; padding: 20px 20px 16px; border-radius: 14px; background: var(--bg); box-shadow: 0 0 0 1px var(--composer-border), 0 12px 30px rgba(0,0,0,0.5); animation: dlg-in 150ms var(--ease-out) both; }
+.dlg.lg { width: 460px; }
+@keyframes dlg-in { from { opacity: 0; transform: scale(0.98); } }
+.dlg h4 { margin: 0; font-size: 14px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 8px; }
+.dlg.lg h4 { font-size: 15px; }
+.dlg p { margin: 6px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--text-2); }
+.dlg .cmd { margin-top: 12px; padding: 10px; border-radius: 8px; background: var(--fill-control); font: 12.5px/1.5 var(--mono); color: var(--text); white-space: pre-wrap; max-height: 150px; overflow: auto; user-select: text; }
+.dlg .btns { display: flex; gap: 8px; margin-top: 20px; }
+.dlg .btns button { height: 28px; padding: 0 14px; border-radius: 7px; font-size: 12.5px; font-weight: 500; background: var(--fill-button); color: var(--text); transition: background var(--dur-fast); }
+.dlg .btns button:hover { background: rgba(255,255,255,0.12); }
+.dlg .btns .primary { background: #FFFFFF; color: #111316; } .dlg .btns .primary:hover { background: #E9EBEE; }
+.dlg .btns .destructive { background: rgba(240,135,106,0.16); color: var(--danger); } .dlg .btns .destructive:hover { background: rgba(240,135,106,0.22); }
+.dlg .btns button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (prefers-reduced-motion: reduce) { .dlg { animation: fade-in 150ms ease-out both; } }
 .spec-on .window [data-req] { outline: 1px dashed rgba(120,189,245,0.6); outline-offset: -1px; position: relative; }
 .spec-on .window [data-req]::after { content: attr(data-req); position: absolute; top: 1px; right: 1px; z-index: 45; padding: 2px 4px; border-radius: 3px; background: var(--accent); color: #0E1116; font: 600 9px/1 var(--mono); pointer-events: none; }
 
@@ -203,6 +221,9 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
   <div class="demo" aria-label="Demo controls">
     <span class="demo-label">Demo controls, not part of Rocky</span>
     <button type="button" id="demoCache" aria-pressed="false">OpenCode never started</button>
+    <button type="button" id="demoDlg">Discard confirmation</button>
+    <button type="button" id="demoDlg3">Unsaved edits</button>
+    <button type="button" id="demoPerm">Permission request</button>
     <button type="button" id="demoPins" aria-pressed="false">Requirement pins</button>
     <span class="note" id="lastNote"></span>
   </div>
@@ -228,7 +249,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
 
 <aside class="spec" id="spec">
   <h1>Requirements</h1>
-  <p>Plan (dev-1): <code>docs/superpowers/plans/2026-09-23-m2.8-conversations.md</code>. After M3 (order: M2.7, M3, M2.8), except CNV-01, CNV-02, KIT-13 and KIT-11's <code>newConversation(workspace:)</code>: <span class="scope early">Shipped early</span> in M3's follow-up branch <code>fix/m3-editor-and-quick-open</code> (user decision, 2026-09-24, relayed by dev-1). The rest (AGM-01…07, KIT-12, the rest of KIT-11) stays as designed. Labels: <span class="scope tech">Technical</span> for data and process facts; <span class="scope in">In scope</span> for behavior and UI.</p>
+  <p>Plan (dev-1): <code>docs/superpowers/plans/2026-09-23-m2.8-conversations.md</code>. Started 2026-09-25 on <code>feat/m2.8-conversations</code>, from <code>development</code>. CNV-01, CNV-02, KIT-13 and KIT-11's <code>newConversation(workspace:)</code> are <span class="scope early">Shipped early</span>: they came with M3's follow-up branch, now in <code>development</code>. The rest (AGM-01…07, KIT-12, the rest of KIT-11), KBD-04 and the mini-modals (DLG-01…06, user request 2026-09-25) are this milestone. Labels: <span class="scope tech">Technical</span> for data and process facts; <span class="scope in">In scope</span> for behavior and UI.</p>
   <p><strong>User decisions (2026-09-23):</strong> the default is the agent last used in the repository · with messages, another agent's model opens a new conversation · the Claude instance stays a repository setting · Codex comes later, separately.</p>
   <p><strong>Today</strong> (for reference): "+" is a menu, "New Claude Code conversation" / "New OpenCode conversation" (<code>WorkspaceDetailView.swift</code>, <code>MenuButton(id: "new-conversation-…")</code>), and a conversation's agent never changes (<code>ChatSessionModel.agent</code> is a <code>let</code>).</p>
 
@@ -238,12 +259,11 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
     <dl>
       <dt>Button</dt><dd>The same 28 pt <code>plus</code> icon button after the tabs, no longer a menu. Tooltip "New conversation". One click adds the tab at the end, selects it and focuses the message box.</dd>
       <dt>Agent</dt><dd>The default agent (CNV-02). Its process starts in the background right away, as today, so the model list is there before the first message.</dd>
-      <dt>Bridge</dt><dd>Until AGM-01's rail lands, it is the only way to pick OpenCode, so a right-click on "+" (<code>rockyContextMenu</code>) shows today's two items, "New Claude Code conversation" and "New OpenCode conversation", each with its agent's mark; the pick creates the conversation with that agent, as the menu does today (user decision, 2026-09-24, relayed by dev-1). The pick does not change the default by itself: CNV-02 counts sent messages.</dd>
-      <dt>With AGM-01</dt><dd>The bridge goes. The rail switches an empty conversation's agent in place (AGM-02), so "+" and then a pick in the rail is the same two clicks, visible instead of hidden; and a second, hidden way to pick would need an item for every agent added later (Codex, OUT-40). dev-2's recommendation; the user can keep it. The mock shows M2.8 with the rail, so without the bridge.</dd>
       <dt>Motion</dt><dd>The tab enters with M2.5's entrance (220 ms, from 6 pt below, fade).</dd>
-      <dt>SwiftUI</dt><dd>Replace the <code>MenuButton</code> in the tab strip with a <code>Button</code> in <code>RockyIconButtonStyle</code>, <code>.clickable()</code>, calling <code>AppModel.newConversation(workspace:)</code> (KIT-11). The bridge adds <code>.rockyContextMenu(id:)</code> with today's two <code>MenuItem</code>s.</dd>
+      <dt>History</dt><dd>The early CNV-01 (2026-09-24) had a bridge: a right-click on "+" showed "New Claude Code conversation" and "New OpenCode conversation", the only way to pick OpenCode before the rail. It was removed when AGM-01 landed (user decision, 2026-09-25): the rail switches an empty conversation's agent in place (AGM-02), so "+" and then a pick in the rail does it, in view.</dd>
+      <dt>SwiftUI</dt><dd>Replace the <code>MenuButton</code> in the tab strip with a <code>Button</code> in <code>RockyIconButtonStyle</code>, <code>.clickable()</code>, calling <code>AppModel.newConversation(workspace:)</code> (KIT-11).</dd>
       <dt>Shipped</dt><dd>Early, in M3's follow-up branch <code>fix/m3-editor-and-quick-open</code> (user decision, 2026-09-24, relayed by dev-1).</dd>
-      <dt>Done when</dt><dd>One click, no menu; a right-click shows the two agents and creates the one picked. With AGM-05, the message box button shows only the loading spinner until the agent reports its models.</dd>
+      <dt>Done when</dt><dd>One click, no menu, and no right-click menu either. With AGM-05, the message box button shows only the loading spinner until the agent reports its models.</dd>
     </dl>
   </section>
   <section class="req" id="REQ-CNV-02">
@@ -301,18 +321,20 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
   <section class="req" id="REQ-AGM-04">
     <header><code class="id">AGM-04</code><h3>The model catalog</h3><span class="scope tech">Technical</span></header>
     <dl>
-      <dt>Why</dt><dd>An agent reports its models only in a session (the <code>model</code> config option, after <code>session/new</code>). Listing another agent's models must not start its process.</dd>
+      <dt>Why</dt><dd>An agent reports its models only in a session (the <code>model</code> config option, after <code>session/new</code>). So the menu lists from a catalog, and starts an agent only when the catalog has nothing for it (No list yet).</dd>
       <dt>Rule</dt><dd>Every time a session reports its <code>model</code> option, Rocky records its choices (value, name, detail) for that agent. Claude's are keyed by Claude instance (<code>claudeConfigDir</code>, or "default"), because instances can differ; OpenCode's by agent only. The menu shows the list for the repository's Claude instance.</dd>
       <dt>Stored</dt><dd>JSON at <code>~/Library/Application Support/Rocky/agent-models.json</code>, rewritten when a list changes. Model names only: no tokens, no keys, and no effort levels (an agent reports them only for its current model, AGM-07).</dd>
-      <dt>No list yet</dt><dd>The agent never ran on this Mac: its body shows "OpenCode hasn't reported its models yet." and a "Start OpenCode" button, which does what a pick would do (AGM-02 or AGM-03) with the agent's default model.</dd>
+      <dt>No list yet</dt><dd>Rocky loads it by itself (user decision, 2026-09-25: "la idea es que cargue solo, sin yo tener que darle a un botón"; the "Start OpenCode" button is gone). When the rail shows an agent the catalog has no list for (it never ran on this Mac, or not with this Claude instance), <code>AppModel.loadModelsIfNeeded</code> starts that agent once, in the background and in no conversation: no history, nothing stored. It runs until its session reports its <code>model</code> option; the catalog records the choices, and the process stops. One run at a time per agent and Claude instance: showing the agent again while it loads waits on the same run. Meanwhile the body shows the centred spinner (AGM-05).</dd>
+      <dt>Failure</dt><dd>The body shows "Couldn't load OpenCode's models: <em>reason</em>" (12.5 <code>textSecondary</code>, centred, wrapping), and showing the agent again retries. An agent whose session neither reports its models nor fails within 30 s (<code>AppModel.modelProbeTimeout</code>) is stopped and counts as failed, with the reason "it didn't answer in 30 s", so the spinner never stays for good. The timer covers the session start only, not the agent's install on first use, which can take longer.</dd>
+      <dt>Cost</dt><dd>The one exception to "an agent starts on its first message" (spec Section 1): once per agent and Claude instance on this Mac, since the list is kept (Stored), plus a retry after a failure. With a list, showing an agent never starts it.</dd>
     </dl>
   </section>
   <section class="req" id="REQ-AGM-05">
     <header><code class="id">AGM-05</code><h3>While the agent is starting</h3><span class="scope in">In scope</span></header>
     <dl>
       <dt>Body</dt><dd>The menu keeps showing that agent's models from the catalog (AGM-04), the picked one checked, so it neither shrinks nor jumps. A model picked meanwhile becomes the pending one. There is no Effort row until the session reports its options; then it grows in (AGM-07).</dd>
-      <dt>Signal</dt><dd><strong>Only the loading spinner, no "Starting…" text anywhere</strong> (user decision, 2026-09-23; a glow around the menu was tried and rejected). In the menu, a <code>CircularProgress</code> 12 in <code>textSecondary</code> replaces "42 models" after the agent's name in the title row.</dd>
-      <dt>No list</dt><dd>Only when the catalog has nothing for that agent: the spinner (<code>CircularProgress</code> 14) centred in the body, no text.</dd>
+      <dt>Signal</dt><dd><strong>Only the loading spinner, no "Starting…" text anywhere</strong> (user decision, 2026-09-23; a glow around the menu was tried and rejected). In the menu, a <code>CircularProgress</code> 12 in <code>textSecondary</code> replaces "42 models" after the agent's name in the title row, while the body shows the list. <strong>One spinner at a time</strong> (user decision, 2026-09-25: "cuando está cargando no es necesario tener los dos circular progress en ese menú, con uno solo es suficiente"): with no list, the title row has nothing after the name, and the body's spinner is the only one.</dd>
+      <dt>No list</dt><dd>Only when the catalog has nothing for that agent: the spinner (<code>CircularProgress</code> 14) centred in the body, no text, and none in the title row. The same whether the conversation's own agent is starting or AGM-04 is loading another agent's list in the background; the list replaces it when it arrives.</dd>
       <dt>Button</dt><dd>Today a plain "Starting Claude Code…" label. Now a menu button right away with the spinner (<code>CircularProgress</code> 12) in place of the agent's logo, and the chevron; no text. Tooltip and accessibility label: "Starting Claude Code".</dd>
       <dt>Rail</dt><dd>The other rail items work, so you can click "+" and pick OpenCode without waiting.</dd>
     </dl>
@@ -340,6 +362,104 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
       <dt>Label</dt><dd>The button and the selected row show the effort after the model ("GPT-5.5 High"), except "Default", which is left out ("GPT-5.5", not "GPT-5.5 Default"). The chip keeps its "Default" name.</dd>
       <dt>Other agent</dt><dd>Its body shows no effort, because the agent reports levels only for its current model. After the switch (AGM-02) or the new conversation (AGM-03), the model starts at its default effort, and the Effort row is in the menu from then on.</dd>
       <dt>Done when</dt><dd>With OpenCode: picking GPT-5.5 keeps the menu open and animates its levels in; picking Qwen3 Coder animates the row out and the menu stays; picking Claude Sonnet after GPT-5.5 High shows Sonnet's default, not High.</dd>
+    </dl>
+  </section>
+
+  <h2>Keyboard</h2>
+  <section class="req" id="REQ-KBD-04">
+    <header><code class="id">KBD-04</code><h3>⌃` toggles the terminal</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Why</dt><dd>User, 2026-09-25 (relayed by dev-1): "quiero agregarle el atajo de teclado ctrl + ` para abrir la consola, así como hace vsc". It completes VS Code's pair: ⌘J is Toggle Panel, which Rocky has (M2.5 TERM-05), and ⌃` is Toggle Terminal.</dd>
+      <dt>Does</dt><dd>
+        <ul>
+          <li>A terminal has the keyboard: fold the panel (TERM-05) and give the keyboard back to the selected tab: a conversation's message box, or the file or diff tab.</li>
+          <li>Otherwise: unfold the panel, select a terminal and give it the keyboard. Which terminal: the selected tab if it is one; else the first terminal tab; with none, a new "Terminal N", as New Terminal does (TERM-07; the first may wait for the repository account's token, ENV-01), focused once it is there.</li>
+          <li>The Setup and Run tabs are scripts, not terminals: ⌃` never selects them, and with only those it makes a terminal.</li>
+          <li>The fold is TERM-05's, global and remembered (<code>terminalPanelCollapsed</code>), so ⌘J and ⌃` agree.</li>
+        </ul>
+      </dd>
+      <dt>Menu</dt><dd>View ▸ "Toggle Terminal" ⌃`, disabled with no workspace selected: a menu command with <code>.keyboardShortcut("`", modifiers: .control)</code>, in the <code>CommandGroup(after: .sidebar)</code> section that holds <code>SidebarCommand</code> and <code>PullRequestPanelCommand</code>.</dd>
+      <dt>Collisions</dt><dd>None, checked 2026-09-25. macOS's default shortcuts use ⌘` (Move focus to next window), not ⌃`. No Rocky command, view shortcut or spec uses it (⌘J is a view shortcut in <code>WorkspacePanelView</code>). SwiftTerm 1.20.0's <code>MacTerminalView</code> overrides <code>keyDown</code> but not <code>performKeyEquivalent</code>, so the menu gets ⌃` before the shell, as it gets ⌘J. The cost: a shell no longer receives ⌃` (NUL), which ⌃Space still sends. The user's layout, <code>us-altgr-intl</code>, types ` directly; on a layout where ` is a dead key the shortcut may not fire, as in VS Code.</dd>
+      <dt>Motion</dt><dd>TERM-05's: the panel's height, 150 ms ease-out; instant with Reduce Motion.</dd>
+      <dt>Done when</dt><dd>From the message box, ⌃` unfolds the panel on a terminal with the caret in it, and typing goes to the shell; ⌃` again folds the panel and the caret is back in the message box. In a workspace with no terminal, ⌃` makes "Terminal 1" and focuses it.</dd>
+    </dl>
+  </section>
+
+  <h2>Mini-modals</h2>
+  <section class="req" id="REQ-DLG-01">
+    <header><code class="id">DLG-01</code><h3>Rocky's mini-modals replace native dialogs</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Why</dt><dd>User, 2026-09-25 (relayed by dev-1): "quiero que creemos minimodales para dejar de depender de los menús nativos que no me gustan". The native "Discard changes to README.md?" alert (a stacked, centred macOS dialog) is the example. Scope, by user decision: every confirmation and alert, and both sheets. The file pickers (<code>NSOpenPanel</code>) stay native.</dd>
+      <dt>Replaces</dt><dd>The texts stay as they are today; only the presentation changes. Default = Return; Cancel = Esc.</dd>
+    </dl>
+    <table>
+      <tr><th>Where</th><th>Title · message</th><th>Buttons, left to right</th></tr>
+      <tr><td><code>DiffTabView</code></td><td>"Discard changes to README.md?" · "This cannot be undone."</td><td>Cancel · <b>Discard Changes</b> (destructive, default)</td></tr>
+      <tr><td><code>ChangesTab</code></td><td>the discard request's question · "This cannot be undone."</td><td>Cancel · <b>the request's button</b>, e.g. "Discard All Uncommitted Changes" (destructive, default)</td></tr>
+      <tr><td><code>CommentViews</code></td><td>"Discard this comment?"</td><td>Keep Editing (cancel) · <b>Discard</b> (destructive, default)</td></tr>
+      <tr><td><code>WorkspaceDetailView</code>, closing a tab</td><td><code>UnsavedChangesPrompt</code>'s title and message</td><td>Don't Save (destructive, left, ⌘D) · Cancel · <b>Save</b> (primary, default)</td></tr>
+      <tr><td><code>SidebarView</code>, remove</td><td>"Remove tokyo?" · today's message (stops its agent… the branch is kept)</td><td>Cancel · <b>Remove Worktree</b> (destructive, default)</td></tr>
+      <tr><td><code>SidebarView</code>, archive failed</td><td>"Archive script failed" · the failure and "…was not removed; the Archive tab shows its output."</td><td>Cancel · <b>Remove Anyway</b> (destructive, default)</td></tr>
+      <tr><td><code>PullRequestHeaderBar</code>, Archive</td><td><code>AppModel.archiveQuestion</code> · the stash message</td><td>Cancel · <b>Archive</b> (destructive, default)</td></tr>
+      <tr><td><code>RootView</code>, errors</td><td>"Something went wrong" (instead of "Rocky") · <code>errorMessage</code>, selectable</td><td><b>OK</b> (primary, default; Esc too)</td></tr>
+      <tr><td><code>RockyApp</code>, quitting with unsaved edits</td><td><code>UnsavedChangesPrompt.title(…, quitting: true)</code> and its message</td><td>Don't Save (destructive, left, ⌘D) · Cancel · <b>Save All</b> (primary, default). DLG-05.</td></tr>
+      <tr><td><code>CommitSheet</code></td><td colspan="2">The large variant (DLG-06), content as today.</td></tr>
+      <tr><td><code>PermissionSheet</code></td><td colspan="2">The large variant (DLG-06).</td></tr>
+    </table>
+  </section>
+
+  <section class="req" id="REQ-DLG-02">
+    <header><code class="id">DLG-02</code><h3>The mini-modal</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Behind</dt><dd>The whole window dims with black 45 %, as behind Settings (<code>SettingsModalOverlay</code>), and nothing behind takes clicks or keys. A click on the dimmed part is Cancel.</dd>
+      <dt>Panel</dt><dd>360 wide (<code>Zoom.shared</code>), its height from its content; padding 20, 16 at the bottom; radius 14; <code>Color.rockyBackground</code> with a 1 px <code>composerBorder</code> ring and the shadow black 0.5, radius 30, y 12: <code>SettingsPanel</code>'s look, so both modals match.</dd>
+      <dt>Text</dt><dd>Left-aligned, unlike the native centred alert. Title 14 semibold <code>textPrimary</code>, wrapping. Message 12.5 <code>textSecondary</code>, line spacing 3, 6 below the title. Selectable in the error modal, so its text can be copied.</dd>
+      <dt>Buttons</dt><dd>One row, 20 below the text, gap 8, at the right; a "Don't Save" goes to the left end, apart from the others, as in macOS. 28 pt, radius 7, padding 0 14, 12.5 medium, <code>.clickable()</code>. Roles:
+        <ul>
+          <li><strong>Primary</strong>: white fill, text <code>#111316</code> (the send button's colors).</li>
+          <li><strong>Destructive</strong>: <code>danger</code> at 16 % with <code>danger</code> text; 22 % on hover.</li>
+          <li><strong>Cancel</strong> and secondary: <code>fillButton</code> with <code>textPrimary</code>; <code>fillButtonHover</code> on hover (<code>RockyFilledButtonStyle</code>).</li>
+        </ul>
+        The default is the rightmost button, primary or destructive, as the native dialogs had it.</dd>
+      <dt>SwiftUI</dt><dd>A <code>DialogPresenter</code> (observable, <code>@MainActor</code>, like <code>SettingsPresenter</code>) holds the queue (DLG-04); a <code>DialogHost</code> in <code>RootView</code>'s overlay draws the current one above everything, Settings included; <code>.rockyDialog(item:content:)</code> mirrors <code>.confirmationDialog</code> so each call site changes little. <code>.accessibilityAddTraits(.isModal)</code>, and VoiceOver starts on the title.</dd>
+      <dt>Done when</dt><dd>Discard in a diff tab shows the left-aligned mini-modal over the dimmed window; Return discards, Esc or a click outside cancels. No native alert or sheet is left in Rocky except the file pickers and DLG-05's no-window case.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-DLG-03">
+    <header><code class="id">DLG-03</code><h3>Keys and focus</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Keys</dt><dd>Return triggers the default button; Esc triggers Cancel (the error modal's OK). Tab and ⇧Tab move the keyboard focus between the buttons, drawn as KBD-01's 2 pt <code>accent</code> ring; Space presses the focused one, and so does Return once the focus has moved. ⌘D presses "Don't Save" where there is one, as in the native prompt. In the Commit modal, Return in a text field types a line; ⌘Return commits.</dd>
+      <dt>Order</dt><dd>Esc goes first to an open Rocky menu, then the mini-modal, then Settings, then the agent's turn (CLAUDE.md, key monitors). While a mini-modal shows, the keys behind it do nothing: the message box, the terminal and the shortcuts wait.</dd>
+      <dt>SwiftUI</dt><dd>One local <code>NSEvent</code> monitor, installed while the host shows a dialog and removed after, reading the live dialog through a reference (<code>LiveFlag</code>'s pattern), since a monitor keeps the view as it was when added.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-DLG-04">
+    <header><code class="id">DLG-04</code><h3>Placement, motion, one at a time</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Where</dt><dd>Centred on the window, the same for every mini-modal: each one blocks until answered, as the native window-modal sheets did, and one rule is easier to learn than "the pane it concerns". The permission request still shows only while its conversation is on screen, as today's sheet does.</dd>
+      <dt>Motion</dt><dd>The dim fades in 150 ms (<code>Theme.Motion.state</code>); the panel fades and grows from 0.98, as the Settings panel does. Closing: 120 ms, faster than opening. Reduce Motion: fades only.</dd>
+      <dt>One at a time</dt><dd>A second request waits in the queue and shows when the first closes, in order. ⌘Q is the one exception: it cancels the current mini-modal, as Esc would, and shows the quit prompt (DLG-05).</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-DLG-05">
+    <header><code class="id">DLG-05</code><h3>The quit prompt</h3><span class="scope tech">Technical</span></header>
+    <dl>
+      <dt>Flow</dt><dd><code>applicationShouldTerminate</code> returns <code>.terminateLater</code> when there are unsaved edits, shows the mini-modal, and the answer calls <code>NSApp.reply(toApplicationShouldTerminate:)</code>: Save All saves, then quits, or cancels and shows the file that failed (today's rule); Don't Save quits; Cancel replies false.</dd>
+      <dt>Hidden</dt><dd>Minimized, hidden or on another Space: Rocky unhides, deminiaturizes and activates its window first (<code>NSApp.unhide</code>, <code>deminiaturize</code>, <code>makeKeyAndOrderFront</code>), then shows the modal on it.</dd>
+      <dt>No window</dt><dd>After ⌘W closed the window, Rocky keeps today's <code>NSAlert</code>, the one native dialog left: an in-app modal needs a window, and reopening the whole window only to ask would be worse.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-DLG-06">
+    <header><code class="id">DLG-06</code><h3>The large variant: Commit and Permission</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Panel</dt><dd>DLG-02's look and keys, wider: Commit 500 (its width today), Permission 460. A header row (title 15 semibold, as <code>SettingsPanel</code>'s), the body, and the buttons row as in DLG-02. At most 80 % of the window's height; the body scrolls.</dd>
+      <dt>Commit</dt><dd>Today's content (<code>CommitSheet</code>: message, description, files); Cancel · <b>Commit</b> (primary, default on ⌘Return).</dd>
+      <dt>Permission</dt><dd>Header: the agent's mark and "Permission needed". Body: the request's title in a block, 12.5 mono, <code>fillControl</code>, radius 8, padding 10, selectable, up to 10 lines and then scrolling. Buttons: Cancel at the left end (as today's sheet has it), then the agent's options: the <code>reject_*</code> ones next to it (secondary), then at the right <code>allow_always</code> (secondary) and <code>allow_once</code> (primary, default, as Return accepts in Claude Code's own prompt). Other kinds are secondary, in the order given. Cancel, Esc and a click outside all cancel the request, as closing the sheet does today (<code>answerPermission(optionId: nil)</code>).</dd>
+      <dt>Done when</dt><dd>A permission request shows the command in the mono block with Cancel · Reject at the left and Always Allow · Allow at the right; Return allows once.</dd>
     </dl>
   </section>
 
@@ -482,6 +602,16 @@ var pendingDrafts: [String: ComposerDraft]                                      
   function renderAll(enterId) { renderSidebar(); renderTabs(enterId); renderChat(); renderComposer(); renderMenu(); }
 
   // ---------- AGM menu ----------
+  // AGM-04 No list yet: Rocky starts OpenCode once in the background, records its models and stops it (1.5 s here).
+  let modelsLoading = null;
+  function loadModelsDemo() {
+    if (modelsLoading) return;   // one run at a time
+    modelsLoading = setTimeout(() => {
+      modelsLoading = null; state.noOpenCodeCache = false;
+      $('#demoCache').setAttribute('aria-pressed', 'false');
+      renderMenu();
+    }, 1500);
+  }
   function renderMenu() {
     const old = $('.menu'); if (old) old.remove();
     const c = C();
@@ -490,10 +620,10 @@ var pendingDrafts: [String: ComposerDraft]                                      
     const rail = Object.keys(AGENT).map((a) => { const name = a === c.agent ? `${AGENT[a]} (current)` : AGENT[a]; return `<button role="tab" aria-selected="${a === seg}" aria-label="${name}" title="${name}" data-action="seg" data-agent="${a}">${tile(a, 'xl')}${a === c.agent ? '<span class="cur-dot"></span>' : ''}</button>`; }).join('');
     const starting = seg === c.agent && c.state === 'starting';
     const noList = seg === 'opencode' && state.noOpenCodeCache;   // the catalog has nothing for OpenCode yet
-    const count = starting ? spinner(12) : noList ? '' : `${CATALOG[seg].length} models`;   // AGM-05: only the spinner while starting
+    // AGM-05: one spinner at a time. The title row's only while the body shows a list; with no list, the body's alone.
+    const count = noList ? '' : starting ? spinner(12) : `${CATALOG[seg].length} models`;
     let body = `<div class="m-head"><b>${AGENT[seg]}</b><span>${count}</span></div>`;
-    if (starting && noList) body += `<div class="starting">${spinner(14)}</div>`;   // AGM-05: no list yet, the spinner alone
-    else if (noList && c.agent !== 'opencode') body += `<div class="empty" data-req="AGM-04">OpenCode hasn't reported its models yet.<p>It lists them once it runs in a conversation.</p><button class="fill-btn" data-action="pick" data-agent="opencode" data-model="">Start OpenCode</button></div>`;
+    if (noList) { body += `<div class="starting" data-req="AGM-04">${spinner(14)}</div>`; loadModelsDemo(); }   // AGM-04: loads by itself
     else body += modelList(seg, c);
     const choices = effortChoices(c.agent, c.model);
     const shown = seg === c.agent && c.state !== 'starting' && choices.length > 0;
@@ -634,6 +764,27 @@ var pendingDrafts: [String: ComposerDraft]                                      
   let toastTimer = null;
   function toast(msg) { let t = win.querySelector('.toast'); if (!t) { t = document.createElement('div'); t.className = 'toast'; win.appendChild(t); } t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2600); }
   $('#demoCache').addEventListener('click', (e) => { state.noOpenCodeCache = !state.noOpenCodeCache; e.currentTarget.setAttribute('aria-pressed', String(state.noOpenCodeCache)); renderMenu(); });
+  // DLG: one mini-modal at a time, over the dimmed window. Return = the default (rightmost), Esc or a click outside = Cancel.
+  function dialog({ title, message, cmd, lg, agentMark, buttons, req }) {
+    const scrim = document.createElement('div'); scrim.className = 'dlg-scrim';
+    const left = buttons.filter((b) => b.left); const right = buttons.filter((b) => !b.left);
+    const btn = (b, i) => `<button class="${b.role || ''}" data-i="${buttons.indexOf(b)}">${esc(b.label)}</button>`;
+    scrim.innerHTML = `<div class="dlg${lg ? ' lg' : ''}" role="alertdialog" aria-modal="true" data-req="${req}"><h4>${agentMark ? tile('claude', 'lg') : ''}${esc(title)}</h4>${message ? `<p>${esc(message)}</p>` : ''}${cmd ? `<div class="cmd">${esc(cmd)}</div>` : ''}<div class="btns">${left.map(btn).join('')}<span class="grow"></span>${right.map(btn).join('')}</div></div>`;
+    win.appendChild(scrim);
+    const close = (b) => { document.removeEventListener('keydown', onKey, true); scrim.classList.add('out'); setTimeout(() => scrim.remove(), 120); if (b) toast(b.done || `${b.label}.`); };
+    const def = right[right.length - 1]; const cancel = buttons.find((b) => b.role === 'cancel') || def;
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(cancel); }
+      else if (e.key === 'Enter' && !(document.activeElement && document.activeElement.closest('.dlg .btns'))) { e.preventDefault(); e.stopPropagation(); close(def); }
+      else if (e.key.toLowerCase() === 'd' && e.metaKey) { const ds = buttons.find((b) => b.cmdD); if (ds) { e.preventDefault(); close(ds); } }
+    };
+    document.addEventListener('keydown', onKey, true);
+    scrim.addEventListener('mousedown', (e) => { if (e.target === scrim) close(cancel); });
+    scrim.querySelector('.btns').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) close(buttons[Number(b.dataset.i)]); });
+  }
+  $('#demoDlg').addEventListener('click', () => dialog({ req: 'DLG-02', title: 'Discard changes to README.md?', message: 'This cannot be undone.', buttons: [{ label: 'Cancel', role: 'cancel', done: 'Cancelled.' }, { label: 'Discard Changes', role: 'destructive', done: 'Discarded the changes to README.md.' }] }));
+  $('#demoDlg3').addEventListener('click', () => dialog({ req: 'DLG-01', title: 'Save changes to openapi.ts?', message: 'Your changes will be lost if you don’t save them.', buttons: [{ label: 'Don’t Save', role: 'destructive', left: true, cmdD: true, done: 'Closed without saving.' }, { label: 'Cancel', role: 'cancel', done: 'Cancelled.' }, { label: 'Save', role: 'primary', done: 'Saved openapi.ts and closed the tab.' }] }));
+  $('#demoPerm').addEventListener('click', () => dialog({ req: 'DLG-06', lg: true, agentMark: true, title: 'Permission needed', cmd: 'Bash: pnpm --filter web-client exec vitest run src/forms', buttons: [{ label: 'Cancel', role: 'cancel', left: true, done: 'Cancelled the request.' }, { label: 'Reject', left: true, done: 'Rejected.' }, { label: 'Always Allow', done: 'Allowed always.' }, { label: 'Allow', role: 'primary', done: 'Allowed once.' }] }));
   $('#demoPins').addEventListener('click', (e) => { e.currentTarget.setAttribute('aria-pressed', String(document.body.classList.toggle('spec-on'))); });
   document.addEventListener('click', (e) => {
     if (!document.body.classList.contains('spec-on')) return;

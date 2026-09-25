@@ -3,8 +3,10 @@ import Foundation
 
 extension Fixtures {
     /// Launches `fake-acp-agent.sh`, a scripted ACP agent (see the script header).
-    /// `log`: a file the agent appends every line it receives to.
+    /// `agent`: whose models and effort levels it offers (AGM-02). `log`: a file the agent appends every line it
+    /// receives to.
     static func fakeACPLaunch(
+        agent: AgentKind = .claude,
         loadSession: Bool = true,
         loadFails: Bool = false,
         asks: Bool = false,
@@ -12,6 +14,7 @@ extension Fixtures {
         log: URL? = nil
     ) -> AgentLaunch {
         var environment = ProcessInfo.processInfo.environment
+        environment["FAKE_ACP_AGENT"] = agent.rawValue
         environment["FAKE_ACP_LOAD_SESSION"] = loadSession ? "true" : "false"
         environment["FAKE_ACP_LOAD_FAILS"] = loadFails ? "true" : "false"
         environment["FAKE_ACP_ASKS"] = asks ? "true" : "false"

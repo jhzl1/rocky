@@ -13,6 +13,12 @@ struct TerminalHostView: NSViewRepresentable {
     var identifier: NSUserInterfaceItemIdentifier?
     /// Takes the keyboard as it appears: the embedded terminal opens to be used at once.
     var focusesOnAppear = false
+    /// KBD-04: a request to take the keyboard, by the serial of the ⌃` press that made it. Honored once per serial,
+    /// whether the view appears with it (the panel unfolding) or is already on screen.
+    var focusRequest: Int?
+    /// Called with the request's serial once the view has the keyboard, so its owner drops the request and a view made
+    /// again later (another tab chosen, then this one) does not take the keyboard a second time.
+    var onFocused: ((Int) -> Void)?
 
     /// A Nerd Font when one is installed, because prompts such as powerlevel10k and starship draw their icons with
     /// it (SF Mono shows them as "?"). Otherwise SF Mono.
@@ -49,12 +55,26 @@ struct TerminalHostView: NSViewRepresentable {
         view.identifier = identifier
         // Once the view is in its window.
         if focusesOnAppear { DispatchQueue.main.async { [weak view] in view?.window?.makeFirstResponder(view) } }
+        honorFocusRequest(view, coordinator: context.coordinator)
         return view
     }
 
     func updateNSView(_ view: TerminalView, context: Context) {
         let font = Self.font(zoom: zoom)
         if view.font.pointSize != font.pointSize { view.font = font }
+        honorFocusRequest(view, coordinator: context.coordinator)
+    }
+
+    private func honorFocusRequest(_ view: TerminalView, coordinator: Coordinator) {
+        guard let focusRequest, coordinator.focusedRequest != focusRequest else { return }
+        coordinator.focusedRequest = focusRequest
+        let onFocused = self.onFocused
+        // Once the view is in its window, after this update.
+        DispatchQueue.main.async { [weak view] in
+            guard let view, let window = view.window else { return }
+            window.makeFirstResponder(view)
+            onFocused?(focusRequest)
+        }
     }
 
     static func dismantleNSView(_ view: TerminalView, coordinator: Coordinator) {
@@ -65,6 +85,8 @@ struct TerminalHostView: NSViewRepresentable {
     final class Coordinator: NSObject {
         let session: PTYSession
         let viewerId = UUID()
+        /// The last `focusRequest` this view honored.
+        var focusedRequest: Int?
 
         init(session: PTYSession) {
             self.session = session

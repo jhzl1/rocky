@@ -1,13 +1,16 @@
 import AppKit
 import RockyKit
+import SwiftTerm
 import SwiftUI
 
 struct WorkspaceDetailView: View {
     let model: AppModel
     let workspace: Workspace
     @State private var panelSelection: UUID?
+    /// KBD-04: the panel terminal ⌃` gives the keyboard to, until it has it.
+    @State private var terminalFocus: TerminalFocusRequest?
     /// The terminal panel folded to its bar; its terminals and scripts keep running.
-    @AppStorage("terminalPanelCollapsed") private var panelCollapsed = false
+    @AppStorage(TerminalPanelStorage.collapsedKey) private var panelCollapsed = false
     /// The terminal panel's height while open, bar included (TERM-01), the same for every workspace.
     @AppStorage("terminalPanelHeight") private var panelHeight = 220.0
     /// PNL-01: the right panel, open by default, and its width; both global and kept across launches.
@@ -59,6 +62,10 @@ struct WorkspaceDetailView: View {
         }
         .task {
             await model.showConversations(workspace: workspace)
+        }
+        // KBD-04: View ▸ Toggle Terminal (⌃`) reaches the panel's selection and fold through the model.
+        .onChange(of: model.terminalToggleRequests[workspace.id]) { _, serial in
+            if let serial { toggleTerminal(serial: serial) }
         }
         // A file badge anywhere in the workspace opens its file in a tab here: its diff tab when it is a changed
         // worktree file (DIFF-05), else a file tab.
@@ -134,7 +141,8 @@ struct WorkspaceDetailView: View {
                     workspace: workspace,
                     selection: $panelSelection,
                     isCollapsed: $panelCollapsed,
-                    openHeight: openHeight
+                    openHeight: openHeight,
+                    focusRequest: $terminalFocus
                 )
                 .frame(height: isPanelOpen ? openHeight : WorkspacePanelView.barHeight, alignment: .top)
                 .clipped()
@@ -143,6 +151,59 @@ struct WorkspaceDetailView: View {
             // never animates it: each workspace gets a new view (`.id(workspace.id)` in RootView), and a drag changes
             // the height without changing this value.
             .animation(reduceMotion ? nil : Theme.Motion.state, value: isPanelOpen)
+        }
+    }
+
+    /// KBD-04, VS Code's Toggle Terminal (M2.8 Decision 11). A terminal of the panel with the keyboard: the panel folds
+    /// and the keyboard goes back to the selected tab, the conversation's message box or the file or diff tab's editor.
+    /// Otherwise the panel unfolds on a terminal, which takes the keyboard: the selected tab if it is a terminal, else
+    /// the first terminal tab, else a new "Terminal N" (TERM-07), which may first wait for the repository account's
+    /// token (ENV-01). Setup and Run are scripts: never picked. The fold is TERM-05's, which ⌘J toggles too.
+    private func toggleTerminal(serial: Int) {
+        let window = NSApp.keyWindow
+        if let window, Self.panelTerminalHasKeyboard(in: window) {
+            terminalFocus = nil
+            panelCollapsed = true
+            // After the fold has taken the terminal out of the window.
+            DispatchQueue.main.async { giveKeyboardBack(in: window) }
+            return
+        }
+        let processes = model.existingProcesses(for: workspace.id)
+        let terminals = processes?.terminals ?? []
+        let shown = WorkspacePanelView.shownSession(among: processes?.all ?? [], selection: panelSelection)
+        if let chosen = terminals.first(where: { $0.id == shown?.id }) ?? terminals.first {
+            focusTerminal(chosen.id, serial: serial)
+            return
+        }
+        let workspaceId = workspace.id
+        Task {
+            guard let opened = await model.openTerminal(workspaceId: workspaceId) else { return }
+            focusTerminal(opened.id, serial: serial)
+        }
+    }
+
+    private func focusTerminal(_ sessionId: UUID, serial: Int) {
+        panelSelection = sessionId
+        panelCollapsed = false
+        terminalFocus = TerminalFocusRequest(sessionId: sessionId, serial: serial)
+    }
+
+    /// A terminal of the bottom panel is the first responder. The embedded terminal of Claude Code's terminal commands
+    /// (CMD-08) is the conversation's, not the panel's.
+    private static func panelTerminalHasKeyboard(in window: NSWindow) -> Bool {
+        guard let terminal = window.firstResponder as? TerminalView else { return false }
+        return terminal.identifier != .embeddedTerminal
+    }
+
+    /// The selected tab takes the keyboard again: the conversation's message box, else the editor a file or diff tab
+    /// shows. A diff tab without its editor (Diff mode) leaves it with the window.
+    private func giveKeyboardBack(in window: NSWindow) {
+        let showsConversation = model.selectedFiles[workspace.id] == nil && model.selectedDiffTabs[workspace.id] == nil
+        if showsConversation, let conversationId = model.selectedConversationIds[workspace.id],
+           let composer = ConversationComposers.controller(conversationId: conversationId) {
+            composer.focus()
+        } else if !CodeEditor.focusShownEditor(in: window) {
+            window.makeFirstResponder(nil)
         }
     }
 
@@ -168,12 +229,15 @@ struct WorkspaceDetailView: View {
         let diff = model.selectedDiffTabs[workspace.id]
         let showsChat = file == nil && diff == nil
         return ZStack {
-            if let chat {
+            if let chat, let conversationId = model.selectedConversationIds[workspace.id] {
                 ChatView(
                     chat: chat,
+                    model: model,
+                    workspaceId: workspace.id,
+                    conversationId: conversationId,
                     isActive: showsChat,
                     commands: model.commands(for: chat),
-                    terminal: EmbeddedTerminalHost(model: model, conversationId: model.selectedConversationIds[workspace.id]),
+                    terminal: EmbeddedTerminalHost(model: model, conversationId: conversationId),
                     lineComment: { [model, workspace] range, comment, files in
                         await model.lineComment(for: range, comment: comment, files: files, workspaceId: workspace.id)
                     }
@@ -339,21 +403,14 @@ struct ConversationTabs: View {
             }
             .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
             // CNV-01: one click makes the conversation, with the default agent (CNV-02), adds its tab at the end and
-            // selects it; its new `ChatView` takes the keyboard for the message box.
+            // selects it; its new `ChatView` takes the keyboard for the message box. No right-click menu: the model
+            // menu's rail picks the agent, switching an empty conversation in place (AGM-01, AGM-02; the bridge went,
+            // user decision, 2026-09-25).
             Button("New conversation", systemImage: "plus") {
                 Task { await model.newConversation(workspace: workspace) }
             }
             .buttonStyle(RockyIconButtonStyle())
             .help("New conversation")
-            // CNV-01's bridge until M2.8's agent rail (AGM-01), the only way to pick OpenCode meanwhile (user decision,
-            // 2026-09-24): today's two items on a right-click. A pick does not change the default by itself.
-            .rockyContextMenu(id: "new-conversation-\(workspace.id)", width: 280) {
-                ForEach(AgentKind.allCases) { agent in
-                    MenuItem(title: "New \(agent.displayName) conversation", icon: .agent(agent)) {
-                        Task { await model.newConversation(workspace: workspace, agent: agent) }
-                    }
-                }
-            }
         }
         .padding(.horizontal, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -364,17 +421,17 @@ struct ConversationTabs: View {
         .onChange(of: model.conversations[workspace.id]?.map(\.id), initial: true) { _, ids in
             if drawnConversationIds == nil, let ids { drawnConversationIds = Set(ids) }
         }
-        .confirmationDialog(
-            closing.map { UnsavedChangesPrompt.title(for: [$0.editor], quitting: false) } ?? "",
-            isPresented: Binding(get: { closing != nil }, set: { if !$0 { closing = nil } }),
-            titleVisibility: .visible,
-            presenting: closing
-        ) { tab in
-            Button(UnsavedChangesPrompt.saveTitle(count: 1)) { saveAndClose(tab) }
-            Button("Don’t Save", role: .destructive) { finishClosing(tab.kind, path: tab.path) }
-            Button("Cancel", role: .cancel) {}
-        } message: { tab in
-            Text(verbatim: UnsavedChangesPrompt.message(for: [tab.editor]))
+        // DLG-01: Don't Save alone at the left (⌘D), then Cancel and Save, the default.
+        .rockyDialog(item: $closing) { tab in
+            Dialog(
+                title: UnsavedChangesPrompt.title(for: [tab.editor], quitting: false),
+                message: UnsavedChangesPrompt.message(for: [tab.editor]),
+                buttons: [
+                    .dontSave { finishClosing(tab.kind, path: tab.path) },
+                    .cancel(),
+                    .primary(UnsavedChangesPrompt.saveTitle(count: 1)) { saveAndClose(tab) },
+                ]
+            )
         }
     }
 }
@@ -597,7 +654,7 @@ private struct OpenSplitButton: View {
     let worktreePath: String
     @Binding var panelSelection: UUID?
     @AppStorage(DefaultOpenApp.storageKey) private var storedDefault: String?
-    @AppStorage("terminalPanelCollapsed") private var panelCollapsed = false
+    @AppStorage(TerminalPanelStorage.collapsedKey) private var panelCollapsed = false
     @Environment(ToastPresenter.self) private var toasts: ToastPresenter?
 
     private var worktree: URL {

@@ -82,9 +82,9 @@ public final class QuickOpenPresenter {
     }
 
     /// The keys Quick Open takes, in its window: whether the event was used. A composition in progress (an input
-    /// method's marked text) keeps Return and Esc.
+    /// method's marked text) keeps Return and Esc. A mini-modal over it keeps every key (DLG-03).
     private func handle(_ event: NSEvent) -> Bool {
-        guard isShown, event.window === window, !MenuPresenter.isAnyMenuOpen else { return false }
+        guard isShown, event.window === window, !MenuPresenter.isAnyMenuOpen, !DialogPresenter.shared.isShowing else { return false }
         let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
         let isComposing = (window?.firstResponder as? NSTextView)?.hasMarkedText() == true
         switch event.keyCode {

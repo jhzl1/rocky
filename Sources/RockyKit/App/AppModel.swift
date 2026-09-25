@@ -7,17 +7,21 @@ public struct RockyPaths: Sendable {
     public let logs: URL
     /// `AGT-03`'s failure logs, one folder per workspace, outside every worktree.
     public let ciLogs: URL
+    /// `AGM-04`'s model catalog (`AgentModelCatalog`).
+    public let agentModels: URL
 
-    /// `ciLogs` defaults to a `ci-logs` folder next to the database.
-    public init(database: URL, adapterPrefix: URL, logs: URL, ciLogs: URL? = nil) {
+    /// `ciLogs` defaults to a `ci-logs` folder next to the database, `agentModels` to `agent-models.json` there.
+    public init(database: URL, adapterPrefix: URL, logs: URL, ciLogs: URL? = nil, agentModels: URL? = nil) {
         self.database = database
         self.adapterPrefix = adapterPrefix
         self.logs = logs
-        self.ciLogs = ciLogs ?? database.deletingLastPathComponent().appendingPathComponent("ci-logs", isDirectory: true)
+        let support = database.deletingLastPathComponent()
+        self.ciLogs = ciLogs ?? support.appendingPathComponent("ci-logs", isDirectory: true)
+        self.agentModels = agentModels ?? support.appendingPathComponent("agent-models.json")
     }
 
-    /// `~/Library/Application Support/Rocky` for data, the Claude adapter and the CI logs (`ci-logs`),
-    /// `~/Library/Logs/Rocky` for agent stderr.
+    /// `~/Library/Application Support/Rocky` for data, the Claude adapter, the CI logs (`ci-logs`) and the model
+    /// catalog (`agent-models.json`), `~/Library/Logs/Rocky` for agent stderr.
     public static func standard() throws -> RockyPaths {
         let fileManager = FileManager.default
         let support = try fileManager.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
@@ -77,6 +81,18 @@ public struct ArchiveFailure: Equatable, Sendable {
 enum BaseSyncStep: Equatable, Sendable {
     case commitFirst, fastForwarded
     case diverged(rebase: Bool)
+}
+
+/// What `AppModel.pickModel` did with a pick in the model menu (M2.8 Decision 5). The menu stays open after a pick
+/// (`AGM-07`) except when another tab takes over (`AGM-03`), and the model cannot reach the menu: the view closes it
+/// for `.openedConversation`.
+public enum ModelPick: Sendable, Equatable {
+    /// The conversation's own agent: its model changed, or waits for its session while the agent starts (`AGM-05`).
+    case setModel
+    /// `AGM-02`: the empty conversation switched to the picked agent, in its tab.
+    case switchedInPlace
+    /// `AGM-03`: a new conversation with the picked agent opened, selected, with the draft.
+    case openedConversation
 }
 
 /// The setup, run and archive scripts and the terminal tabs of one workspace. Kept only while Rocky runs.
@@ -282,6 +298,13 @@ public final class AppModel {
     public private(set) var selectedConversationIds: [String: String] = [:] {
         didSet { defaults.set(selectedConversationIds, forKey: Self.lastConversationsKey) }
     }
+    /// `AGM-02`, `AGM-03`, `KIT-11`: the unsent draft (text, files and line chip) a pick in the model menu moved, by the
+    /// conversation that takes it (M2.8 Decision 1). The next `ChatView` for that conversation takes it once
+    /// (`takePendingDraft`): a switched conversation gets a new view, since its chat is new, and so does a new tab.
+    @ObservationIgnored public private(set) var pendingDrafts: [String: MessageHistory.Entry] = [:]
+    /// `AGM-02`: each conversation's agent switch in flight, so a later pick, or the tab closing, wins over an earlier
+    /// one still building its chat.
+    @ObservationIgnored private var agentSwitches: [String: UUID] = [:]
     /// The first read of the login shell's environment, at launch. The last session's workspace is selected before it
     /// ends, so the window shows it at once; its agents wait for this, or they would start without the user's PATH.
     @ObservationIgnored private var launchEnvironment: Task<Void, Never>?
@@ -367,8 +390,16 @@ public final class AppModel {
         let repoId: String
         let agent: AgentKind
     }
+    /// `AGM-04`, `KIT-12`: every agent's models as a session last reported them, read from `paths.agentModels` once at
+    /// launch and written when a list changes. Observed: the model menu lists another agent's models from here.
+    public private(set) var modelCatalog: AgentModelCatalog
+    /// `loadModelsIfNeeded`'s runs in flight and their failures, by agent and Claude instance (`modelProbeKey`).
+    @ObservationIgnored private var modelProbes: [String: Task<Void, Never>] = [:]
+    private var modelProbeFailures: [String: String] = [:]
     /// Observed for the same reason as `chats`. Created only in actions, never while a view reads it.
     private var processes: [String: WorkspaceProcesses] = [:]
+    /// `KBD-04`: each workspace's count of ⌃` presses (`requestTerminalToggle`). In memory only.
+    public private(set) var terminalToggleRequests: [String: Int] = [:]
     /// CMD-08: the terminal each conversation runs a Claude Code terminal command in, keyed by conversation. At most
     /// one per conversation, kept only while Rocky runs. Observed: the conversation's view shows it.
     private var embeddedTerminals: [String: EmbeddedTerminal] = [:]
@@ -430,6 +461,7 @@ public final class AppModel {
         self.lookUpGitHubRepository = lookUpGitHubRepository
         self.store = store
         self.paths = paths
+        self.modelCatalog = AgentModelCatalog(file: paths.agentModels)
         self.captureEnvironment = captureEnvironment
         self.makeLaunch = makeLaunch
         self.installAdapter = installAdapter
@@ -462,6 +494,83 @@ public final class AppModel {
     public func chat(conversationId: String) -> ChatSessionModel? {
         chats[conversationId]
     }
+
+    /// `AGM-04`: the models `agent` last reported for the workspace's repository, under its Claude instance for Claude
+    /// Code; nil when it never reported any on this Mac. Reading them starts no process.
+    public func knownModels(agent: AgentKind, workspaceId: String) -> [SessionConfigOption.Choice]? {
+        let claudeInstance = workspace(id: workspaceId).flatMap { repo(id: $0.repoId) }?.claudeConfigDir
+        return modelCatalog.models(agent: agent, claudeInstance: claudeInstance)
+    }
+
+    /// `AGM-04` without a Start button (user decision, 2026-09-25: "la idea es que cargue solo, sin yo tener que darle a
+    /// un botón"): an agent with no list for the workspace's repository reports one by itself. It runs once, in the
+    /// background and in no conversation, only until its session reports its models; the catalog records them and the
+    /// agent stops. One run per agent and Claude instance at a time; a failure stays for the menu to show, and the
+    /// next call tries again.
+    public func loadModelsIfNeeded(agent: AgentKind, workspaceId: String) {
+        guard knownModels(agent: agent, workspaceId: workspaceId)?.isEmpty != false,
+              let workspace = workspace(id: workspaceId) else { return }
+        let key = modelProbeKey(agent: agent, workspace: workspace)
+        guard modelProbes[key] == nil else { return }
+        modelProbeFailures[key] = nil
+        modelProbes[key] = Task { [weak self] in
+            await self?.probeModels(agent: agent, workspace: workspace, key: key)
+            self?.modelProbes[key] = nil
+        }
+    }
+
+    /// Why `loadModelsIfNeeded`'s last run got no list for `agent` in the workspace's repository; a new run clears it.
+    public func modelsFailure(agent: AgentKind, workspaceId: String) -> String? {
+        guard let workspace = workspace(id: workspaceId) else { return nil }
+        return modelProbeFailures[modelProbeKey(agent: agent, workspace: workspace)]
+    }
+
+    /// Claude Code's lists are kept per Claude instance, OpenCode's once (`AgentModelCatalog`), and so are the runs.
+    private func modelProbeKey(agent: AgentKind, workspace: Workspace) -> String {
+        let instance = agent == .claude ? repo(id: workspace.repoId)?.claudeConfigDir ?? "default" : ""
+        return "\(agent.rawValue)|\(instance)"
+    }
+
+    /// The run itself: the agent started like a conversation's (the login environment, the account's token, its
+    /// install on first use), with no history and nothing persisted, stopped once its session is up or has failed.
+    private func probeModels(agent: AgentKind, workspace: Workspace, key: String) async {
+        await launchEnvironment?.value
+        await prepareEnvironment(for: workspace)
+        let current = self.workspace(id: workspace.id) ?? workspace
+        let claudeInstance = repo(id: current.repoId)?.claudeConfigDir
+        let chat: ChatSessionModel
+        do {
+            let launch = try await resolveLaunch(agent, cwd: URL(fileURLWithPath: current.path), environment: environment(for: current))
+            chat = ChatSessionModel(agent: agent, launch: launch)
+        } catch {
+            modelProbeFailures[key] = "\(error)"
+            return
+        }
+        chat.onModelOption = { [weak self] option in
+            self?.modelCatalog.record(option, agent: agent, claudeInstance: claudeInstance)
+        }
+        // An agent that neither answers nor fails would leave the menu's spinner forever: past the limit it is stopped
+        // and counts as failed (AGM-04). The install on first use, above, is not timed.
+        let watchdog = Task { @MainActor in
+            try? await Task.sleep(for: Self.modelProbeTimeout)
+            guard !Task.isCancelled else { return false }
+            await chat.stop()
+            return true
+        }
+        await chat.start()
+        watchdog.cancel()
+        let timedOut = await watchdog.value
+        let failure = chat.failure
+        await chat.stop()
+        if knownModels(agent: agent, workspaceId: current.id)?.isEmpty != false {
+            modelProbeFailures[key] = timedOut
+                ? "it didn't answer in \(Int(Self.modelProbeTimeout.components.seconds)) s"
+                : failure ?? "\(agent.displayName) reported no models."
+        }
+    }
+
+    /// How long `loadModelsIfNeeded` waits for the agent's session (AGM-04).
+    static let modelProbeTimeout = Duration.seconds(30)
 
     /// The slash commands `chat`'s message box offers (CMD-05): its own list once its agent has announced one
     /// (`confirmed`), else the last list of its repository and agent, possibly empty, until its own arrives. A Claude
@@ -915,17 +1024,27 @@ public final class AppModel {
         (try? store.lastUsedAgent(repoId: repoId)) ?? .claude
     }
 
-    /// Opens a new tab with an empty conversation with `agent`: the bridge's picks on "+" (CNV-01) and the agent
-    /// actions. Earlier ones stay open and running.
+    /// Opens a new tab at the end with an empty conversation with `agent`, selected: the agent actions, and a pick of
+    /// another agent's model in a conversation with messages (`AGM-03`, `KIT-11`). Its agent starts in the background
+    /// and takes `model` once its session reports its options (nil keeps the agent's default, `AGM-04`'s Start button);
+    /// `draft` waits for the tab's message box (`pendingDrafts`). Earlier tabs stay open and running.
     @discardableResult
-    public func newConversation(workspace: Workspace, agent: AgentKind) async -> ChatSessionModel? {
+    public func newConversation(
+        workspace: Workspace,
+        agent: AgentKind,
+        model: String? = nil,
+        draft: MessageHistory.Entry? = nil
+    ) async -> ChatSessionModel? {
         do {
             let record = ChatSessionRecord(workspaceId: workspace.id, agent: agent.rawValue)
             try store.add(record)
+            // Before the tab is selected, so its message box finds the draft when it first appears.
+            if let draft, !draft.isEmpty { pendingDrafts[record.id] = draft }
             reloadConversations(workspaceId: workspace.id)
             selectedConversationIds[workspace.id] = record.id
             showConversationTab(workspaceId: workspace.id)
             let chat = try await makeChat(workspace: workspace, record: record, agent: agent)
+            chat.pendingModel = modelChoice(model, agent: agent, workspaceId: workspace.id, chat: nil)
             startInBackground(chat)
             return chat
         } catch {
@@ -934,8 +1053,131 @@ public final class AppModel {
         }
     }
 
+    /// `AGM-01`…`AGM-06`, `KIT-11`: a model picked in the conversation's model menu, of `agent`'s; nil `model` is the
+    /// agent's default (`AGM-04`'s Start button). For the conversation's own agent the model changes, or waits for the
+    /// session while the agent starts (`AGM-05`). Another agent's switches an empty conversation in place (`AGM-02`),
+    /// and opens a new conversation when this one has a user message, sent or queued (`AGM-03`, `AGM-06`): its history
+    /// lives in the agent's session and cannot move. `draft` is the message box's unsent text, files and chip, which
+    /// go to whichever conversation takes over. nil when nothing happened: the conversation is gone, or the new chat
+    /// could not be made (`errorMessage` says why).
+    @discardableResult
+    public func pickModel(
+        conversationId: String,
+        agent: AgentKind,
+        model: String?,
+        draft: MessageHistory.Entry? = nil
+    ) async -> ModelPick? {
+        let chat = chats[conversationId]
+        if let chat, chat.agent == agent {
+            guard let model else { return .setModel }
+            let hasSession = chat.state == .ready || chat.state == .running
+            if hasSession, chat.option(SessionConfigOption.model) != nil {
+                await chat.setOption(SessionConfigOption.model, to: model)
+            } else {
+                // Starting, or stopped: the session that comes next reports the options, and takes the pick then.
+                let workspaceId = chatWorkspaceIds[conversationId] ?? ""
+                chat.pendingModel = modelChoice(model, agent: agent, workspaceId: workspaceId, chat: chat)
+            }
+            return .setModel
+        }
+        guard let record = try? store.session(id: conversationId), let workspace = workspace(id: record.workspaceId) else {
+            return nil
+        }
+        if hasMessages(conversationId: conversationId) {
+            let opened = await newConversation(workspace: workspace, agent: agent, model: model, draft: draft)
+            return opened == nil ? nil : .openedConversation
+        }
+        let switched = await switchAgent(conversationId: conversationId, to: agent, model: model, draft: draft)
+        return switched ? .switchedInPlace : nil
+    }
+
+    /// `AGM-02`, `KIT-11`: an empty conversation's agent switches in place, keeping its record, its tab's place and its
+    /// selection, in an order that leaves no gap (M2.8 Decision 2), so "Opening the conversation…" never shows and the
+    /// open model menu stays:
+    /// 1. the new chat is built, awaiting the environment and the launch (the agent's first use installs it), while
+    ///    the old one stays on screen;
+    /// 2. the record takes the new agent and loses its session id, which the new agent could not load;
+    /// 3. the old chat stops, even while it starts, and the new one takes its place, on the same main-actor turn;
+    /// 4. the new one starts, with `model` pending (nil keeps the agent's default) and `draft` waiting for its message
+    ///    box.
+    ///
+    /// False when it did not switch: the conversation is gone or has a message, a later pick took over, or the chat
+    /// could not be made (`errorMessage` says why).
+    @discardableResult
+    public func switchAgent(conversationId: String, to agent: AgentKind, model: String?, draft: MessageHistory.Entry? = nil) async -> Bool {
+        guard let record = try? store.session(id: conversationId), record.closedAt == nil,
+              let workspace = workspace(id: record.workspaceId), !hasMessages(conversationId: conversationId) else { return false }
+        let token = UUID()
+        agentSwitches[conversationId] = token
+        var switched = record
+        switched.agent = agent.rawValue
+        switched.acpSessionId = nil
+        let fresh: ChatSessionModel
+        do {
+            fresh = try await buildChat(workspace: workspace, record: switched, agent: agent)
+        } catch {
+            if agentSwitches[conversationId] == token {
+                agentSwitches[conversationId] = nil
+                errorMessage = "Could not switch the conversation to \(agent.displayName): \(error)"
+            }
+            return false
+        }
+        // A later pick, or the tab closing, took over while this one waited. Read again: the old chat may have stored
+        // its session id meanwhile, or sent a message.
+        guard agentSwitches[conversationId] == token else { return false }
+        agentSwitches[conversationId] = nil
+        guard var stored = try? store.session(id: conversationId), stored.closedAt == nil,
+              !hasMessages(conversationId: conversationId) else { return false }
+        stored.agent = agent.rawValue
+        stored.acpSessionId = nil
+        do {
+            try store.update(stored)
+        } catch {
+            errorMessage = "Could not switch the conversation to \(agent.displayName): \(error)"
+            return false
+        }
+        reloadConversations(workspaceId: workspace.id)
+        // From here to the stop's first suspension is one main-actor turn: the tab never lacks a chat, and the old
+        // agent is stopped before anything else runs.
+        let old = chats[conversationId]
+        fresh.pendingModel = modelChoice(model, agent: agent, workspaceId: workspace.id, chat: nil)
+        if let draft, !draft.isEmpty { pendingDrafts[conversationId] = draft }
+        register(fresh, conversationId: conversationId, workspaceId: workspace.id)
+        await old?.stop()
+        // A Claude Code terminal command's terminal (CMD-08) belongs to the old agent: the new chat never shows it.
+        await closeEmbeddedTerminal(conversationId: conversationId)
+        startInBackground(fresh)
+        return true
+    }
+
+    /// The draft a pick moved to this conversation (`pendingDrafts`), once: the next `ChatView` for it puts it in its
+    /// message box.
+    public func takePendingDraft(conversationId: String) -> MessageHistory.Entry? {
+        pendingDrafts.removeValue(forKey: conversationId)
+    }
+
+    /// `AGM-03`, `AGM-06`: the conversation has a user message in its transcript, or one queued.
+    private func hasMessages(conversationId: String) -> Bool {
+        if let chat = chats[conversationId] {
+            return chat.items.contains { $0.kind == .user } || !chat.queue.isEmpty
+        }
+        let stored = (try? store.messages(sessionId: conversationId)) ?? []
+        return stored.contains { $0.kind == ChatItem.Kind.user.rawValue }
+    }
+
+    /// A picked model with its name, for the toast when the agent turns out not to have it (`AGM-02`): from the
+    /// conversation's own options, else the catalog, else the value itself.
+    private func modelChoice(_ value: String?, agent: AgentKind, workspaceId: String, chat: ChatSessionModel?) -> SessionConfigOption.Choice? {
+        guard let value else { return nil }
+        let own = chat?.agent == agent ? chat?.option(SessionConfigOption.model)?.choices : nil
+        let known = own ?? knownModels(agent: agent, workspaceId: workspaceId)
+        return known?.first { $0.value == value } ?? SessionConfigOption.Choice(value: value, name: value)
+    }
+
     /// Closes a tab: stops its agent and hides it. The conversation stays in the store.
     public func closeConversation(workspace: Workspace, conversationId: String) async {
+        agentSwitches[conversationId] = nil
+        pendingDrafts[conversationId] = nil
         await stopChat(conversationId: conversationId)
         if var record = try? store.session(id: conversationId) {
             record.closedAt = Date()
@@ -998,19 +1240,39 @@ public final class AppModel {
 
     private func startInBackground(_ chat: ChatSessionModel?) {
         guard let chat, chat.state == .idle else { return }
-        Task { await chat.start() }
+        Task {
+            // A chat stopped before this ran (AGM-02 replaced it at once) stays stopped: `start()` would take a stopped
+            // chat for a Restart, and its agent would run with nobody to stop it.
+            guard chat.state == .idle else { return }
+            await chat.start()
+        }
     }
 
+    /// The conversation's chat, made and registered once: a second caller gets the first one's.
     @discardableResult
     private func makeChat(workspace: Workspace, record: ChatSessionRecord, agent: AgentKind) async throws -> ChatSessionModel {
+        let chat = try await buildChat(workspace: workspace, record: record, agent: agent)
+        // Made by another caller while this one waited (its tab shown while a line comment opened it, CMT-05): that
+        // chat is the conversation's, and a second one would run a second agent nobody stops. This one never started.
+        if let existing = chats[record.id] { return existing }
+        register(chat, conversationId: record.id, workspaceId: workspace.id)
+        return chat
+    }
+
+    private func register(_ chat: ChatSessionModel, conversationId: String, workspaceId: String) {
+        chats[conversationId] = chat
+        chatWorkspaceIds[conversationId] = workspaceId
+    }
+
+    /// A chat for `record`, with its history and the model's hooks, neither registered nor started (`AGM-02` builds one
+    /// before it replaces the conversation's). It waits for the login environment, the repository account's token and
+    /// the agent's launch, which installs the agent on its first use.
+    private func buildChat(workspace: Workspace, record: ChatSessionRecord, agent: AgentKind) async throws -> ChatSessionModel {
         await launchEnvironment?.value
         await prepareEnvironment(for: workspace)
         let current = self.workspace(id: workspace.id) ?? workspace
         let environment = self.environment(for: current)
         let launch = try await resolveLaunch(agent, cwd: URL(fileURLWithPath: current.path), environment: environment)
-        // Made by another caller while this one waited (its tab shown while a line comment opened it, CMT-05): that
-        // chat is the conversation's, and a second one would run a second agent nobody stops.
-        if let existing = chats[record.id] { return existing }
         let history = try store.messages(sessionId: record.id).map(ChatItem.init(record:))
         let store = self.store
         let conversationId = record.id
@@ -1034,8 +1296,12 @@ public final class AppModel {
         chat.onAttention = { [weak self] kind in self?.attention(kind, workspaceId: workspaceId) }
         let commandKey = CommandListKey(repoId: current.repoId, agent: agent)
         chat.onCommands = { [weak self] commands in self?.lastCommands[commandKey] = commands }
-        chats[conversationId] = chat
-        chatWorkspaceIds[conversationId] = workspaceId
+        // AGM-04: under the Claude instance the chat started with, which a later change of the setting does not reach.
+        let claudeInstance = repo(id: current.repoId)?.claudeConfigDir
+        chat.onModelOption = { [weak self] option in
+            self?.modelCatalog.record(option, agent: agent, claudeInstance: claudeInstance)
+        }
+        chat.onToast = { [weak self] text in self?.onToast?(text) }
         return chat
     }
 
@@ -1173,6 +1439,13 @@ public final class AppModel {
     }
 
     // MARK: Scripts and terminals
+
+    /// `KBD-04`: ⌃` (View ▸ Toggle Terminal) in the workspace. The menu command cannot reach the state it toggles, the
+    /// terminal panel's selected tab and its fold, which are the workspace view's (M2.8 Decision 11): it bumps the
+    /// workspace's serial in `terminalToggleRequests`, and the view acts on each new value.
+    public func requestTerminalToggle(workspaceId: String) {
+        terminalToggleRequests[workspaceId, default: 0] += 1
+    }
 
     /// Starts the workspace's run script. In `nonconcurrent` mode it first stops every other workspace's run.
     public func startRun(workspaceId: String) async {

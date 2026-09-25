@@ -21,6 +21,11 @@ enum Theme {
     static let plan = Color(red: 0.47, green: 0.74, blue: 0.96)
     /// The loading arc (`CircularProgress`).
     static let progressTint = Color.white.opacity(0.9)
+    /// The model menu's agent rail (`AGM-01`): black at 18 % over `panel`.
+    static let agentRail = Color.black.opacity(0.18)
+    /// A mini-modal's destructive button (`DLG-02`): `danger` at 16 %, 22 % on hover, with `danger` text.
+    static let fillDestructive = danger.opacity(0.16)
+    static let fillDestructiveHover = danger.opacity(0.22)
 
     // M2.5 tokens (docs/superpowers/design/2026-09-23-sidebar-topbar.html, TOK-01). The sidebar, top bar, tabs and
     // terminal panel use these instead of hierarchical styles, `Color.accentColor` or inline opacities, so their
@@ -125,6 +130,17 @@ enum Theme {
         static let state = Animation.easeOut(duration: 0.15)
         /// A new chat row fading in (MOT-02).
         static let enter = Animation.timingCurve(0.2, 0.7, 0.2, 1, duration: 0.22)
+        /// AGM-07: the model menu's Effort section appearing, grown, faded in and risen 4 points; the design's
+        /// ease-out, 200 ms.
+        static let effortAppear = Animation.timingCurve(0.2, 0.7, 0.2, 1, duration: 0.2)
+        /// AGM-07: the Effort section going, shrunk and faded; ease-in, 120 ms.
+        static let effortDisappear = Animation.easeIn(duration: 0.12)
+        /// AGM-07: the effort chips' labels when another model brings other levels, 150 ms.
+        static let crossFade = Animation.easeOut(duration: 0.15)
+        /// AGM-07: the selected effort's fill sliding to its chip, the design's ease-out, 180 ms.
+        static let slide = Animation.timingCurve(0.2, 0.7, 0.2, 1, duration: 0.18)
+        /// DLG-04: a mini-modal closing, faster than the 150 ms it opens in (`state`); ease-in, 120 ms.
+        static let dialogClose = Animation.easeIn(duration: 0.12)
     }
 }
 
