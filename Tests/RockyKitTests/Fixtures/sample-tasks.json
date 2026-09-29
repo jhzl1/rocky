@@ -1,0 +1,143 @@
+{
+  // A made-up monorepo's tasks.json, in the shapes real ones use: `//` comments, trailing commas, hidden "_" steps
+  // chained with dependsOn, background tasks with ready patterns, and pickString inputs shared along a chain.
+  "version": "2.0.0",
+  "tasks": [
+    // ── Setup ─────────────────────────────────────────────────────────────
+    {
+      "label": "Setup: Local DB",
+      "type": "shell",
+      "command": "${workspaceFolder}/scripts/setup-db.sh ${input:apiEnv}",
+      "options": { "cwd": "${workspaceFolder}/apps/api" },
+      "group": "build",
+      "presentation": { "reveal": "always", "focus": true, "panel": "dedicated", "clear": true },
+      "problemMatcher": [],
+    },
+
+    // ── Run ───────────────────────────────────────────────────────────────
+    {
+      "label": "Run: API + Web",
+      "type": "shell",
+      "command": "pnpm ${input:runMode}",
+      "options": { "cwd": "${workspaceFolder}/apps/web" },
+      "dependsOn": ["_Dev: Cleanup", "_API: Run (mode)"],
+      "dependsOrder": "sequence",
+      "group": "build",
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated",
+        "showReuseMessage": false,
+        "clear": true,
+      },
+      "problemMatcher": [
+        {
+          "owner": "vite-web",
+          "pattern": { "regexp": "^$" },
+          "background": {
+            "activeOnStart": true,
+            "beginsPattern": "vite v",
+            "endsPattern": "ready in \\d+",
+          },
+        },
+      ],
+      "isBackground": true,
+    },
+    {
+      "label": "Run: API",
+      "type": "shell",
+      "command": "set -a && source ${workspaceFolder}/apps/api/.env.${input:apiEnv} && set +a && uvicorn src.main:app --port 8100",
+      "options": { "cwd": "${workspaceFolder}/apps/api" },
+      "dependsOn": ["_Dev: Cleanup", "_API: Setup"],
+      "dependsOrder": "sequence",
+      "problemMatcher": [],
+      "isBackground": true,
+    },
+    {
+      "label": "Run: Web",
+      "type": "shell",
+      "command": "pnpm ${input:webMode}",
+      "options": { "cwd": "${workspaceFolder}/apps/web" },
+      "problemMatcher": [],
+    },
+
+    // ── Internal steps ────────────────────────────────────────────────────
+    {
+      "label": "_Dev: Cleanup",
+      "type": "shell",
+      "command": "${workspaceFolder}/scripts/cleanup.sh",
+      "presentation": { "reveal": "silent", "panel": "shared" },
+      "problemMatcher": [],
+    },
+    {
+      "label": "_API: Setup",
+      "type": "shell",
+      "command": "echo setup",
+      "options": { "cwd": "${workspaceFolder}/apps/api" },
+      "dependsOn": ["_API: Ensure venv"],
+      "problemMatcher": [],
+    },
+    {
+      "label": "_API: Ensure venv",
+      "type": "shell",
+      "command": "test -d .venv || python3 -m venv .venv",
+      "options": { "cwd": "${workspaceFolder}/apps/api" },
+      "problemMatcher": [],
+    },
+    {
+      "label": "_API: Ensure hooks",
+      "type": "shell",
+      "command": "test -f .git/hooks/pre-commit || echo 'no hooks'",
+      "problemMatcher": [],
+    },
+    {
+      "label": "_API: Run (mode)",
+      "type": "shell",
+      "command": "MODE='${input:runMode}' ${workspaceFolder}/scripts/run-api.sh",
+      "options": { "cwd": "${workspaceFolder}/apps/api" },
+      "dependsOn": ["_API: Ensure venv", "_API: Ensure hooks"],
+      "dependsOrder": "parallel",
+      "problemMatcher": [
+        {
+          "owner": "api",
+          "pattern": { "regexp": "^$" },
+          "background": { "activeOnStart": true, "beginsPattern": "Started", "endsPattern": "Application startup complete" },
+        },
+      ],
+      "isBackground": true,
+    },
+    {
+      "label": "_API: Start Redis",
+      "type": "shell",
+      "command": "redis-server",
+      "args": ["--daemonize", "yes", "--port", "6390"],
+      "problemMatcher": [],
+    },
+  ],
+  "inputs": [
+    {
+      "id": "runMode",
+      "type": "pickString",
+      "description": "Select environment and mode",
+      "options": [
+        { "label": "DEV — Local", "value": "dev-local" },
+        { "label": "QA — Local", "value": "qa-local" },
+      ],
+      "default": "dev-local",
+    },
+    {
+      "id": "apiEnv",
+      "type": "pickString",
+      "description": "API environment",
+      "options": ["dev", "qa"],
+      "default": "dev",
+    },
+    {
+      "id": "webMode",
+      "type": "pickString",
+      "description": "Web mode",
+      "options": ["dev", "dev:qa"],
+    },
+  ],
+}

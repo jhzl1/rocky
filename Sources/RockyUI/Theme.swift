@@ -141,6 +141,8 @@ enum Theme {
         static let slide = Animation.timingCurve(0.2, 0.7, 0.2, 1, duration: 0.18)
         /// DLG-04: a mini-modal closing, faster than the 150 ms it opens in (`state`); ease-in, 120 ms.
         static let dialogClose = Animation.easeIn(duration: 0.12)
+        /// WSC-07: a removed workspace's row leaving the sidebar, the design's ease-in, 160 ms.
+        static let leave = Animation.easeIn(duration: 0.16)
     }
 }
 

@@ -195,8 +195,9 @@ public struct GitBranchService: Sendable {
         (try? runGit(arguments, in: worktree)).flatMap { Int($0) } ?? 0
     }
 
+    /// `runGit`, with a failure as `GitBranchError`. Internal, for `BranchLinks.swift`'s commands.
     @discardableResult
-    private func perform(_ arguments: [String], in worktree: URL, reachesRemote: Bool = false) throws -> String {
+    func perform(_ arguments: [String], in worktree: URL, reachesRemote: Bool = false) throws -> String {
         do {
             return try runGit(arguments, in: worktree, reachesRemote: reachesRemote)
         } catch {
@@ -207,7 +208,7 @@ public struct GitBranchService: Sendable {
     /// A run that reaches the remote (pull, push, fetch) gets the ssh command git itself would use, in batch mode
     /// (`WorktreeService.remoteEnvironment(_:in:)`), so the worktree's `core.sshCommand` is not overridden.
     @discardableResult
-    private func runGit(_ arguments: [String], in worktree: URL, reachesRemote: Bool = false) throws -> String {
+    func runGit(_ arguments: [String], in worktree: URL, reachesRemote: Bool = false) throws -> String {
         let environment = reachesRemote ? WorktreeService.remoteEnvironment(environment, in: worktree) : environment
         return try ProcessRunner.run(Self.git, arguments, in: worktree, environment: environment)
     }

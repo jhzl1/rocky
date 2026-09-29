@@ -11,6 +11,8 @@ import SwiftUI
 struct QueuedMessageRow: View {
     let message: QueuedMessage
     let isAgentWorking: Bool
+    /// WSC-03: sent while the workspace's worktree was being made; it goes once the agent is ready.
+    var isWaitingForAgent = false
     let canEdit: Bool
     let onSendNow: () -> Void
     let onEdit: () -> Void
@@ -46,6 +48,7 @@ struct QueuedMessageRow: View {
         .background(.tint.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.hairline, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
         .frame(maxWidth: Zoom.shared(620), alignment: .trailing)
+        .optionalHelp(isWaitingForAgent ? "Goes when the agent is ready" : nil)
     }
 
     private var actions: some View {

@@ -67,6 +67,16 @@ struct WorkspaceDetailView: View {
         .onChange(of: model.terminalToggleRequests[workspace.id]) { _, serial in
             if let serial { toggleTerminal(serial: serial) }
         }
+        // Decision 12 of M2.9: a task that starts with `reveal: always`, a running item chosen again, or a toast's
+        // Show selects its tab and unfolds the panel, and with `focus: true` gives it the keyboard. At appearance too:
+        // Show from another workspace selects this one first.
+        .onChange(of: model.terminalRevealRequests[workspace.id], initial: true) { _, request in
+            guard let request else { return }
+            panelSelection = request.sessionId
+            panelCollapsed = false
+            if request.focus { terminalFocus = TerminalFocusRequest(sessionId: request.sessionId, serial: request.serial) }
+            model.terminalRevealHandled(workspaceId: workspace.id, serial: request.serial)
+        }
         // A file badge anywhere in the workspace opens its file in a tab here: its diff tab when it is a changed
         // worktree file (DIFF-05), else a file tab.
         .environment(\.openFile, OpenFileAction { [model, workspace] path in
@@ -118,9 +128,13 @@ struct WorkspaceDetailView: View {
         .windowDragBackground()
     }
 
-    /// TB-03's split button: the default app (OPN-02) on the left, the Open menu behind the chevron.
+    /// TB-03's split button: the default app (OPN-02) on the left, the Open menu behind the chevron. Off until the
+    /// worktree exists (WSC-03): there is no folder to open, and its New Terminal waits like the panel's.
     private var openMenu: some View {
-        OpenSplitButton(model: model, workspaceId: workspace.id, worktreePath: workspace.path, panelSelection: $panelSelection)
+        let hint = model.creatingHint(workspaceId: workspace.id)
+        return OpenSplitButton(model: model, workspaceId: workspace.id, worktreePath: workspace.path, panelSelection: $panelSelection)
+            .disabled(hint != nil)
+            .optionalHelp(hint)
     }
 
     /// Chat above, terminals and script output below (M2 layout decision), in one layout whatever the panel's state
@@ -227,7 +241,11 @@ struct WorkspaceDetailView: View {
     private var chatArea: some View {
         let file = model.selectedFiles[workspace.id]
         let diff = model.selectedDiffTabs[workspace.id]
-        let showsChat = file == nil && diff == nil
+        // WSC-06: the card takes the conversation's place; the conversation stays underneath, with its draft and queue.
+        let failure: String? = if case .failed(let message)? = model.creations[workspace.id] { message } else { nil }
+        let showsChat = file == nil && diff == nil && failure == nil
+        // WSC-07: while its archive script runs, the conversation keeps its transcript and its message box is off.
+        let closedReason = model.removalHint(workspaceId: workspace.id)
         return ZStack {
             if let chat, let conversationId = model.selectedConversationIds[workspace.id] {
                 ChatView(
@@ -235,7 +253,8 @@ struct WorkspaceDetailView: View {
                     model: model,
                     workspaceId: workspace.id,
                     conversationId: conversationId,
-                    isActive: showsChat,
+                    isActive: showsChat && closedReason == nil,
+                    closedReason: closedReason,
                     commands: model.commands(for: chat),
                     terminal: EmbeddedTerminalHost(model: model, conversationId: conversationId),
                     lineComment: { [model, workspace] range, comment, files in
@@ -249,6 +268,15 @@ struct WorkspaceDetailView: View {
             } else if showsChat {
                 ProgressLabel(text: "Opening the conversation…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            if let failure, file == nil, diff == nil {
+                CreationFailureCard(
+                    name: workspace.name,
+                    message: failure,
+                    retryWait: model.newWorkspaceWait,
+                    onRemove: { [model, workspace] in Task { await model.removeFailedCreation(workspaceId: workspace.id) } },
+                    onRetry: { [model, workspace] in Task { await model.retryCreation(workspaceId: workspace.id) } }
+                )
             }
             if let diff {
                 // A new view per file, so one tab's expanded runs and scroll position never carry over to another. A
@@ -340,6 +368,8 @@ struct ConversationTabs: View {
         let selectedDiff = model.selectedDiffTabs[workspace.id]
         let preview = model.previewTabs[workspace.id]
         let changes = model.changes[workspace.id]
+        // WSC-03: one conversation, in memory, until the worktree exists and the workspace is saved with it.
+        let creatingHint = model.creatingHint(workspaceId: workspace.id)
         TabStripLayout {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 2) {
@@ -348,6 +378,7 @@ struct ConversationTabs: View {
                         WorkspaceTab(
                             title: record.title ?? "New conversation",
                             isSelected: record.id == selectedId && selectedFile == nil && selectedDiff == nil,
+                            canClose: creatingHint == nil,
                             onSelect: { Task { await model.showConversation(workspace: workspace, conversationId: record.id) } },
                             onClose: { Task { await model.closeConversation(workspace: workspace, conversationId: record.id) } }
                         ) {
@@ -410,7 +441,8 @@ struct ConversationTabs: View {
                 Task { await model.newConversation(workspace: workspace) }
             }
             .buttonStyle(RockyIconButtonStyle())
-            .help("New conversation")
+            .disabled(creatingHint != nil)
+            .help(creatingHint ?? "New conversation")
         }
         .padding(.horizontal, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -447,6 +479,8 @@ struct WorkspaceTab<Icon: View>: View {
     let isSelected: Bool
     var isDirty = false
     var isPreview = false
+    /// False for the one conversation of a workspace being made (WSC-03): it has no ×.
+    var canClose = true
     let onSelect: () -> Void
     /// The second click of a double-click, after `onSelect` ran for both.
     var onDoubleClick: (() -> Void)?
@@ -460,7 +494,7 @@ struct WorkspaceTab<Icon: View>: View {
 
     /// The × shows while the tab is lit, except that the dirty dot keeps its place until the pointer is on the tab.
     private var showsClose: Bool {
-        isDirty ? hovering : isLit
+        canClose && (isDirty ? hovering : isLit)
     }
 
     var body: some View {
@@ -817,6 +851,64 @@ private struct BranchCopyButton: View {
             guard !Task.isCancelled else { return }
             copied = false
         }
+    }
+}
+
+/// WSC-06: a workspace git could not make, in the conversation's place, 60 points from the top: "Couldn't create lima"
+/// at 14 semibold after the `danger` triangle, git's message in 12.5 mono `textSecondary`, selectable and cut at 8
+/// lines, then Remove and Retry, the primary, in DLG-02's button styles. A card 420 wide on white 3 % inside a hairline,
+/// radius 12, over the opaque conversation background. Retry waits, disabled with WSC-01's reason, while another
+/// workspace is being made.
+struct CreationFailureCard: View {
+    let name: String
+    let message: String
+    let retryWait: String?
+    let onRemove: () -> Void
+    let onRetry: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.rocky(13))
+                    .foregroundStyle(Theme.danger)
+                    .accessibilityHidden(true)
+                Text("Couldn't create \(name)")
+                    .font(.rocky(14, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
+            }
+            Text(message)
+                .font(.rocky(12.5, design: .monospaced))
+                .foregroundStyle(Theme.textSecondary)
+                .lineSpacing(3)
+                .lineLimit(8)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 8)
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
+                Button("Remove", action: onRemove)
+                    .buttonStyle(RockyFilledButtonStyle(height: 28, horizontalPadding: 14, cornerRadius: 7))
+                    .help("Remove \(name): its half-made folder and its empty branch go")
+                Button("Retry", action: onRetry)
+                    .buttonStyle(RockyPrimaryButtonStyle(height: 28, horizontalPadding: 14, cornerRadius: 7))
+                    .disabled(retryWait != nil)
+                    .help(retryWait ?? "Create \(name) again")
+            }
+            .font(.rocky(12.5, weight: .medium))
+            .padding(.top, 16)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 18)
+        .padding(.bottom, 16)
+        .frame(width: Zoom.shared(420))
+        .background(Theme.panelBar, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.hairline))
+        .padding(.top, 60)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(Color.rockyBackground)
     }
 }
 

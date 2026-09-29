@@ -104,7 +104,9 @@ extension EnvironmentValues {
 }
 
 /// How a file badge looks, like Conductor's: a bordered badge in two parts, the icon and the name. The icon is the
-/// file's Material icon at 12 points (FIL-09), or the blue folder for a folder. `showsRemove` puts an X in place of the
+/// file's Material icon at 12 points (FIL-09), the blue folder for a folder, or a link's mark for a file Rocky wrote for
+/// a GitHub link (M2.9 Decision 4: GitHub's for an issue, the pull request or branch glyph, from the name's prefix, so
+/// the transcript and ↑'s history show it too). `showsRemove` puts an X in place of the
 /// icon. Only drawing, so the message box can also draw it as an image (`FileAttachment`, `LineChipAttachment`). Its
 /// size is fixed by `size(for:range:)`, so text can leave exactly its room in a line.
 ///
@@ -157,6 +159,8 @@ struct FileBadgeLook: View {
                     Image(systemName: "xmark")
                         .font(.rocky(9, weight: .bold))
                         .foregroundStyle(.secondary)
+                } else if !isChip, let link = LinkAttachments.kind(ofPath: path) {
+                    LinkMark(kind: link, size: 12)
                 } else if kind == .folder {
                     Image(systemName: kind.symbol)
                         .font(.rocky(11))
@@ -241,13 +245,15 @@ struct LineChip: View {
 }
 
 /// A file badge in the conversation. Hovering shows a preview (`FilePreviewPanel`); clicking opens the file in a tab
-/// of the workspace. With `onRemove`, hovering shows an X in place of the icon, and clicking it removes the file.
+/// of the workspace. With `onRemove`, hovering shows an X in place of the icon, and clicking it removes the file. A
+/// link's badge has its title as its tooltip (`GHL-04`): "#3655 Look and feel 3/6: Components".
 struct FileBadge: View {
     let path: String
     var onRemove: (() -> Void)?
     @Environment(\.openFile) private var openFile
     @State private var hovering = false
     @State private var anchor = ViewAnchor.Box()
+    @State private var linkTitle: String?
 
     static var height: CGFloat { FileBadgeLook.height }
     static var baselineOffset: CGFloat { FileBadgeLook.baselineOffset }
@@ -286,6 +292,8 @@ struct FileBadge: View {
             }
             .onDisappear { FilePreviewPanel.shared.hide(path) }
             .clickable()
+            .optionalHelp(linkTitle)
+            .task(id: path) { linkTitle = await LinkBadgeTitles.title(for: path) }
     }
 }
 

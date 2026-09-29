@@ -264,6 +264,42 @@ struct ChatSessionModelTests {
         await model.stop()
     }
 
+    /// WSC-03: a chat made before its worktree exists waits in `.starting` for its launch; what was sent meanwhile waits
+    /// in the queue and goes once the agent is ready, Send Now's first. No launch leaves it idle, the queue kept.
+    @Test func aChatMadeBeforeItsWorktreeStartsWithTheLaunchItGets() async throws {
+        let worktree = SharedFlag()
+        let model = ChatSessionModel(agent: .claude, launchWhenReady: {
+            while !worktree.isSet { try await Task.sleep(for: .milliseconds(10)) }
+            return Fixtures.fakeACPLaunch()
+        }, flushInterval: .zero)
+        #expect(model.isWaitingForWorkspace)
+        model.enqueue("first")
+        model.enqueue("second")
+        let starting = Task { await model.start() }
+        for _ in 0..<500 where model.state != .starting { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(model.state == .starting)
+        await model.sendQueuedNow(id: try #require(model.queue.last?.id))
+        #expect(model.queue.map(\.text) == ["second", "first"])
+
+        worktree.set()
+        await starting.value
+        #expect(!model.isWaitingForWorkspace)
+        try await waitForPermission(model)
+        model.answerPermission(optionId: "allow")
+        try await waitForPermission(model)
+        model.answerPermission(optionId: "allow")
+        for _ in 0..<500 where !(model.state == .ready && model.queue.isEmpty) { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(model.items.filter { $0.kind == .user }.map(\.text) == ["second", "first"])
+        await model.stop()
+
+        let never = ChatSessionModel(agent: .claude, launchWhenReady: { nil }, flushInterval: .zero)
+        never.enqueue("waits")
+        await never.start()
+        #expect(never.state == .idle)
+        #expect(never.isWaitingForWorkspace)
+        #expect(never.queue.map(\.text) == ["waits"])
+    }
+
     @Test func stoppingTheTurnHoldsTheQueue() async throws {
         let model = ChatSessionModel(agent: .claude, launch: Fixtures.fakeACPLaunch(), flushInterval: .zero)
         await model.start()

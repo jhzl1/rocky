@@ -10,6 +10,10 @@ struct RepoHeader: View {
     let isFolded: Bool
     /// SB-04: shown while folded, nothing when every workspace is idle.
     let foldedStatus: WorkspaceStatus
+    /// WSC-01: why no workspace can be made now ("Wait for lima to be created"), in any repository; nil when one can.
+    var newWorkspaceWait: String?
+    /// WSC-01: the workspace being made is this repository's: its "+" is the spinner.
+    var isPreparing = false
     let onToggleFold: () -> Void
     let onNewWorkspace: () -> Void
     let onSettings: () -> Void
@@ -50,14 +54,23 @@ struct RepoHeader: View {
                 menuItems
             }
             .help("More")
-            Button(action: onNewWorkspace) {
-                Label("New workspace in \(repo.name)", systemImage: "plus")
-                    // SB-03: `textTertiary` at rest, unlike the other icon buttons.
-                    .foregroundStyle(plusHovering ? Theme.textPrimary : Theme.textTertiary)
+            if isPreparing {
+                // WSC-01: the repository making a workspace shows the spinner in place of its "+".
+                CircularProgress(size: 12)
+                    .frame(width: Zoom.shared(22), height: Zoom.shared(22))
+                    .help(newWorkspaceWait ?? "New workspace")
+                    .accessibilityLabel(newWorkspaceWait ?? "New workspace")
+            } else {
+                Button(action: onNewWorkspace) {
+                    Label("New workspace in \(repo.name)", systemImage: "plus")
+                        // SB-03: `textTertiary` at rest, unlike the other icon buttons.
+                        .foregroundStyle(plusHovering && newWorkspaceWait == nil ? Theme.textPrimary : Theme.textTertiary)
+                }
+                .buttonStyle(RockyIconButtonStyle(size: 22))
+                .disabled(newWorkspaceWait != nil)
+                .onHover { inside in withAnimation(Theme.Motion.hover) { plusHovering = inside } }
+                .help(newWorkspaceWait ?? "New workspace")
             }
-            .buttonStyle(RockyIconButtonStyle(size: 22))
-            .onHover { inside in withAnimation(Theme.Motion.hover) { plusHovering = inside } }
-            .help("New workspace")
         }
         .font(.rocky(12))
         .padding(.leading, 8)
@@ -95,7 +108,7 @@ struct RepoHeader: View {
     /// The same menu for "…" and a right-click (SB-03).
     @ViewBuilder
     private var menuItems: some View {
-        MenuItem(title: "New Workspace", icon: .symbol("plus"), shortcut: "⌘N", action: onNewWorkspace)
+        MenuItem(title: "New Workspace", icon: .symbol("plus"), shortcut: "⌘N", disabledReason: newWorkspaceWait, action: onNewWorkspace)
         MenuItem(title: "Settings…", icon: .symbol("slider.horizontal.3"), action: onSettings)
         MenuDivider()
         MenuItem(title: "Remove from Rocky", icon: .symbol("trash"), isDestructive: true, action: onRemove)

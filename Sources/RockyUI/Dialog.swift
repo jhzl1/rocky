@@ -20,6 +20,8 @@ struct Dialog {
     var width: CGFloat = 360
     /// The large variant's body, between the title and the buttons.
     var content: (@MainActor () -> AnyView)?
+    /// A body under the small variant's 14-point title: TSK-04's one field, in a DLG-02 mini-modal.
+    var keepsSmallTitle = false
     /// A hint at the left of the buttons: Commit's "git add -A, then git commit".
     var footnote: String?
     /// The body's text fields take the typing keys, Space, Tab and Return while one has the keyboard, and ⌘Return
@@ -29,7 +31,7 @@ struct Dialog {
 
     /// The large variant: 15-point title, as `SettingsPanel`'s (DLG-06).
     var isLarge: Bool {
-        content != nil
+        content != nil && !keepsSmallTitle
     }
 
     /// The buttons as the row lays them out, each with the state it has now (`DialogAction.isEnabled`).

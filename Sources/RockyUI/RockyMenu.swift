@@ -5,7 +5,8 @@ import SwiftUI
 /// Rocky draws its own menus instead of the system's, all in the model picker's style (user decision,
 /// 2026-09-23): a dark rounded panel with a hairline border, rows lit on hover, an icon and a shortcut per row.
 /// `MenuPresenter` holds the one open menu; `MenuHost`, on top of the whole window, draws it next to the control
-/// that opened it and closes it on a click outside it or on Esc.
+/// that opened it and closes it on a click outside it or on Esc. A menu that lists `keyActions` also takes ↑/↓ and
+/// Return (Decision 11 of M2.9, TSK-04's input pickers).
 @MainActor
 @Observable
 final class MenuPresenter {
@@ -20,11 +21,20 @@ final class MenuPresenter {
         /// False: the content reaches the panel's edges, clipped to its shape (M2.8 Decision 7, the model menu's
         /// agent rail, `AGM-01`).
         var padded = true
+        /// The rows ↑/↓ move through and Return picks, in the order `MenuItem(keyIndex:)` numbers them; empty for a
+        /// menu of the mouse alone.
+        var keyActions: [@MainActor () -> Void] = []
+        /// The row lit when the menu opens, so Return takes it: TSK-04's default.
+        var initialHighlight: Int?
+        /// Called when the menu closes without a pick: Esc, a click outside, another menu. TSK-04's Esc cancels the run.
+        var onCancel: (@MainActor () -> Void)?
         let content: AnyView
     }
 
     private(set) var open: OpenMenu?
-    @ObservationIgnored private var escMonitor: Any?
+    /// The `keyIndex` of the row ↑/↓ lit, or the pointer last entered.
+    private(set) var highlighted: Int?
+    @ObservationIgnored private var keyMonitor: Any?
 
     /// Every presenter, held weakly, so one that goes away with its view never counts as open. The settings panels'
     /// Esc monitors read `isAnyMenuOpen` from here, since `RootView` keeps its presenter in its state, out of their
@@ -47,12 +57,14 @@ final class MenuPresenter {
     }
 
     func show(_ menu: OpenMenu) {
+        let replaced = open
         open = menu
-        guard escMonitor == nil else { return }
-        escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard event.keyCode == 53 else { return event }   // Esc
-            MainActor.assumeIsolated { self?.dismiss() }
-            return nil
+        highlighted = menu.initialHighlight
+        if let replaced, replaced.id != menu.id { replaced.onCancel?() }
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            let used = MainActor.assumeIsolated { self?.handle(event) ?? false }
+            return used ? nil : event
         }
     }
 
@@ -65,10 +77,52 @@ final class MenuPresenter {
         if open?.id == id { open?.anchor = anchor }
     }
 
+    /// Closes the menu without a pick: its `onCancel` runs.
     func dismiss() {
+        let closed = open
         open = nil
-        if let escMonitor { NSEvent.removeMonitor(escMonitor) }
-        escMonitor = nil
+        highlighted = nil
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        keyMonitor = nil
+        closed?.onCancel?()
+    }
+
+    /// A row was chosen: the menu closes, and its `onCancel` does not run.
+    func dismissPicking() {
+        open?.onCancel = nil
+        dismiss()
+    }
+
+    /// The pointer entered a row that takes the keyboard: one row is lit, the keys go on from it.
+    func highlight(_ index: Int) {
+        guard open?.keyActions.indices.contains(index) == true else { return }
+        highlighted = index
+    }
+
+    /// Esc closes any menu; ↑/↓ and Return belong to a menu with `keyActions`, whatever has the keyboard behind it.
+    private func handle(_ event: NSEvent) -> Bool {
+        guard let menu = open else { return false }
+        if event.keyCode == 53 {   // Esc
+            dismiss()
+            return true
+        }
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        guard !menu.keyActions.isEmpty, modifiers.isEmpty else { return false }
+        switch event.keyCode {
+        case 125, 126:   // ↓, ↑
+            let count = menu.keyActions.count
+            let down = event.keyCode == 125
+            highlighted = highlighted.map { ($0 + (down ? 1 : count - 1)) % count } ?? (down ? 0 : count - 1)
+            return true
+        case 36, 76:   // Return, Enter
+            guard let highlighted, menu.keyActions.indices.contains(highlighted) else { return true }
+            let action = menu.keyActions[highlighted]
+            dismissPicking()
+            action()
+            return true
+        default:
+            return false
+        }
     }
 }
 
@@ -257,6 +311,8 @@ enum MenuIcon {
     case agent(AgentKind)
     /// An app's own icon, such as an editor's (`OPN-01`), drawn at 16 points in full color.
     case image(NSImage)
+    /// A bundled mark drawn as a template at 14 points in the menu's icon color, as a symbol is: GitHub's (`GHL-01`).
+    case template(NSImage)
 
     /// Whether the row has the icon column.
     var hasColumn: Bool {
@@ -276,15 +332,20 @@ struct MenuItem: View {
     /// An SF Symbol after the title, in `textTertiary`: "↗" on a row that opens the browser (HDR-04).
     var trailingSymbol: String?
     var isDestructive = false
-    /// The detail line's size: 10 in most menus, 11.5 in the merge method menu (PR-05).
+    /// The detail line's size: 10 in most menus, 11.5 in the merge method menu (PR-05) and the Run menu (TSK-02).
     var detailSize: CGFloat = 10
     var disabledReason: String?
+    /// TSK-02: a 6-point `success` dot before the right end, for an item that is running.
+    var isRunning = false
+    /// Its place among the rows ↑/↓ move through (`MenuPresenter.OpenMenu.keyActions`), which lights it while it is
+    /// the highlighted one.
+    var keyIndex: Int?
     let action: () -> Void
     @Environment(MenuPresenter.self) private var presenter: MenuPresenter?
 
     var body: some View {
-        PanelRow(isSelected: false) {
-            presenter?.dismiss()
+        PanelRow(isSelected: false, isHighlighted: keyIndex != nil && presenter?.highlighted == keyIndex) {
+            presenter?.dismissPicking()
             action()
         } content: {
             if icon.hasColumn {
@@ -306,6 +367,12 @@ struct MenuItem: View {
                     .font(.rocky(10, weight: .semibold))
                     .foregroundStyle(Theme.textTertiary)
             }
+            if isRunning {
+                Circle()
+                    .fill(Theme.success)
+                    .frame(width: Zoom.shared(6), height: Zoom.shared(6))
+                    .accessibilityLabel("Running")
+            }
             if isChecked {
                 Image(systemName: "checkmark").font(.rocky(10, weight: .semibold))
             }
@@ -314,6 +381,9 @@ struct MenuItem: View {
         .disabled(disabledReason != nil)
         .opacity(disabledReason == nil ? 1 : 0.45)
         .optionalHelp(disabledReason)
+        .onHover { inside in
+            if inside, let keyIndex { presenter?.highlight(keyIndex) }
+        }
     }
 
     @ViewBuilder
@@ -328,13 +398,23 @@ struct MenuItem: View {
                 .interpolation(.high)
                 .aspectRatio(contentMode: .fit)
                 .frame(width: Zoom.shared(16), height: Zoom.shared(16))
+        case .template(let image):
+            Image(nsImage: image)
+                .renderingMode(.template)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .foregroundStyle(isDestructive ? Theme.danger : Theme.textSecondary)
+                .frame(width: Zoom.shared(14), height: Zoom.shared(14))
         }
     }
 }
 
-/// A clickable row of a menu panel, lit on hover like Conductor's.
+/// A clickable row of a menu panel, lit on hover like Conductor's, and while the keys highlight it (Decision 11 of M2.9)
+/// as much as on hover.
 struct PanelRow<Content: View>: View {
     let isSelected: Bool
+    var isHighlighted = false
     let action: () -> Void
     @ViewBuilder let content: () -> Content
     @State private var hovering = false
@@ -346,7 +426,7 @@ struct PanelRow<Content: View>: View {
                 .padding(.vertical, 7)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
-                    Color.white.opacity(hovering ? 0.08 : (isSelected ? 0.04 : 0)),
+                    Color.white.opacity(hovering || isHighlighted ? 0.08 : (isSelected ? 0.04 : 0)),
                     in: RoundedRectangle(cornerRadius: 8)
                 )
                 .contentShape(Rectangle())
@@ -359,10 +439,12 @@ struct PanelRow<Content: View>: View {
 
 struct MenuSectionTitle: View {
     let title: String
+    /// 10 in most menus; 10.5 for the Run menu's "Tasks" and an input's caption (TSK-02, TSK-04).
+    var size: CGFloat = 10
 
     var body: some View {
         Text(title)
-            .font(.rocky(10, weight: .medium))
+            .font(.rocky(size, weight: .medium))
             .foregroundStyle(.tertiary)
             .padding(.horizontal, 10)
             .padding(.top, 8)
@@ -378,14 +460,21 @@ struct MenuDivider: View {
 
 extension View {
     /// A right-click (or Control-click) menu drawn by Rocky, opened where the pointer is.
-    func rockyContextMenu<Content: View>(id: String, width: CGFloat = 220, @ViewBuilder content: @escaping () -> Content) -> some View {
-        modifier(RockyContextMenu(id: id, width: width, menu: content))
+    /// `isEnabled` false takes no right-click, with the same views, so turning it off never rebuilds what it wraps.
+    func rockyContextMenu<Content: View>(
+        id: String,
+        width: CGFloat = 220,
+        isEnabled: Bool = true,
+        @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        modifier(RockyContextMenu(id: id, width: width, isEnabled: isEnabled, menu: content))
     }
 }
 
 private struct RockyContextMenu<MenuContent: View>: ViewModifier {
     let id: String
     let width: CGFloat
+    let isEnabled: Bool
     let menu: () -> MenuContent
     @Environment(MenuPresenter.self) private var presenter: MenuPresenter?
     @State private var frame: CGRect = .zero
@@ -395,6 +484,7 @@ private struct RockyContextMenu<MenuContent: View>: ViewModifier {
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame = $0 }
             .overlay {
                 RightClickCatcher { point in
+                    guard isEnabled else { return }
                     let anchor = CGRect(x: frame.minX + point.x, y: frame.minY + point.y, width: 0, height: 0)
                     presenter?.show(.init(id: id, anchor: anchor, placement: .belowLeading, width: Zoom.shared(width), content: AnyView(menu())))
                 }

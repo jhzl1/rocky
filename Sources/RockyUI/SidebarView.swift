@@ -32,6 +32,7 @@ struct SidebarView: View {
     /// SB-04: the folded repositories' ids, comma-separated (`@AppStorage` cannot hold a set).
     @AppStorage("foldedRepoIds") private var foldedRepoIdsValue = ""
     @Environment(\.appearsActive) private var appearsActive
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private enum Focus: Hashable {
         case search, list
@@ -47,7 +48,7 @@ struct SidebarView: View {
 
     var body: some View {
         let sections = shownSections
-        let order = Self.order(of: sections)
+        let order = Self.order(of: sections, leaving: model.removingWorkspaceIds)
         VStack(spacing: 0) {
             searchField
                 .padding(.horizontal, 10)
@@ -88,12 +89,13 @@ struct SidebarView: View {
             hideShortcutHints()
             hasKeyboardFocus = false
             // The search goes away with the sidebar, so ⌘1…⌘9 keep the order without it.
-            publish(Self.order(of: repoSections(matching: "")))
+            publish(Self.order(of: repoSections(matching: ""), leaving: model.removingWorkspaceIds))
         }
         .rockyDialog(item: $workspaceToRemove) { [model] workspace in
             Dialog(
                 title: "Remove \(workspace.name)?",
-                message: "Stops its agent, terminals and scripts, runs the archive script, then deletes the folder \(workspace.path). The branch \(workspace.branch) is kept. Git refuses while there are uncommitted changes.",
+                // WSC-07: the branch sentence last, which says what its rule does with this workspace's branch.
+                message: "Stops its agent, terminals and scripts, runs the archive script, then deletes the folder \(workspace.path). Git refuses while there are uncommitted changes. \(AppModel.branchSentence(branch: workspace.branch))",
                 buttons: [
                     .cancel(),
                     .destructive("Remove Worktree") { Task { await model.removeWorkspace(id: workspace.id) } },
@@ -196,7 +198,8 @@ struct SidebarView: View {
                                 ForEach(section.workspaces) { workspace in
                                     row(for: workspace, hint: hints[workspace.id])
                                         .id(workspace.id)
-                                        .transition(.opacity)
+                                        // WSC-07: a removed row leaves as the mock's does, fading 6 points to the left.
+                                        .transition(.asymmetric(insertion: .opacity, removal: .opacity.combined(with: .offset(x: -6))))
                                 }
                             }
                         }
@@ -204,6 +207,9 @@ struct SidebarView: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.bottom, 8)
+                // WSC-07: a row dims as its removal goes off screen, and leaves with its exit motion once git is done;
+                // at once with Reduce Motion.
+                .animation(reduceMotion ? nil : Theme.Motion.leave, value: model.removingWorkspaceIds)
             }
             .focusable()
             .focused($focus, equals: .list)
@@ -232,6 +238,8 @@ struct SidebarView: View {
             workspaceCount: section.workspaces.count,
             isFolded: section.isFolded,
             foldedStatus: WorkspaceStatus.mostUrgent(statuses),
+            newWorkspaceWait: model.newWorkspaceWait,
+            isPreparing: model.preparingRepoId == repo.id,
             onToggleFold: {
                 withAnimation(Theme.Motion.state) { setFolded(repo.id, !foldedRepoIds.contains(repo.id)) }
             },
@@ -255,11 +263,23 @@ struct SidebarView: View {
             shortcutHint: hint,
             isCommandHeld: showsShortcutHints,
             diffStat: model.diffStats[workspace.id],
+            creation: model.creations[workspace.id],
+            retryWait: model.newWorkspaceWait,
+            removal: model.removals[workspace.id],
             onSelect: {
                 keyboardNavigating = false
                 model.selectedWorkspaceId = workspace.id
             },
-            onRemove: { workspaceToRemove = workspace }
+            onRemove: {
+                // WSC-06: a workspace whose worktree does not exist yet goes without asking: nothing of the user's is in
+                // it, and while it is created, git stops first.
+                if model.creations[workspace.id] != nil {
+                    Task { await model.removeFailedCreation(workspaceId: workspace.id) }
+                } else {
+                    workspaceToRemove = workspace
+                }
+            },
+            onRetry: { Task { await model.retryCreation(workspaceId: workspace.id) } }
         )
     }
 
@@ -377,11 +397,13 @@ struct SidebarView: View {
     }
 
     private var visibleOrder: [String] {
-        Self.order(of: shownSections)
+        Self.order(of: shownSections, leaving: model.removingWorkspaceIds)
     }
 
-    private static func order(of sections: [RepoSection]) -> [String] {
-        sections.filter { !$0.isFolded }.flatMap { $0.workspaces.map(\.id) }
+    /// The rows ↑/↓ and ⌘1…⌘9 move through: none of a folded repository, and none off screen while it is removed
+    /// (WSC-07), which cannot be selected.
+    private static func order(of sections: [RepoSection], leaving: Set<String>) -> [String] {
+        sections.filter { !$0.isFolded }.flatMap { $0.workspaces.map(\.id) }.filter { !leaving.contains($0) }
     }
 
     private static func shortcutHints(for order: [String]) -> [String: String] {

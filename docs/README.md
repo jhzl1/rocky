@@ -1,13 +1,16 @@
 # Guía de uso de Rocky
 
-Última actualización: 2026-09-25
+Última actualización: 2026-09-28
 
 Rocky es una app de macOS para trabajar con agentes de código (Claude Code y OpenCode) en paralelo. Cada tarea vive
 en su propio workspace, con su propia copia del repositorio, así que varios agentes pueden trabajar a la vez sin
 pisarse. La idea viene de Conductor.
 
-**Estado de esta guía.** Describe lo construido de M1 a M3 y M2.8:
+**Estado de esta guía.** Describe lo construido de M1 a M3, M2.8 y M2.9:
 
+- M2.9 (vincular issues, pull requests y ramas de GitHub desde el "+" del cuadro de mensaje, sección 6, correr las
+  tareas de VS Code desde Run, sección 5, y crear y quitar un workspace de inmediato, sección 3) está en la rama
+  `feat/m2.9-github-links-tasks`, todavía sin merge.
 - M2.8 (elegir el agente desde el menú de modelos, el esfuerzo que sigue al modelo, ⌃` para el terminal y los
   diálogos propios de Rocky, secciones 2, 6 y 8) está en la rama `feat/m2.8-conversations`.
 - M3 (revisar y editar: las pestañas All files y Changes, los diffs, los comentarios en líneas, el editor y los
@@ -83,6 +86,7 @@ de cada compilación. Para usar otro certificado, define `ROCKY_SIGN_IDENTITY` c
 | `~/Library/Application Support/Rocky/ci-logs` | Los logs de CI que "Fix errors" adjunta, una carpeta por workspace. |
 | `~/Library/Application Support/Rocky/agent-models.json` | Los modelos que cada agente informó la última vez, para mostrarlos en el menú de modelos sin arrancarlo. Solo nombres: sin tokens, sin llaves y sin niveles de esfuerzo. |
 | `~/Library/Logs/Rocky` | Los logs de los agentes (lo que cada uno escribe en stderr). |
+| `~/Library/Caches/Rocky/Pasted` | Las imágenes pegadas en el cuadro de mensaje y los archivos de los issues, pull requests y ramas vinculados (sección 6), cada uno en su carpeta. macOS puede vaciar esta carpeta. |
 | Llavero de macOS | Los valores de las variables marcadas como secretas. |
 
 En Settings → Data puedes abrir la base de datos y los logs en Finder.
@@ -132,17 +136,54 @@ Rocky elige entre los colores menos usados por tus otros repositorios y lo guard
 
 Pulsa el "+" junto al nombre del repositorio, usa "New Workspace" en su menú "…", o pulsa ⌘N. Rocky:
 
-1. Hace `git fetch origin` en el clon principal.
-2. Elige un nombre de ciudad libre (`lima`, `kyoto`, `oslo`…). Si todas están tomadas, añade un número (`lima-2`).
-3. Crea un worktree en `<repo>-worktrees/<ciudad>`, al lado del repositorio, en la rama nueva `rocky/<ciudad>`. La
-   rama sale de la rama principal de `origin` (o de la rama actual si no hay `origin`).
-4. Enlaza los archivos de entorno del clon principal (sección 4).
-5. Corre el script Setup, si hay uno (sección 5).
+1. Elige un nombre de ciudad libre (`lima`, `kyoto`, `oslo`…). Si todas están tomadas, añade un número (`lima-2`).
+2. Muestra la fila del workspace al instante, seleccionada, con su vista y su primera conversación. Todavía no existe
+   nada en disco.
+3. Hace `git fetch origin` en el clon principal.
+4. Crea un worktree en `<repo>-worktrees/<ciudad>`, al lado del repositorio, en la rama nueva `rocky/<ciudad>`. La
+   rama sale de la rama principal de `origin` (o de la rama actual si no hay `origin`). Git no corre ningún hook del
+   repositorio en este paso, así que termina en segundos.
+5. Guarda el workspace y enlaza los archivos de entorno del clon principal (sección 4).
+6. Corre el Setup en su pestaña: primero el hook `post-checkout` del repositorio, si tiene uno, y después el script
+   Setup, si hay uno (sección 5).
 
 Ejemplo: para `~/Documents/dev/personal/rocky`, el workspace `lima` vive en
 `~/Documents/dev/personal/rocky-worktrees/lima`, en la rama `rocky/lima`.
 
 ⌘N crea el workspace en el repositorio del workspace seleccionado, o en el primero de la lista.
+
+**Mientras se crea**, la vista del workspace ya funciona:
+
+- Arriba se ven el repositorio y la rama `rocky/<ciudad>`, y hay una pestaña "New conversation".
+- Puedes escribir en el cuadro de mensaje. El botón del modelo muestra solo su círculo girando hasta que el agente
+  arranca. Un mensaje que envíes queda en la cola (con el tooltip "Goes when the agent is ready") y sale solo cuando el
+  agente está listo.
+- El agente arranca en cuanto existe el worktree, sin esperar al Setup. Puedes hablar con él mientras corre
+  `pnpm install`. Si el agente ejecuta algo que necesita las dependencias antes de tiempo, puede fallar; la pestaña
+  Setup muestra por qué.
+- All files y Changes muestran un círculo girando, y el panel derecho dice "No pull request".
+- Run, New terminal, las tareas, Open y "Link GitHub issue" están desactivados, con el tooltip "Creating lima…".
+
+**Uno a la vez.** Mientras un workspace se crea o corre su Setup, en cualquier repositorio, no se puede crear otro.
+Todos los "+", "New Workspace" y ⌘N quedan desactivados. El repositorio que está creando muestra un círculo girando en
+lugar de su "+". El tooltip dice "Wait for lima to be created" mientras trabaja git, y "Wait for lima to finish setting
+up" durante el Setup. Varios clics seguidos en "+" crean un solo workspace. Se libera cuando el Setup termina, falla o
+lo cierras, cuando el workspace se quita, o cuando la creación falla. Un repositorio sin hook ni script Setup lo libera
+en cuanto existe el worktree.
+
+**Si no se puede crear** (por ejemplo, sin espacio en disco, o un repositorio sin commits), no aparece ninguna alerta.
+La fila muestra un triángulo rojo, y en lugar de la conversación aparece una tarjeta "Couldn't create lima" con el
+mensaje de git y dos botones:
+
+- **Retry:** vuelve a intentarlo con el mismo nombre. Si el intento fallido ya había creado la rama `rocky/lima`, la
+  reutiliza. Espera si otro workspace se está creando.
+- **Remove:** quita la fila, la carpeta a medio crear, ejecuta `git worktree prune` y borra la rama `rocky/lima` si la
+  creó el intento (no tiene commits). No pide confirmación: no hay nada tuyo en ella.
+
+También puedes quitar un workspace **mientras se crea**, con "Remove workspace" en su fila o "Remove" en su menú: git
+se detiene y Rocky limpia lo mismo. Si cierras Rocky mientras se crea un workspace, pasa lo mismo, así que no queda nada
+a medio crear. Si falla el `git fetch`, el workspace se crea igual desde lo último que se trajo, y un aviso lo dice:
+"git fetch failed; lima was created from the last fetched origin/development."
 
 ### La barra lateral
 
@@ -158,18 +199,24 @@ Cada fila tiene un ícono de estado. Si aplican varios, gana el primero de esta 
 
 | Estado | Ícono | Cuándo aparece |
 | --- | --- | --- |
+| Removing | Círculo girando | El workspace se está quitando: corre su script Archive (tooltip "Running lima's archive script") o git borra el worktree (tooltip "Removing lima…"). |
+| Creating | Círculo girando | Git está creando el worktree. Tooltip: "Creating lima: fetching origin and checking out rocky/lima". |
+| Couldn't create | Triángulo rojo | Git no pudo crear el worktree. Tooltip: "Couldn't create lima: " y el error de git. |
 | Needs you | Punto ámbar con halo | Un agente espera tu permiso o la respuesta a una pregunta. |
 | Error | Triángulo rojo | Un agente se detuvo por un error, o el Setup falló. El tooltip dice por qué. |
 | Working | Círculo girando | Un turno está en curso. |
+| Setting up | Círculo girando | Corre el Setup. Tooltip: "Setting up lima: the post-checkout hook" o "…: the Setup script". |
 | Unread | Punto azul | Un turno terminó mientras no mirabas ese workspace. |
 | Pull request | Ícono de PR de color | Hay un PR abierto o en borrador. Verde: checks pasados. Ámbar: checks corriendo o pendientes. Rojo: un check falló o hay conflictos. Gris: borrador. |
 | Merged | Ícono de merge morado | El PR se fusionó. El título se ve más tenue. |
 | Idle | Ícono de rama gris | Nada de lo anterior. |
 
-El título de una fila es el de la conversación abierta más antigua del workspace, tomado de su primer mensaje. Si
+El título de una fila es el de la conversación abierta más antigua del workspace, tomado de su primer mensaje. Si ese
+mensaje lleva un issue vinculado, el título es el del issue, por ejemplo "#4573 Un filtro negativo…" (sección 6). Si
 todavía no hay mensajes, la fila muestra el nombre de la ciudad, más tenue. Al pasar el mouse sobre una fila
 aparecen "Remove workspace" (ícono de caja) y "…". El menú "…" y el clic derecho ofrecen Open in Finder, Copy Branch
-Name y Remove Workspace…
+Name y Remove Workspace… Mientras el workspace se crea, el menú solo tiene Remove; si la creación falló, tiene Retry y
+Remove. Mientras se quita, la fila no muestra esos botones ni ofrece Remove.
 
 ### La barra superior y el menú Open
 
@@ -208,11 +255,36 @@ Rocky abre el último workspace que tenías seleccionado, y en cada workspace, l
 1. Pulsa "Remove workspace" en la fila, o "Remove Workspace…" en su menú.
 2. Confirma con "Remove Worktree".
 
-Rocky detiene sus agentes, terminales y scripts, corre el script Archive y borra la carpeta del worktree. **La rama
-se conserva**, así que no pierdes commits. Git se niega si hay cambios sin commit, y la carpeta se queda.
+Rocky lo quita en este orden:
+
+1. **El script Archive**, si el repositorio tiene uno. Antes se detienen los agentes, las tareas, los scripts y los
+   terminales del workspace. El script corre a la vista: el workspace sigue seleccionado, la pestaña Archive se
+   selecciona y se despliega, y la conversación conserva sus mensajes con el cuadro de mensaje desactivado. La fila
+   muestra un círculo girando, con el tooltip "Running lima's archive script".
+2. **Sale de la pantalla de inmediato.** La selección pasa al workspace de abajo en la barra lateral; si no hay, al de
+   arriba; si no queda ninguno, a la pantalla vacía. Desde ese momento Rocky deja de vigilar sus archivos, de
+   refrescar su pull request y de leer su estado de git, así que Changes nunca muestra archivos borrados ni errores
+   "fatal:" de la carpeta a medio borrar. Sin script Archive, sus procesos se detienen en este paso.
+3. **Git trabaja en segundo plano.** Rocky ejecuta `git worktree remove` (con `node_modules`, puede tardar unos
+   segundos), aplica la regla de la rama y lo borra de su base de datos. Mientras tanto, la fila se ve más tenue, con
+   un círculo girando y el tooltip "Removing lima…", y no se puede seleccionar. Al terminar, desaparece.
+
+**La rama.** La rama `rocky/lima` se borra si todos sus commits también están en otra rama, en el remoto o en un tag;
+si no, se conserva, así que no pierdes commits. Por ejemplo, se borra una rama vacía, una cuyos commits ya subiste a
+`origin/rocky/lima` o una que ya fusionaste en otra rama local. Se conserva una rama con un commit que no está en
+ningún otro lado. Una rama sin el prefijo `rocky/` (una a la que cambiaste con un enlace de GitHub, o la de un pull
+request) siempre se conserva. Rocky no toca la rama del remoto. Si git no puede borrar la rama (por ejemplo, porque el
+clon principal la tiene activa), el workspace se quita igual y un aviso dice por qué la rama sigue.
+
+**Si git se niega** (hay cambios sin commit o archivos sin seguimiento, o el worktree está bloqueado), no se borra
+nada: el workspace vuelve a la barra lateral como estaba, sin seleccionar, y aparece "Couldn't remove lima" con el
+mensaje de git y OK.
 
 Si el script Archive falla, no se borra nada. Aparece "Archive script failed" con "Remove Anyway" (quita el
 workspace sin volver a correr el script) y "Cancel". La pestaña Archive muestra la salida del script.
+
+Si cierras Rocky mientras se quita un workspace, Rocky espera a que git termine antes de cerrarse, para no dejar un
+worktree a medio borrar.
 
 El panel derecho tiene otras dos formas de archivar después de un merge (sección 11).
 
@@ -262,8 +334,8 @@ Los cambios aplican a los workspaces nuevos. Los existentes conservan sus enlace
 
 | Script | Cuándo corre |
 | --- | --- |
-| Setup | Una vez, al crear el workspace, después de enlazar los archivos de entorno. |
-| Run | Cuando pulsas "Run". |
+| Setup | Una vez, al crear el workspace, después de enlazar los archivos de entorno, y después del hook `post-checkout` del repositorio. |
+| Run | Cuando pulsas "Run", o lo eliges en su menú si el repositorio tiene `tasks.json` (ver "Tareas de VS Code"). |
 | Archive | Antes de quitar un workspace. |
 
 Los scripts corren con zsh en la carpeta del workspace. Su salida aparece en una pestaña del panel inferior (Setup,
@@ -275,11 +347,32 @@ superior). "▶ Run" inicia el script, selecciona su pestaña y despliega el pan
 **Modo de Run** ("Run mode" en los ajustes del repositorio):
 
 - "Concurrent": cada workspace puede tener su Run corriendo a la vez.
-- "One at a time" (`nonconcurrent`): Run detiene primero los Run de los otros workspaces. Sirve para proyectos
-  atados a un solo puerto, base de datos o stack de Docker.
+- "One at a time" (`nonconcurrent`): Run detiene primero los Run y las tareas de VS Code de los otros workspaces, de
+  cualquier repositorio. Sirve para proyectos atados a un solo puerto, base de datos o stack de Docker.
 
 Si Setup falla, el workspace queda usable y su fila muestra el estado Error. La pestaña Setup muestra el código de
 salida.
+
+### El hook `post-checkout` en el Setup
+
+Git corre el hook `post-checkout` del repositorio cada vez que crea un worktree. Algunos repositorios hacen ahí un
+trabajo largo: el de celes-platform (`.husky/post-checkout`, con `core.hooksPath=.husky`) corre
+`scripts/setup-worktree.sh` y un `pnpm install` completo, que tarda minutos. Por eso Rocky crea el worktree sin hooks
+y corre el hook después, a la vista, como primer paso de la pestaña Setup:
+
+- Rocky busca el hook donde lo buscaría git (`git rev-parse --git-path hooks/post-checkout`, que respeta
+  `core.hooksPath`). Solo lo corre si el archivo existe y es ejecutable, igual que git. Sin hook, este paso no existe.
+- Lo corre en la carpeta del worktree, con las variables del workspace, y con los mismos argumentos que le pasaría
+  git para un worktree nuevo: `0000000000000000000000000000000000000000 <HEAD> 1`.
+- Después corre el script Setup (`rocky.json` o los ajustes del repositorio), en la misma pestaña. Sin hook ni script,
+  no hay pestaña Setup.
+
+La pestaña Setup se selecciona y se despliega al empezar. Cada paso empieza con una línea gris, por ejemplo
+"▸ post-checkout hook · .husky/post-checkout" o "▸ Setup · pnpm db:migrate", y el hook termina con su línea
+"post-checkout exited with code 0". Si un paso sale con un código distinto de 0, el siguiente no corre: el punto de
+la pestaña se pone rojo y la fila muestra el estado Error.
+
+Si el Setup se queda colgado, cierra su pestaña con la "×": su proceso se detiene y ya puedes crear otro workspace.
 
 ### `rocky.json`
 
@@ -300,7 +393,116 @@ excepción: se suman (sección 4).
 ```
 
 `runScriptMode` acepta `"concurrent"` o `"nonconcurrent"`. Si el archivo no es JSON válido, Rocky muestra "rocky.json
-is not valid: …", no corre el Setup y toma los enlaces solo de los ajustes.
+is not valid: …", no corre el script Setup y toma los enlaces solo de los ajustes. El hook `post-checkout` del
+repositorio sí corre, porque es de git y no de `rocky.json`.
+
+### Tareas de VS Code (`tasks.json`)
+
+Si el repositorio tiene `.vscode/tasks.json`, el botón Run también corre sus tareas, con sus entradas, sus
+dependencias y sus esperas.
+
+- **De dónde sale el archivo:** del worktree; si el worktree no lo tiene (`.vscode` suele estar en `.gitignore`), del
+  clon principal. `${workspaceFolder}` es siempre la carpeta del worktree.
+- **Cuándo se lee:** cada vez que abres el menú de Run o pulsas su parte principal. Rocky no lo vigila ni lo lee en
+  reposo. Si creas o borras `tasks.json` con el workspace en pantalla, el botón cambia la próxima vez que abras ese
+  workspace.
+- **El formato:** el de VS Code, con comentarios y comas finales. `version` debe ser `"2.0.0"`. Si una tarea tiene
+  una sección `osx`, sus valores reemplazan a los de la tarea.
+- **Lo que no hace:** no lee `launch.json` ni depura, no corre tareas de otros tipos (npm, gulp…) y no tiene un panel
+  de problemas. Solo usa los patrones de fondo de los `problemMatcher`.
+
+**El botón Run se divide en dos partes.** Sin `tasks.json`, queda el botón de siempre.
+
+- **La parte principal** corre lo que Run tiene por defecto en ese repositorio, en este orden:
+  1. lo último que elegiste en el menú, en ese repositorio;
+  2. si no, el script Run (de `rocky.json` o de los ajustes);
+  3. si no, la tarea con `"group": { "kind": "build", "isDefault": true }`;
+  4. si no, abre el menú.
+
+  Dice "▶ Run" para el script Run y "▶ Run: Web Client" para una tarea, cortado si es muy largo. Mientras eso corre,
+  dice "■ Stop".
+- **La flecha** abre el menú sobre el botón:
+  - "Run script", con el script debajo, si hay uno;
+  - "Tasks" y las tareas del archivo, en su orden, cada una con su `detail` debajo. No aparecen las que empiezan con
+    "_" ni las que tienen `"hide": true`, aunque sí corren como dependencias.
+  - Lo que Run tiene por defecto lleva una marca a la derecha. Lo que está corriendo lleva un punto verde.
+- **Elegir algo en el menú** lo corre y lo deja como el valor por defecto de Run en ese repositorio, también después
+  de relanzar. Si ya está corriendo, no se inicia otra vez: Rocky selecciona su pestaña y despliega el panel. Si la
+  tarea guardada ya no está en el archivo, Run vuelve al orden de arriba.
+
+**Cómo corre una tarea:**
+
+- Cada tarea, dependencias incluidas, corre en una pestaña del panel con su nombre, con el punto de estado y la línea
+  final de los scripts (sección 8).
+- `"type": "shell"`: el comando y sus `args` corren con zsh, como los scripts. Un argumento con espacios o con
+  caracteres que la shell interpretaría va entre comillas simples. `"type": "process"`: el programa corre directo, sin
+  shell, buscado en el `PATH`.
+- **Entorno:** las variables de "Variables que recibe cada proceso" (abajo), y encima las de `options.env`.
+  **Carpeta:** `options.cwd` (relativa al worktree si no empieza con `/`), o la del worktree.
+- `presentation.panel`:
+  - "dedicated": la pestaña propia de la tarea, que la siguiente corrida reutiliza;
+  - "new": una pestaña nueva en cada corrida;
+  - "shared" (el valor por defecto): una pestaña compartida cuya tarea ya terminó, o una nueva si todas están
+    ocupadas.
+
+  Una pestaña reutilizada queda en su lugar, empieza en blanco y, si estaba seleccionada, sigue seleccionada.
+- `presentation.reveal`: "always" (por defecto) selecciona la pestaña y despliega el panel; "silent" y "never" no hacen
+  ninguna de las dos cosas, pero el punto de estado se ve igual. `"focus": true` le da el teclado a ese terminal.
+  `"echo"` (activo por defecto) escribe primero "> comando" en gris.
+- **Modo de Run:** con "One at a time", iniciar una tarea detiene primero el script Run y las tareas de los otros
+  workspaces, de cualquier repositorio, porque las tareas también usan puertos fijos. El script Run sigue la misma
+  regla.
+
+**Variables y entradas:**
+
+- En `command`, `args`, `options.cwd` y `options.env` se reemplazan `${workspaceFolder}` (y su nombre antiguo
+  `${workspaceRoot}`), `${workspaceFolderBasename}`, `${userHome}`, `${cwd}` (el worktree), `${pathSeparator}`,
+  `${env:NOMBRE}` (del entorno de la tarea; vacío si no existe) y `${input:id}`.
+- Cualquier otra variable (`${file}`, `${config:…}`, `${command:…}`) impide que la tarea corra (ver "Errores" abajo).
+- Antes de iniciar nada, Rocky pregunta todas las entradas (`inputs`) de la tarea y de sus dependencias, en el orden en
+  que se usan, **una sola vez por `id`**: si dos tareas de la cadena leen la misma entrada, reciben la misma respuesta.
+  Las respuestas no se recuerdan entre corridas, como en VS Code.
+  - `pickString`: un menú sobre Run, con la descripción de la entrada como título y una opción por fila. La opción por
+    defecto viene marcada y resaltada, así que Return la elige; ↑ y ↓ mueven la selección.
+  - `promptString`: un diálogo con un campo, con el valor por defecto ya seleccionado, y los botones "Cancel" y "Run".
+    Return corre. Con `"password": true`, el campo oculta lo que escribes.
+  - Esc, un clic fuera del menú o "Cancel" cancelan toda la corrida.
+
+**Dependencias y tareas en segundo plano:**
+
+- `dependsOn` (una tarea o una lista) corre antes, de forma recursiva. Con `"dependsOrder": "sequence"`, una tras otra
+  en el orden de la lista; si no (`"parallel"`, el valor por defecto), todas a la vez. La tarea arranca cuando todas
+  terminaron. Una tarea que aparece dos veces en la cadena corre una sola vez.
+- Una tarea normal termina bien cuando sale con código 0.
+- Una tarea en segundo plano (`"isBackground": true`) cuenta como lista cuando una línea de su salida, sin colores,
+  coincide con el `endsPattern` de su `problemMatcher`. Su proceso sigue corriendo. Sin `endsPattern`, cuenta como
+  lista apenas arranca: Rocky no adivina una espera. La línea "> comando" que escribe Rocky no cuenta.
+- Una dependencia que ya corre en ese workspace no se inicia otra vez. Si es en segundo plano y ya coincidió, cuenta
+  como lista; si no, Rocky la espera.
+- Si una dependencia sale con un código distinto de 0, o una en segundo plano termina antes de coincidir, la cadena se
+  detiene: lo que no había arrancado ya no arranca, su pestaña muestra el punto rojo y aparece el aviso "“_Dev:
+  Cleanup orphans” failed, so “Run: Web Client” didn't start" con "Show", que selecciona esa pestaña. Las
+  dependencias que ya corrían siguen corriendo.
+
+**Detener:**
+
+- "■ Stop" detiene la tarea por defecto y las dependencias que inició esa corrida y que ninguna otra tarea en marcha
+  necesita, de la más nueva a la más antigua. Una dependencia que otra tarea usa sigue corriendo y se detiene con el
+  Stop de esa otra tarea. La pestaña termina con "Process stopped".
+- Stop mientras la cadena todavía arranca: ya no arranca nada más.
+- Cerrar la pestaña de una tarea detiene solo ese proceso.
+- Quitar el workspace o salir de Rocky detiene sus tareas, como sus scripts y terminales.
+
+**Errores:**
+
+| Caso | Qué muestra Rocky |
+| --- | --- |
+| `tasks.json` no se puede leer, o su `version` no es "2.0.0" | En el menú, "tasks.json can't be read", desactivado, con el motivo debajo, por ejemplo "Line 41: Unexpected character “}” in array". El script Run sigue funcionando, y Run no usa una tarea como valor por defecto. |
+| Una tarea de otro tipo (npm, gulp…) | Queda desactivada en el menú, con el tooltip "Type “npm” isn't supported: Rocky runs shell and process tasks". |
+| Una variable no admitida, una entrada de tipo `command`, o un `${input:id}` sin esa entrada | No arranca nada. Aviso: "“Run: X” uses ${file}, which Rocky doesn't support". |
+| `dependsOn` nombra una tarea que el archivo no tiene | No arranca nada. Aviso: "“Run: X” depends on “_Y”, which tasks.json doesn't have". |
+| Dos tareas que dependen una de la otra | No arranca nada. Aviso: "“A” and “B” depend on each other". |
+| Un `endsPattern` que no es una expresión regular válida | No arranca nada. Aviso: "“_API Core: Run (mode)” has an invalid endsPattern". |
 
 ### Variables que recibe cada proceso
 
@@ -409,6 +611,67 @@ círculo girando. Si falla, el menú dice por qué, y al volver a mostrar ese ag
   orden.
 - Las imágenes van dentro del mensaje (hasta 5 MB) cuando el agente las acepta. Los demás archivos van como enlace.
 - Al pasar el mouse sobre una etiqueta ves una vista previa. Un clic abre el archivo en una pestaña del workspace.
+
+### Vincular GitHub: issues, pull requests y ramas
+
+"Link GitHub issue", en el menú "+" del cuadro de mensaje (después de "Add attachment"), vincula un issue, un pull
+request o una rama del repositorio. Usa la cuenta de GitHub del repositorio (sección 12).
+
+- **Cuándo está desactivado:** si el repositorio no tiene un remoto en GitHub ("This repository has no GitHub
+  remote"), o si ninguna cuenta de `gh` puede leerlo ("Add a GitHub account that can read this repository in
+  Settings"). El motivo aparece en su tooltip.
+- **El panel** se abre sobre el cuadro de mensaje, con el campo "Search by number, title or description" y tres
+  pestañas: Issues, Pull requests y Branches. Abre en Issues.
+  - Issues y Pull requests muestran los abiertos, los actualizados más recientemente primero. Al escribir, Rocky busca
+    en GitHub 250 ms después de que dejas de escribir. Un número, "4573" o "#4573", también trae ese issue o pull
+    request aunque esté cerrado, y lo muestra primero.
+  - Branches muestra las ramas locales y las de `origin`, con la de commit más reciente primero. "origin" marca una
+    rama que solo está en el remoto. Al abrir esa pestaña, Rocky corre un `git fetch origin --prune` en segundo plano y
+    actualiza la lista cuando termina.
+  - Algunas filas están desactivadas, con el motivo al final: "Checked out in …" (otro worktree tiene esa rama),
+    "Current branch" y "From a fork" (Rocky no vincula pull requests de forks).
+
+| Tecla | Qué hace |
+| --- | --- |
+| Tab / ⇧Tab | Cambian de pestaña. El texto de búsqueda se conserva. |
+| ↑ / ↓ | Mueven la selección. |
+| Return | Vincula la fila seleccionada. |
+| Esc, o un clic fuera | Cierran el panel. |
+
+**Un issue.** Rocky trae el issue completo (título, estado, autor, etiquetas, asignados, descripción y hasta 100
+comentarios) y lo adjunta como un archivo Markdown, `[GITHUB]-4573.md`. Queda como una etiqueta con el logo de GitHub
+en el lugar del cursor, y su tooltip es "#4573" con el título. El agente lee el archivo como cualquier adjunto.
+
+- Puedes vincular varios issues en un mensaje. Elegir uno que ya está en el cuadro solo cierra el panel.
+- El archivo es una copia del momento en que lo vinculas; no se actualiza.
+
+**Un pull request o una rama.** Rocky cambia el worktree del workspace a esa rama y después adjunta su archivo:
+`[GITHUB]-PR-4536.md` (como el de un issue, más la rama y si es borrador) o `[BRANCH]-feat-look-and-feel-3.md` (las
+"/" del nombre pasan a "-"), con la rama, su upstream y los últimos 20 commits que la base no tiene. Su etiqueta lleva
+el ícono de pull request o de rama. Va uno por mensaje: un segundo dice "One pull request or branch per message.".
+
+- **Solo si el workspace no tiene nada propio:** ni cambios sin commit, ni commits que su base no tenga, ni archivos
+  con cambios sin guardar. Si tiene algo, las pestañas Pull requests y Branches muestran "This workspace has changes of
+  its own. Switching needs one with none: create a workspace for it." y sus filas quedan desactivadas. Rocky lo
+  vuelve a revisar al elegir.
+- **Cómo cambia:** una rama local con `git switch`; una que solo está en `origin` con `git switch --track`; un pull
+  request, trayendo primero su rama.
+- **Después del cambio:**
+  - La rama propia del workspace (`rocky/lima`), que estaba vacía, se borra.
+  - Un pull request pone como base del workspace su rama base (`origin/development`, por ejemplo), así que Changes y el
+    encabezado comparan contra ella. Una rama conserva la base del workspace.
+  - La barra superior muestra la rama nueva y el panel de GitHub busca su pull request de inmediato.
+  - Los scripts, las tareas y los terminales que corren siguen corriendo, ahora sobre los archivos de la rama nueva.
+    Los procesos nuevos reciben el `ROCKY_DEFAULT_BRANCH` nuevo.
+  - Quitar la etiqueta del cuadro no vuelve a la rama anterior.
+- Si git falla, aparece un aviso con su mensaje: no se adjunta nada y el workspace queda como estaba.
+- Rocky no renombra ramas, no escribe "closes #N" ni edita el pull request: eso lo hace el agente, según sus propias
+  instrucciones.
+
+**El nombre del workspace.** Si el primer mensaje de una conversación lleva un issue vinculado, la conversación (y la
+fila del workspace en la barra lateral) toma el título del issue: "#4573 " más su título, cortado a 40 caracteres como
+cualquier título. Con varios issues, gana el primero. Un pull request o una rama no cambian esa regla. Un mensaje sin
+texto y sin issue deja la conversación sin título.
 
 ### Recuperar el último mensaje
 
@@ -531,11 +794,14 @@ Esto aplica solo a conversaciones de Claude Code. En OpenCode, `/mcp` va al agen
 
 ## 8. Terminal
 
-El panel inferior del workspace tiene pestañas para los scripts (Setup, Run, Archive) y para tus terminales.
+El panel inferior del workspace tiene pestañas para los scripts (Setup, Run, Archive), para las tareas de VS Code
+(sección 5) y para tus terminales.
 
 - **Abrir un terminal:** "+" en la barra del panel, "New terminal" si el panel está vacío, u Open → New Terminal. Se
   abre tu shell de inicio de sesión en la carpeta del worktree, con las variables de la sección 5.
-- **Nombres:** los terminales se llaman "Terminal 1", "Terminal 2"… según su posición.
+- **Nombres:** los terminales se llaman "Terminal 1", "Terminal 2"… según su posición. Una tarea lleva su nombre.
+- **Cerrar:** los terminales, las tareas y el Setup se cierran con la "×" de su pestaña, que detiene su proceso. Run y
+  Archive no se cierran.
 - **Plegar y desplegar:** ⌘J, o la flecha a la derecha de la barra. Plegar no detiene nada: terminales y scripts
   siguen corriendo. Rocky recuerda si el panel estaba plegado.
 - **⌃` (View ▸ Toggle Terminal)**, como en VS Code:
@@ -696,7 +962,9 @@ Qué hace cada acción:
 
 ### Archive
 
-Después del merge, "Archive" corre el script Archive y quita el worktree; la rama se conserva.
+Después del merge, "Archive" corre el script Archive y quita el worktree, igual que "Remove Worktree" (sección 3). La
+rama local sigue la misma regla: se borra si todos sus commits también están en otra rama, en el remoto o en un tag.
+La rama de GitHub se conserva.
 
 - Si el worktree tiene cambios sin commit, pregunta "lima has 3 uncommitted changes. Archive anyway?". "Archive"
   guarda los cambios en un `git stash` del repositorio ("Rocky archived lima") y luego quita el worktree. No se
@@ -1430,6 +1698,9 @@ El commit usa la identidad de git que tengas configurada. M4 traerá una identid
 | ↑ / ↓, →, ←, Return | Mover, abrir carpeta, cerrarla o subir, abrir archivo | Árbol de All files |
 | ↑ / ↓, Return, Esc | Recorrer resultados, abrir, borrar el texto (un segundo Esc sale) | Filtro de All files |
 | ↑ / ↓, Return, ⌥Return, Esc | Mover (da la vuelta), abrir, abrir como vista previa, cerrar | Quick Open |
+| Tab / ⇧Tab, ↑ / ↓, Return, Esc | Cambiar de pestaña, mover, vincular, cerrar | Panel "Link GitHub issue" |
+| ↑ / ↓, Return, Esc | Mover, elegir la opción resaltada, cancelar la corrida | Menú de una entrada de una tarea (`pickString`) |
+| Return, Esc | Correr, cancelar la corrida | Diálogo de una entrada de una tarea (`promptString`) |
 | ⌘F | Busca en el archivo | Editor |
 | Tab | Inserta la sangría del archivo | Editor |
 | ⌘Return | Envía el comentario | Cuadro de comentario |
@@ -1464,6 +1735,11 @@ Rocky está hecho para gastar poca batería, incluso con muchos workspaces abier
 - **Los agentes arrancan cuando hacen falta:** el de la conversación en pantalla, y los demás al abrirlos o al recibir
   un comentario en líneas (sección 15).
 - **Las actualizaciones de agentes** se consultan una vez al día, con una petición HTTPS a npm.
+- **"Link GitHub issue"** pide la primera página de una pestaña cuando la muestras y busca 250 ms después de que dejas
+  de escribir. Escribir de nuevo o cerrar el panel cancela lo que esté en curso, y al cerrarlo no queda nada guardado.
+  Las ramas vienen de git, con un solo `git fetch origin --prune` al mostrar Branches.
+- **Las tareas de VS Code:** `tasks.json` se lee solo al abrir el menú de Run o al pulsar Run, nunca se vigila. Rocky
+  lee la salida de una tarea en segundo plano solo hasta que coincide su `endsPattern`.
 
 Para medir el consumo:
 

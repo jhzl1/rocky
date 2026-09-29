@@ -5,7 +5,7 @@ public enum GitHubError: Error, Equatable, Sendable {
     case offline
     /// 401: the token was refused.
     case unauthorized
-    /// GraphQL NOT_FOUND for the repository or the pull request, or a REST 404.
+    /// GraphQL NOT_FOUND for the repository, the pull request or the issue, or a REST 404.
     case notFound
     case rateLimited(resetAt: Date?)
     case graphQL([String])
@@ -66,6 +66,73 @@ public actor GitHubClient {
     /// `PR-05`.
     public func merge(id: String, method: MergeMethod) async throws {
         let _: JSONValue = try await graphQL(Self.mergeMutation, variables: MergeVariables(id: id, method: method))
+    }
+
+    // MARK: Links (KIT-14)
+
+    /// `GHL-03`'s Issues tab. Without `query` (nil or blank): the 30 open issues updated last. With one: GitHub's
+    /// search of the open issues, 30 at most, and for a number ("4573", "#4573") that issue first, in any state, when
+    /// the repository has it. One request either way.
+    public func issues(repository: GitHubRepository, query: String?) async throws -> [IssueSummary] {
+        let text = query?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !text.isEmpty else {
+            let variables = RepositoryVariables(owner: repository.owner, name: repository.name)
+            let data: Wire.IssueListData = try await graphQL(Self.openIssuesQuery, variables: variables)
+            guard let list = data.repository else { throw GitHubError.notFound }
+            return list.issues.items.map(\.summary)
+        }
+        let number = GitHubLinkSearch.number(in: text)
+        let variables = SearchVariables(repository: repository, search: GitHubLinkSearch.query(repository: repository, kind: .issue, text: text), number: number)
+        let data: Wire.SearchData<Wire.IssueNode> = try await graphQL(
+            Self.searchQuery(.issue, withNumber: number != nil),
+            variables: variables,
+            tolerating: [["repository", "issue"]]
+        )
+        return Self.numberFirst(data.repository?.issue?.summary, data.search.items.compactMap(\.value?.summary))
+    }
+
+    /// `GHL-03`'s Pull requests tab, as `issues(repository:query:)` does for issues, with the branches switching needs
+    /// (`GHL-05`).
+    public func pullRequests(repository: GitHubRepository, query: String?) async throws -> [PullRequestSummary] {
+        let text = query?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !text.isEmpty else {
+            let variables = RepositoryVariables(owner: repository.owner, name: repository.name)
+            let data: Wire.PullRequestListData = try await graphQL(Self.openPullRequestsQuery, variables: variables)
+            guard let list = data.repository else { throw GitHubError.notFound }
+            return list.pullRequests.items.map(\.summary)
+        }
+        let number = GitHubLinkSearch.number(in: text)
+        let variables = SearchVariables(repository: repository, search: GitHubLinkSearch.query(repository: repository, kind: .pullRequest, text: text), number: number)
+        let data: Wire.SearchData<Wire.PullRequestNode> = try await graphQL(
+            Self.searchQuery(.pullRequest, withNumber: number != nil),
+            variables: variables,
+            tolerating: [["repository", "pullRequest"]]
+        )
+        return Self.numberFirst(data.repository?.pullRequest?.summary, data.search.items.compactMap(\.value?.summary))
+    }
+
+    /// `GHL-04`'s issue in full: labels (first 20), assignees (first 10), body and comments (first 100, with the total).
+    /// A number the repository does not have is `notFound`.
+    public func issue(repository: GitHubRepository, number: Int) async throws -> GitHubIssue {
+        let variables = NumberVariables(owner: repository.owner, name: repository.name, number: number)
+        let data: Wire.FullData = try await graphQL(Self.fullQuery(.issue), variables: variables)
+        guard let issue = data.repository?.issue else { throw GitHubError.notFound }
+        return issue.item(isPullRequest: false)
+    }
+
+    /// `GHL-05`'s pull request in full, as `issue(repository:number:)`, with its branches, whether it is a draft and
+    /// whether it comes from a fork.
+    public func pullRequest(repository: GitHubRepository, number: Int) async throws -> GitHubIssue {
+        let variables = NumberVariables(owner: repository.owner, name: repository.name, number: number)
+        let data: Wire.FullData = try await graphQL(Self.fullQuery(.pullRequest), variables: variables)
+        guard let pullRequest = data.repository?.pullRequest else { throw GitHubError.notFound }
+        return pullRequest.item(isPullRequest: true)
+    }
+
+    /// The number's own item first, then the search's without it.
+    static func numberFirst<Item: Identifiable>(_ direct: Item?, _ found: [Item]) -> [Item] {
+        guard let direct else { return found }
+        return [direct] + found.filter { $0.id != direct.id }
     }
 
     // MARK: REST
@@ -141,7 +208,13 @@ public actor GitHubClient {
 
     // MARK: Requests
 
-    private func graphQL<Variables: Encodable, Payload: Decodable>(_ query: String, variables: Variables) async throws -> Payload {
+    /// `tolerating`: the paths whose NOT_FOUND only leaves that field nil, as a number searched for directly that the
+    /// repository does not have (`GHL-03`).
+    private func graphQL<Variables: Encodable, Payload: Decodable>(
+        _ query: String,
+        variables: Variables,
+        tolerating tolerated: Set<[String]> = []
+    ) async throws -> Payload {
         var request = URLRequest(url: Self.graphQLURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -155,7 +228,7 @@ public actor GitHubClient {
         } catch {
             throw GitHubError.graphQL(["GitHub answered with data Rocky could not read."])
         }
-        try Wire.check(decoded.errors, resetAt: Self.resetDate(response))
+        try Wire.check(decoded.errors, resetAt: Self.resetDate(response), tolerating: tolerated)
         guard let payload = decoded.data else { throw GitHubError.graphQL(["GitHub answered without data."]) }
         return payload
     }
@@ -328,6 +401,69 @@ extension GitHubClient {
           mergePullRequest(input: {pullRequestId: $id, mergeMethod: $method}) { pullRequest { id } }
         }
         """
+
+    /// `GHL-03`'s rows: what the picker draws and what switching to a pull request needs (`GHL-05`).
+    private static let issueSummaryFields = "number title state"
+    private static let pullRequestSummaryFields =
+        "number title state isDraft headRefName baseRefName isCrossRepository headRepository { nameWithOwner }"
+
+    /// `GHL-03`'s Issues tab when it first shows.
+    static let openIssuesQuery = """
+        query($owner: String!, $name: String!) {
+          repository(owner: $owner, name: $name) {
+            issues(states: [OPEN], first: 30, orderBy: {field: UPDATED_AT, direction: DESC}) {
+              nodes { \(issueSummaryFields) }
+            }
+          }
+        }
+        """
+
+    /// `GHL-03`'s Pull requests tab when it first shows.
+    static let openPullRequestsQuery = """
+        query($owner: String!, $name: String!) {
+          repository(owner: $owner, name: $name) {
+            pullRequests(states: [OPEN], first: 30, orderBy: {field: UPDATED_AT, direction: DESC}) {
+              nodes { \(pullRequestSummaryFields) }
+            }
+          }
+        }
+        """
+
+    /// `GHL-03`'s search, and with a number the item of that number, in the same request.
+    static func searchQuery(_ kind: GitHubLinkSearch.Kind, withNumber: Bool) -> String {
+        let (type, field, fields) = switch kind {
+        case .issue: ("Issue", "issue", issueSummaryFields)
+        case .pullRequest: ("PullRequest", "pullRequest", pullRequestSummaryFields)
+        }
+        let declarations = withNumber ? "$search: String!, $owner: String!, $name: String!, $number: Int!" : "$search: String!"
+        let direct = withNumber ? " repository(owner: $owner, name: $name) { \(field)(number: $number) { \(fields) } }" : ""
+        return """
+            query(\(declarations)) {
+              search(type: ISSUE, first: 30, query: $search) { nodes { ... on \(type) { \(fields) } } }\(direct)
+            }
+            """
+    }
+
+    /// `GHL-04`'s issue, or `GHL-05`'s pull request, in full.
+    static func fullQuery(_ kind: GitHubLinkSearch.Kind) -> String {
+        let (field, own) = switch kind {
+        case .issue: ("issue", "stateReason")
+        case .pullRequest: ("pullRequest", "isDraft headRefName baseRefName isCrossRepository")
+        }
+        return """
+            query($owner: String!, $name: String!, $number: Int!) {
+              repository(owner: $owner, name: $name) {
+                \(field)(number: $number) {
+                  number title url state \(own) createdAt body
+                  author { login }
+                  labels(first: 20) { nodes { name } }
+                  assignees(first: 10) { nodes { login } }
+                  comments(first: 100) { totalCount nodes { author { login } createdAt body } }
+                }
+              }
+            }
+            """
+    }
 }
 
 struct GraphQLRequest<Variables: Encodable>: Encodable {
@@ -358,6 +494,33 @@ struct MergeVariables: Encodable {
     let method: MergeMethod
 }
 
+struct RepositoryVariables: Encodable {
+    let owner: String
+    let name: String
+}
+
+struct NumberVariables: Encodable {
+    let owner: String
+    let name: String
+    let number: Int
+}
+
+/// `GHL-03`'s search. The repository and the number are left out of the JSON without a number, with the query that
+/// does not declare them.
+struct SearchVariables: Encodable {
+    let search: String
+    let owner: String?
+    let name: String?
+    let number: Int?
+
+    init(repository: GitHubRepository, search: String, number: Int?) {
+        self.search = search
+        self.owner = number == nil ? nil : repository.owner
+        self.name = number == nil ? nil : repository.name
+        self.number = number
+    }
+}
+
 // MARK: Responses
 
 /// GitHub's JSON as it comes, turned into Rocky's types by `snapshot(from:)` and `pendingComments(from:)`.
@@ -384,16 +547,20 @@ enum Wire {
         }
     }
 
-    /// NOT_FOUND for the repository or the pull request is `notFound`; RATE_LIMITED is `rateLimited`. A NOT_FOUND
-    /// on `compare` only means the branch is not on GitHub yet (checked on 2026-09-23: "Could not resolve head ref"),
-    /// and leaves the compare nil. Any other error fails the request.
-    static func check(_ errors: [ErrorEntry]?, resetAt: Date?) throws {
-        let failures = (errors ?? []).filter { !($0.type == "NOT_FOUND" && $0.pathNames.last == "compare") }
+    /// NOT_FOUND for the repository, the pull request or the issue is `notFound`; RATE_LIMITED is `rateLimited`. A
+    /// NOT_FOUND on `compare` only means the branch is not on GitHub yet (checked on 2026-09-23: "Could not resolve
+    /// head ref"), and leaves the compare nil; so does one on a path of `tolerated`. Any other error fails the request.
+    static func check(_ errors: [ErrorEntry]?, resetAt: Date?, tolerating tolerated: Set<[String]> = []) throws {
+        let failures = (errors ?? []).filter { error in
+            guard error.type == "NOT_FOUND" else { return true }
+            return error.pathNames.last != "compare" && !tolerated.contains(error.pathNames)
+        }
         guard !failures.isEmpty else { return }
         if failures.contains(where: { $0.type == "RATE_LIMITED" }) { throw GitHubError.rateLimited(resetAt: resetAt) }
         let missing = failures.contains { failure in
             let names = failure.pathNames
-            return failure.type == "NOT_FOUND" && names.first == "repository" && (names.count == 1 || names == ["repository", "pullRequest"])
+            return failure.type == "NOT_FOUND" && names.first == "repository"
+                && (names.count == 1 || names == ["repository", "pullRequest"] || names == ["repository", "issue"])
         }
         if missing { throw GitHubError.notFound }
         throw GitHubError.graphQL(failures.map(\.message))
@@ -565,6 +732,149 @@ enum Wire {
     /// A deleted account's comments have no author; GitHub shows them as "ghost".
     static func login(_ author: Author?) -> String {
         author?.login ?? "ghost"
+    }
+
+    // MARK: Links (KIT-14)
+
+    /// A node that may be of another type than the fragment asked for (a search's node GitHub answers as `{}`): nil
+    /// instead of failing the whole list.
+    struct Lenient<Value: Decodable>: Decodable {
+        let value: Value?
+
+        init(from decoder: Decoder) throws {
+            value = try? Value(from: decoder)
+        }
+    }
+
+    struct IssueListData: Decodable {
+        let repository: IssueList?
+    }
+
+    struct IssueList: Decodable {
+        let issues: Nodes<IssueNode>
+    }
+
+    struct IssueNode: Decodable {
+        let number: Int
+        let title: String
+        let state: String
+
+        var summary: IssueSummary {
+            IssueSummary(number: number, title: title, state: GitHubItemState(graphQL: state))
+        }
+    }
+
+    struct PullRequestListData: Decodable {
+        let repository: PullRequestList?
+    }
+
+    struct PullRequestList: Decodable {
+        let pullRequests: Nodes<PullRequestNode>
+    }
+
+    struct PullRequestNode: Decodable {
+        let number: Int
+        let title: String
+        let state: String
+        let isDraft: Bool
+        let headRefName: String
+        let baseRefName: String
+        let isCrossRepository: Bool
+        let headRepository: RepositoryName?
+
+        var summary: PullRequestSummary {
+            PullRequestSummary(
+                number: number,
+                title: title,
+                state: GitHubItemState(graphQL: state),
+                isDraft: isDraft,
+                headRefName: headRefName,
+                baseRefName: baseRefName,
+                isCrossRepository: isCrossRepository,
+                headRepository: headRepository?.nameWithOwner
+            )
+        }
+    }
+
+    struct RepositoryName: Decodable {
+        let nameWithOwner: String
+    }
+
+    /// The search's nodes, and the item of a number asked for directly, nil when the repository has none.
+    struct SearchData<Node: Decodable>: Decodable {
+        let search: Nodes<Lenient<Node>>
+        let repository: Numbered<Node>?
+    }
+
+    struct Numbered<Node: Decodable>: Decodable {
+        let issue: Node?
+        let pullRequest: Node?
+    }
+
+    struct FullData: Decodable {
+        let repository: Numbered<FullItem>?
+    }
+
+    /// An issue or a pull request in full; the pull request's own fields are nil for an issue, `stateReason` for a
+    /// pull request.
+    struct FullItem: Decodable {
+        let number: Int
+        let title: String
+        let url: URL
+        let state: String
+        let stateReason: String?
+        let createdAt: Date
+        let body: String
+        let author: Author?
+        let labels: Nodes<Label>?
+        let assignees: Nodes<Author>?
+        let comments: CommentConnection
+        let isDraft: Bool?
+        let headRefName: String?
+        let baseRefName: String?
+        let isCrossRepository: Bool?
+
+        func item(isPullRequest: Bool) -> GitHubIssue {
+            let details = isPullRequest ? GitHubIssue.PullRequestDetails(
+                headRefName: headRefName ?? "",
+                baseRefName: baseRefName ?? "",
+                isDraft: isDraft ?? false,
+                isCrossRepository: isCrossRepository ?? false
+            ) : nil
+            return GitHubIssue(
+                number: number,
+                title: title,
+                url: url,
+                state: GitHubItemState(graphQL: state),
+                // "NOT_PLANNED" reads "not planned".
+                stateReason: stateReason.map { $0.lowercased().replacingOccurrences(of: "_", with: " ") },
+                author: Wire.login(author),
+                createdAt: createdAt,
+                labels: labels?.items.map(\.name) ?? [],
+                assignees: assignees?.items.map(\.login) ?? [],
+                body: body,
+                comments: (comments.nodes ?? []).compactMap { $0 }.map {
+                    GitHubComment(author: Wire.login($0.author), createdAt: $0.createdAt, body: $0.body)
+                },
+                totalComments: comments.totalCount,
+                pullRequest: details
+            )
+        }
+    }
+
+    struct Label: Decodable {
+        let name: String
+    }
+
+    struct CommentConnection: Decodable {
+        let totalCount: Int
+        let nodes: [CommentNode?]?
+    }
+
+    struct CommentNode: Decodable {
+        let author: Author?
+        let createdAt: Date
+        let body: String
     }
 
     static func snapshot(from data: SnapshotData) throws -> PullRequestSnapshot {

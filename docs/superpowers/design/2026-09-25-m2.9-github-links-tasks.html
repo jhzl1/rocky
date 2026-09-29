@@ -72,6 +72,27 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
 .row span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row .city { color: var(--text-3); font-size: 11.5px; flex-shrink: 0; }
 .row:hover { background: var(--fill-hover); } .row.selected { background: var(--fill-selected); }
+.row .glyph { width: 14px; height: 14px; margin-left: -22px; margin-right: 0; display: flex; align-items: center; justify-content: center; color: var(--text-2); flex-shrink: 0; }
+.row .glyph.err { color: var(--danger); }
+.row .muted { color: var(--text-2); }
+.repo .grow { flex-grow: 1; }
+.repo-add { width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; border-radius: 5px; color: var(--text-2); font-weight: 400; transition: background var(--dur-fast), color var(--dur-fast); }
+.repo-add:hover:not(:disabled) { background: var(--fill-icon-hover); color: var(--text); }
+.repo-add:disabled { opacity: 1; color: var(--text-3); }   /* the creating repository's spinner stays legible */
+.wsc-fail { margin: 60px auto 0; width: 420px; padding: 18px 20px 16px; border-radius: 12px; background: rgba(255,255,255,0.03); box-shadow: inset 0 0 0 1px var(--hairline); }
+.wsc-fail h4 { margin: 0; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; } .wsc-fail h4 svg { color: var(--danger); }
+.wsc-fail pre { margin: 8px 0 0; font: 12px/1.5 var(--mono); color: var(--text-2); white-space: pre-wrap; user-select: text; }
+.wsc-fail .btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.wsc-fail .btns button { height: 28px; padding: 0 14px; border-radius: 7px; font-size: 12.5px; font-weight: 500; background: var(--fill-button); }
+.wsc-fail .btns .primary { background: #FFFFFF; color: #111316; }
+.msg-user.queued { opacity: 0.6; }
+.row { position: relative; }
+.row .rm { position: absolute; right: 4px; top: 3px; width: 22px; height: 22px; display: none; align-items: center; justify-content: center; border-radius: 5px; color: var(--text-2); background: var(--sidebar); }
+.row:hover .rm { display: inline-flex; } .row .rm:hover { background: var(--fill-icon-hover); color: var(--text); }
+.row.removing { opacity: 0.55; pointer-events: none; }
+.row.leaving { animation: row-out 160ms ease-in both; }
+@keyframes row-out { to { opacity: 0; transform: translateX(-6px); } }
+.term .step { color: var(--text-3); margin-top: 4px; }
 .row.renamed span:first-child { animation: enter var(--dur-enter) var(--ease-out) both; }
 .main { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; }
 .topbar { height: var(--titlebar); flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 0 12px 0 16px; }
@@ -214,6 +235,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
     <span class="demo-label">Demo controls, not part of Rocky</span>
     <button type="button" id="demoDirty" aria-pressed="false">lima has uncommitted changes</button>
     <button type="button" id="demoBadJson" aria-pressed="false">tasks.json can't be read</button>
+    <button type="button" id="demoFail" aria-pressed="false">Next creation fails</button>
     <button type="button" id="demoPins" aria-pressed="false">Requirement pins</button>
   </div>
 
@@ -242,7 +264,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
 
 <aside class="spec" id="spec">
   <h1>Requirements</h1>
-  <p>Plan (dev-1): <code>docs/superpowers/plans/2026-09-25-m2.9-github-links-tasks.md</code>. After M2.8. The user's words (2026-09-25): "Faltan dos cosas importantes para dejar el proyecto funcional". Labels: <span class="scope tech">Technical</span> for data and process facts; <span class="scope in">In scope</span> for behavior and UI.</p>
+  <p>Plan (dev-1): <code>docs/superpowers/plans/2026-09-25-m2.9-github-links-tasks.md</code>. After M2.8. The user's words (2026-09-25): "Faltan dos cosas importantes para dejar el proyecto funcional". Section C (WSC, user request 2026-09-28) goes on the same branch. Labels: <span class="scope tech">Technical</span> for data and process facts; <span class="scope in">In scope</span> for behavior and UI.</p>
   <p><strong>User decisions (2026-09-25, relayed by dev-1):</strong> the link lives in the message box's "+", not in a modal before the worktree · it shows as a chip "como si fuera que adjuntamos una imagen" · a pull request or branch switches the worktree, only while it has nothing of its own · Rocky does not rename branches, write "closes #N" or touch the pull request ("muchas de las cosas que pides el agente las hace basadas en su claude.md o agents.md") · the workspace's name comes from the issue ("Del issue") · tasks only from <code>tasks.json</code>, never <code>launch.json</code> · Run becomes a split button; tasks whose label starts with "_" stay out of its menu.</p>
 
   <h2>A · Link GitHub</h2>
@@ -250,7 +272,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
     <header><code class="id">GHL-01</code><h3>"Link GitHub issue" in "+"</h3><span class="scope in">In scope</span></header>
     <dl>
       <dt>Where</dt><dd>The message box's "+" menu, right after "Add attachment" (⌘U) and before "Plan mode" (⇧Tab): <strong>Link GitHub issue</strong>, with the GitHub mark (<code>Resources/Icons/github.svg</code>) at 14 pt in the menu's icon color. No shortcut. It opens the picker (GHL-02) on Issues; pull requests and branches are its other tabs.</dd>
-      <dt>Disabled</dt><dd>The repository has no GitHub remote: tooltip "This repository has no GitHub remote". No account can read it (M2.7 ACC-01): "Add a GitHub account that can read this repository in Settings".</dd>
+      <dt>Disabled</dt><dd>The repository has no GitHub remote: tooltip "This repository has no GitHub remote". No account can read it: "Add a GitHub account that can read this repository in Settings", from the existing <code>canRead</code> probe (<code>GitHubClient.canRead</code>) run with the login the repository would use (M2.7 ACC-01).</dd>
       <dt>SwiftUI</dt><dd>One more <code>MenuItem</code> in <code>ChatView</code>'s "+" menu (<code>ChatView.swift:344</code>), <code>icon: .image(…)</code> with the bundled mark.</dd>
       <dt>Done when</dt><dd>"+" shows three items, and "Link GitHub issue" opens the picker with the search field focused.</dd>
     </dl>
@@ -259,7 +281,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
   <section class="req" id="REQ-GHL-02">
     <header><code class="id">GHL-02</code><h3>The picker</h3><span class="scope in">In scope</span></header>
     <dl>
-      <dt>Panel</dt><dd>Above the message box, its left edge on the box's: 520 wide, Quick Open's panel (M3 FIL-08: radius 12, a 1 px <code>hairline</code> ring, black 0.45 shadow radius 18 y 10), entering with the menus' 120 ms fade. Esc, a click outside or a pick closes it; Esc reaches it first (CLAUDE.md, key monitors).</dd>
+      <dt>Panel</dt><dd>Above the message box, its left edge on the box's: 520 wide, a panel of its own in Quick Open's style, not a Rocky menu (<code>MenuPresenter</code> handles only Esc, and the picker needs a field, tabs and arrows), with Quick Open's values (M3 FIL-08: radius 12, a 1 px <code>hairline</code> ring, black 0.45 shadow radius 18 y 10), entering with the menus' 120 ms fade. Esc, a click outside or a pick closes it; Esc reaches it first (CLAUDE.md, key monitors).</dd>
       <dt>Search</dt><dd>40 pt, <code>magnifyingglass</code> 13 in <code>textTertiary</code>, field 13.5, placeholder "Search by number, title or description" (Conductor's). Focused on open.</dd>
       <dt>Tabs</dt><dd><strong>Issues</strong> · <strong>Pull requests</strong> · <strong>Branches</strong>, 24 pt pills, 12.5, <code>fillSelected</code> on the chosen; Issues on open. Tab and ⇧Tab move between them; the search text stays.</dd>
       <dt>Rows</dt><dd>32 pt, radius 7, padding 0 10, gap 8, list up to 300 tall. Issues and pull requests: the GitHub mark 14, the state glyph 14 (open issue <code>success</code>; open pull request <code>git-pull-request</code> <code>success</code>, draft <code>textTertiary</code>; a closed or merged one found by number <code>merged</code>), "#4573" 12.5 mono tabular <code>textTertiary</code> in 52 pt, the title 13 truncating. Branches: <code>git-branch</code> 14, the name 12.5 mono, then "origin" (11 <code>textTertiary</code>) for a branch only on the remote. ↑↓ move the highlight (<code>fillSelected</code>), Return picks.</dd>
@@ -305,7 +327,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
 <em>body</em></pre>
     <dl>
       <dt>More</dt><dd>Over 100 comments, the file ends with "…and 43 more comments on GitHub: <em>URL</em>".</dd>
-      <dt>Chip</dt><dd>The file is attached at the caret as a normal file attachment, exactly as a pasted image is: the chip is <code>FileBadge</code> with the GitHub mark in place of the file's icon and the file name as its label, "[GITHUB]-3655.md" (Conductor's); tooltip "#3655 Look and feel 3/6: Components". The agent gets a <code>resource_link</code> and reads the file like any attachment. In the transcript it is the same chip, and a click opens the file's tab.</dd>
+      <dt>Chip</dt><dd>The file is attached at the caret as a normal file attachment, exactly as a pasted image is: the chip is <code>FileBadge</code> with the GitHub mark in place of the file's icon and the file name as its label, "[GITHUB]-3655.md" (Conductor's); tooltip "#3655 Look and feel 3/6: Components". The mark comes from the file name's prefix (<code>[GITHUB]-PR-</code> the pull request mark, <code>[GITHUB]-</code> the GitHub mark, <code>[BRANCH]-</code> the branch mark), so the transcript and the ↑ history (M3 CMT-05) draw it too. The agent gets a <code>resource_link</code> and reads the file like any attachment. In the transcript it is the same chip, and a click opens the file's tab.</dd>
       <dt>Several</dt><dd>Several issues in one message are fine, one chip each; picking one already in the box only closes the picker. One pull request or branch at most (GHL-05).</dd>
       <dt>Not shown</dt><dd>No other place shows the linked issue: no header chip like Conductor's modal (OUT-50). The chip, the transcript and the workspace's name (GHL-06) are enough, and the user asked for fewer duplicate indicators (2026-09-25).</dd>
       <dt>Done when</dt><dd>Picking #4573 puts "[GITHUB]-4573.md" in the box; sent, the agent reads the issue's body and comments from it.</dd>
@@ -372,7 +394,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
       <dt>Process</dt><dd><code>type: "shell"</code>: <code>command</code> and its <code>args</code> joined by spaces, each arg (a string, or an object's <code>value</code>) in single quotes when it holds spaces or shell characters (VS Code's "strong" quoting), run as scripts run today: <code>/bin/zsh -c</code> in a <code>PTYSession</code> (<code>PTYSession.swift:21</code>). <code>type: "process"</code>: the command runs directly with its args, no shell. Environment: the workspace's (ENV-01, with <code>PORT</code> and <code>ROCKY_*</code>), then <code>options.env</code> on top. Directory: <code>options.cwd</code>, else the worktree.</dd>
       <dt>Tab</dt><dd>Each task, dependencies included, runs in a panel tab titled with its label, with the script tabs' status dot and end line (TERM-03). <code>presentation.panel</code>: "dedicated", the task's own tab, reused on its next run; "new", a new tab each run; "shared" (VS Code's default), one tab the shared tasks reuse once its last task ended (else a new one), titled with the task it runs. Closing a task's tab stops that process.</dd>
       <dt>Presentation</dt><dd><code>reveal</code> "always" (the default) selects the tab and unfolds the panel; "silent" and "never" do neither, and the dot still shows. <code>focus: true</code> gives the terminal the keyboard. <code>clear: true</code> clears a reused tab first. <code>echo</code> (default true) writes "&gt; <em>resolved command</em>" first, in <code>textTertiary</code>, like VS Code's "Executing task".</dd>
-      <dt>Run mode</dt><dd>When the repository's run scripts do not run concurrently (<code>runScriptMode</code>), starting a task first stops the other workspaces' Run script and tasks in that repository, as the Run script does today: tasks bind ports too (8000 and 6379 in celes-platform).</dd>
+      <dt>Run mode</dt><dd>When the repository's run scripts do not run concurrently (<code>runScriptMode</code>), starting a task first stops the Run script and tasks of every other workspace, in every repository, as the Run script does today (<code>AppModel.startRun</code> loops over all workspaces' processes): tasks bind fixed ports too (8000 and 6379 in celes-platform).</dd>
       <dt>Done when</dt><dd>"Run: Web Client" asks the frontend mode, runs "_Dev: Cleanup orphans" in a shared tab without selecting it, then opens a "Run: Web Client" tab running <code>pnpm dev-local</code> in <code>apps/web-client</code>.</dd>
     </dl>
   </section>
@@ -381,8 +403,8 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
     <header><code class="id">TSK-04</code><h3>Variables and inputs</h3><span class="scope in">In scope</span></header>
     <dl>
       <dt>Variables</dt><dd>In <code>command</code>, <code>args</code>, <code>options.cwd</code> and <code>options.env</code>: <code>${workspaceFolder}</code> (and its old name <code>${workspaceRoot}</code>), <code>${workspaceFolderBasename}</code>, <code>${userHome}</code>, <code>${cwd}</code> (the worktree), <code>${pathSeparator}</code>, <code>${env:NAME}</code> (from the task's environment), <code>${input:id}</code>. Any other is an error before anything starts (TSK-07).</dd>
-      <dt>pickString</dt><dd>Rocky's menu above the Run button, with the input's <code>description</code> as its caption and one item per option (its <code>label</code>, or the string); the <code>default</code> is checked and highlighted, so Return takes it. Esc cancels the whole run.</dd>
-      <dt>promptString</dt><dd>A small field above the Run button, 300 wide, MenuPanel's look: the <code>description</code> as its label (11 <code>textTertiary</code>), the field 28 pt with the <code>default</code> selected; <code>password: true</code> makes it a secure field. Return confirms, Esc cancels the run.</dd>
+      <dt>pickString</dt><dd>Rocky's menu above the Run button, with the input's <code>description</code> as its caption and one item per option (its <code>label</code>, or the string); the <code>default</code> is checked and highlighted, so Return takes it. Esc cancels the whole run. <code>MenuPresenter</code> gains what this needs: ↑/↓ and Return, a highlighted item on open, and an <code>onCancel</code> for Esc and a click outside.</dd>
+      <dt>promptString</dt><dd>A mini-modal (M2.8 DLG-02) holding a field: the <code>description</code> as its title, the field 28 pt with the <code>default</code> selected, <code>password: true</code> making it a secure field; Cancel · <b>Run</b> (primary, default). Return confirms, Esc cancels the run.</dd>
       <dt>Once</dt><dd>Every <code>${input:…}</code> of the task and its whole dependency chain is asked before anything starts, in order of first use, and one id gets one answer for the whole chain: celes-platform's "Run: API Core + Web Client" and its dependency "_API Core: Run (mode)" both read <code>runModeLocal</code>, and must agree. Answers are not remembered between runs, as in VS Code; the default is preselected.</dd>
     </dl>
   </section>
@@ -417,6 +439,111 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
       <tr><td>A dependency cycle</td><td>Nothing starts; toast "“A” and “B” depend on each other".</td></tr>
       <tr><td>An <code>endsPattern</code> that is not a valid regular expression</td><td>Nothing starts; toast "“_API Core: Run (mode)” has an invalid endsPattern".</td></tr>
     </table>
+  </section>
+
+  <h2>C · Creating a workspace</h2>
+  <section class="req" id="REQ-WSC-01">
+    <header><code class="id">WSC-01</code><h3>Instant, and one at a time</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Why</dt><dd>User, 2026-09-28 (relayed by dev-1): "la idea es que se abra de una vez el worktree y que todo vaya cargando poco a poco" and "si le doy varias veces al botón de crear un worktree, me deja. Eso no puede ser posible". Today <code>AppModel.createWorkspace</code> waits for <code>git worktree add</code>, which runs the repository's <code>post-checkout</code> hook: celes-platform's (<code>core.hooksPath=.husky</code>, <code>.husky/post-checkout</code>) runs <code>scripts/setup-worktree.sh</code> and a full <code>pnpm install</code>, for minutes, with only "Creating workspace…" at the bottom. Clicking "+" again started 15 creations at once.</dd>
+      <dt>Does</dt><dd>A click on a repository's "+" (or ⌘N, or New Workspace in its menu) picks the name (<code>WorkspaceNamer</code>), adds the row at once, selected, and opens the workspace's view before git has done anything. Git's part (WSC-04) follows in the background, and Setup after it (WSC-05).</dd>
+      <dt>One at a time</dt><dd>User decision, 2026-09-28: "no permitir crear un workspace si hay algún proceso corriendo". While any workspace, in any repository, is being created or set up (WSC-04's git part, then WSC-05's hook and Setup script), every repository's "+", ⌘N and New Workspace are disabled. The repository that is creating shows a <code>CircularProgress</code> 12 in place of its "+"; the others show "+" disabled. Tooltip: "Wait for lima to be created" while git runs, "Wait for lima to finish setting up" during Setup. They turn off in the same run of the main actor as the click, before any <code>await</code>, so a double click cannot start two.</dd>
+      <dt>Released</dt><dd>When that workspace's Setup ends: it succeeds, it fails, the user stops it (closing or stopping the Setup tab), the workspace is removed, or its creation fails (WSC-06). A repository with no hook and no Setup script releases it as soon as the worktree exists. Retry takes it again.</dd>
+      <dt>Gone</dt><dd>The global <code>busyMessage</code> "Creating workspace…" at the bottom of the window.</dd>
+      <dt>Done when</dt><dd>In celes-platform, "+" shows the new row and its view within a frame; clicking "+" five times makes one workspace; veritas's "+" stays disabled until celes-platform's <code>pnpm install</code> and Setup end.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-WSC-02">
+    <header><code class="id">WSC-02</code><h3>The row while it is made</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>States</dt><dd>M2.5 ROW-03's glyph slot, with the same glyphs, and a word in the trailing slot, in place of the diff stats and the ⌘ hint: 11.5 <code>textTertiary</code>. User decisions, 2026-09-28: "sería bueno que diga deleting, porque no se sabe qué está haciendo" for removal, then yes for creating and setting up too. A spinner alone did not tell these states apart. It replaces, for these rows, the icon-only rule of 2026-09-23, which stays for an agent starting (M2.8 AGM-05). The tooltips stay.</dd>
+    </dl>
+    <table>
+      <tr><th>State</th><th>Glyph</th><th>In the row</th><th>Tooltip</th></tr>
+      <tr><td>Creating (WSC-04)</td><td>spinner 14</td><td>"Creating…"</td><td>"Creating lima: fetching origin and checking out rocky/lima"</td></tr>
+      <tr><td>Setting up (WSC-05)</td><td>spinner 14</td><td>"Setting up…"</td><td>"Setting up lima: the post-checkout hook" · "…: the Setup script"</td></tr>
+      <tr><td>Archiving (WSC-07)</td><td>spinner 14</td><td>"Archiving…"</td><td>"Running lima's archive script"</td></tr>
+      <tr><td>Deleting (WSC-07)</td><td>spinner 14</td><td>"Deleting…"</td><td>"Removing lima…"</td></tr>
+      <tr><td>Couldn't create (WSC-06)</td><td>ROW-03's <code>danger</code> triangle</td><td>nothing</td><td>"Couldn't create lima: <em>git's first line</em>"</td></tr>
+      <tr><td>Setup failed</td><td>ROW-03's triangle, as today</td><td>nothing</td><td>"Setup exited with 1. See the Setup tab."</td></tr>
+    </table>
+    <dl>
+      <dt>Priority</dt><dd>The word follows the row's status (ROW-03's order, below): while an agent works during Setup, the row shows "working", which ranks higher, and no word.</dd>
+    </dl>
+    <dl>
+      <dt>Title</dt><dd>The city in <code>textSecondary</code> (ROW-02's rule for a workspace without a title).</dd>
+      <dt>Order</dt><dd><code>WorkspaceStatus</code> gains <code>creating</code> and <code>creationFailed</code> before <code>needsYou</code> (nothing else can apply then), and <code>settingUp</code> right after <code>working</code>, with the same spinner.</dd>
+      <dt>Actions</dt><dd>While creating, none: no hover actions (ROW-05), no context menu and no accessibility actions on the row, and nothing cancels it (user decision, 2026-09-28: "si está creando no quiero permitir habilitar ninguna acción sobre ese worktree"). A failed one has Retry and Remove (WSC-06).</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-WSC-03">
+    <header><code class="id">WSC-03</code><h3>The view before the worktree exists</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Shows</dt><dd>The real view, no skeleton: each part shows what it has and one spinner where its content is still missing.
+        <ul>
+          <li>Top bar: the repository and <code>rocky/lima</code>, known from the start.</li>
+          <li>Tabs: one "New conversation" with the repository's default agent (M2.8 CNV-02).</li>
+          <li>Message box: enabled, focused, and the model button shows only its spinner (M2.8 AGM-05) until the agent reports its models. Sending works as while an agent starts: the message shows at once and goes when the agent is ready.</li>
+          <li>Right panel: All files and Changes show one centred <code>CircularProgress</code> 14 until the worktree exists; the header reads "No pull request".</li>
+          <li>Terminal panel: no tab until the Setup tab appears (WSC-05); Run, New terminal and tasks are disabled until the worktree exists, tooltip "Creating lima…".</li>
+          <li>Agent actions: Create PR and the other M2.7 AGT buttons are disabled with the tooltip "Creating lima…" (<code>AgentActionAvailability.creating(hint)</code>), as nothing acts on a worktree being made.</li>
+        </ul>
+      </dd>
+      <dt>Stored</dt><dd>The workspace is kept in memory until the worktree exists, then saved (<code>store.add</code>, its port from <code>nextPort()</code>) with its conversation. A quit meanwhile stops git and runs WSC-06's cleanup, so nothing half-made is left.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-WSC-04">
+    <header><code class="id">WSC-04</code><h3>Git's part, without hooks</h3><span class="scope tech">Technical</span></header>
+    <dl>
+      <dt>Steps</dt><dd>(1) The base, as today (<code>WorktreeService.baseRef</code>: fetch, then the base branch). (2) <code>git -c core.hooksPath=/dev/null worktree add -b rocky/lima <em>path</em> <em>base</em></code>: no hook runs, so it returns after the checkout, in seconds. (3) The workspace is saved, its environment files are linked (<code>WorktreeLinker</code>, before any script, as today), and the conversation's agent starts, since its conversation is on screen (spec Section 1). (4) Setup (WSC-05).</dd>
+      <dt>Fetch</dt><dd>A failed fetch does not stop it, as today, but says so in a toast instead of an alert: "git fetch failed; lima was created from the last fetched origin/development."</dd>
+      <dt>Agent</dt><dd>It starts before Setup ends: the user can talk to it while <code>pnpm install</code> runs ("que todo vaya cargando poco a poco"). A command the agent runs before the dependencies are in may fail; the agent sees that and the Setup tab shows why.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-WSC-05">
+    <header><code class="id">WSC-05</code><h3>Setup: the hook, then the Setup script</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Hook</dt><dd>The repository's own <code>post-checkout</code> hook runs first, visibly, where git would have run it: the path <code>git rev-parse --git-path hooks/post-checkout</code> gives in the worktree (it honors <code>core.hooksPath</code>: <code>.husky/post-checkout</code> in celes-platform), only when that file exists and is executable, as git requires. Arguments as git passes them for a new worktree: <code>0000000000000000000000000000000000000000 <em>HEAD</em> 1</code>. Directory: the worktree; environment: the workspace's (ENV-01). No hook: the step is skipped.</dd>
+      <dt>Then</dt><dd>The Setup script (<code>rocky.json</code> or the repository settings), as today. Without either, there is no Setup tab.</dd>
+      <dt>Tab</dt><dd>One Setup tab, selected and unfolded when it starts, holding both steps in order. Each step opens with a line in <code>textTertiary</code>: "▸ post-checkout hook · .husky/post-checkout", "▸ Setup · pnpm db:migrate", and ends with its end line (TERM-03): "post-checkout exited with code 0". The tab's dot runs until the last step ends.</dd>
+      <dt>Failure</dt><dd>A step that exits non-zero stops the next one: the dot turns <code>danger</code>, the row shows ROW-03's Setup failure, and the workspace stays usable. The hook's exit decides this, as it decides <code>git checkout</code>'s own exit status.</dd>
+      <dt>Risk</dt><dd>celes-platform's <code>setup-worktree.sh</code> also creates symlinks that <code>WorktreeLinker</code> has made just before; the hook calls it as <code>… || true</code>, and the linker leaves existing files alone, so neither order breaks. A hook that expects git's environment variables beyond the three arguments is not covered: not known to exist here.</dd>
+      <dt>Done when</dt><dd>A new celes-platform workspace opens at once; a moment later its Setup tab shows <code>pnpm install</code>'s progress under "▸ post-checkout hook", while the agent already answers.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-WSC-06">
+    <header><code class="id">WSC-06</code><h3>When it can't be created</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>When</dt><dd><code>git worktree add</code> fails, or there is no base to create from. No alert: the row turns to Couldn't create (WSC-02), and the view shows a card, centred in the conversation's place: "Couldn't create lima" (14 semibold), git's message (12.5 mono, <code>textSecondary</code>, selectable, up to 8 lines), then Remove · <b>Retry</b> (primary). DLG-02's button styles.</dd>
+      <dt>Retry</dt><dd>Runs WSC-04 again with the same name, reusing <code>rocky/lima</code> if the failed attempt already made it (<code>worktree add <em>path</em> rocky/lima</code>, without <code>-b</code>). It takes WSC-01's guard again.</dd>
+      <dt>Remove</dt><dd>Deletes the row, the half-made folder if there is one, <code>git worktree prune</code>, and the <code>rocky/lima</code> branch if the attempt made it (it has no commits). No confirmation: nothing of the user's is in it.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-WSC-07">
+    <header><code class="id">WSC-07</code><h3>Removing a workspace</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Why</dt><dd>User, 2026-09-28 (relayed by dev-1): "cuando remuevo un worktree se ve esto durante unos segundos y luego aparece algo de git branch fatal no sé qué y luego sí se borra, ¿por qué?". Today <code>AppModel.removeWorkspace</code> keeps the workspace selected while <code>git worktree remove</code> deletes its files (node_modules included, for seconds): its FileWatcher and pull request refreshes keep going, Changes lists every file as deleted (+0 −19.1k), a git read inside the half-deleted folder fails with "fatal:", and the view says "Opening the conversation…" because its chats were stopped first.</dd>
+      <dt>Order</dt><dd>
+        <ol>
+          <li>The confirmation (M2.8 DLG-01), then its agents, tasks, scripts and terminals stop, as today.</li>
+          <li>The archive script, when there is one, runs first and visibly, as today: the workspace stays selected with its Archive tab selected and unfolded; the conversation keeps its transcript with the message box disabled (not "Opening the conversation…"); the row shows ROW-03's spinner and "Archiving…" (WSC-07 Row), tooltip "Running manila's archive script". A failure keeps today's "Archive script failed" mini-modal (Remove Anyway · Cancel).</li>
+          <li>Off screen at once: the selection moves to the next workspace in the sidebar's order (the one below, else the one above, else the empty state). Before any git runs, its FileWatcher, its pull request polling (M2.7 PR-07) and its git status reads stop, and errors from reads already in flight for it are dropped, never shown.</li>
+          <li>In the background: the stash when archiving (PR-06), <code>git worktree remove</code>, then the branch rule below, then the store. The row stays meanwhile with ROW-03's spinner and "Deleting…", tooltip "Removing manila…", not selectable and without hover actions. It is the same row view dimmed to 55 %, a plain opacity change: drawing it as another view made the list cross-fade the two, and the row jumped (user report, 2026-09-28: "la fila salta y tiene un efecto como de fade"). It leaves with the rows' exit motion when git ends.</li>
+        </ol>
+      </dd>
+      <dt>Row</dt><dd>WSC-02's words: "Archiving…" while the archive script runs, "Deleting…" while git removes it (user decision, 2026-09-28).</dd>
+      <dt>Branch</dt><dd>User decision, 2026-09-28: "Borrarla si está vacía", where empty means "todo lo suyo ya está en otra rama, en el remoto o en un tag". A <code>rocky/<em>city</em></code> branch is deleted locally when <code>git rev-list --count refs/heads/<em>branch</em> --not --exclude=<em>branch</em> --branches --remotes --tags</code> is 0, the check <code>WorktreeService.cleanUp</code> already uses; otherwise it is kept, so no commit is lost. So a branch whose commits are all pushed (to <code>origin/rocky/<em>city</em></code>) or merged into another branch is deleted, and one with a commit nowhere else is kept. It is not <code><em>baseRef</em>..<em>branch</em></code>, which would keep a branch whose work is already pushed. Any branch without the <code>rocky/</code> prefix (one GHL-05 switched to, a pull request's) is always kept.</dd>
+      <dt>Copy</dt><dd>The Remove confirmation's message ends "The branch rocky/manila is deleted if all its commits are also on another branch, the remote or a tag; otherwise it is kept." instead of "…is kept."; the merged pull request's Archive message (PR-06), the same sentence.</dd>
+      <dt>Failure</dt><dd>A real one (git refuses: uncommitted changes, a locked worktree): the row comes back as a normal workspace, not selected, and a mini-modal (DLG-02) says "Couldn't remove manila" with git's message, and OK.</dd>
+      <dt>Quit</dt><dd>A removal under way is waited for: <code>applicationShouldTerminate</code> answers <code>.terminateLater</code> until it ends (as DLG-05 does), so no half-deleted worktree is left registered in the store.</dd>
+      <dt>Done when</dt><dd>Removing a celes-platform workspace takes it off screen at once, no "D" files or "fatal:" ever show, its row spins until git ends and then goes, and <code>git branch</code> no longer lists its <code>rocky/<em>city</em></code> when every commit of it is pushed or elsewhere.</dd>
+    </dl>
   </section>
 
   <h2>RockyKit</h2>
@@ -462,6 +589,30 @@ enum SwitchTarget { case local(String), remote(String), pullRequest(head: String
     <p>In <code>AppModel</code>: runs a <code>TaskPlan</code> on <code>PTYSession</code>s, waits for each step's exit or for its <code>endsPattern</code> on the output (<code>PTYSession.attach(_:onOutput:)</code>, lines with ANSI escapes removed), maps <code>presentation</code> to tabs, remembers which run started which dependency for TSK-06, and follows <code>runScriptMode</code>. Tests with a fake process launcher: a sequence waits for exit 0; a background step waits for its pattern; one without a pattern does not wait; a failure stops the chain; Stop leaves a dependency another running task needs.</p>
   </section>
 
+  <section class="req" id="REQ-KIT-18">
+    <header><code class="id">KIT-18</code><h3>Workspace creation</h3><span class="scope tech">Technical</span></header>
+<pre>// WorktreeService
+func create(repo:name:base:hooks: Bool = false) throws -> CreatedWorktree   // -c core.hooksPath=/dev/null
+func postCheckoutHook(worktree:) -> URL?        // rev-parse --git-path, exists and executable
+func cleanUp(repo:path:branch:) throws          // folder, prune, the branch if it has no commits
+
+// AppModel
+var preparingWorkspaceId: String?               // the one being created or set up, in any repository (WSC-01)
+func createWorkspace(repoId:) async            // WSC-01…04, returns once the row shows
+func retryCreation(workspaceId:) async
+func removeFailedCreation(workspaceId:) async</pre>
+    <p>Tests on a temporary repository with a <code>post-checkout</code> hook that writes a file: <code>create</code> leaves the file unwritten; <code>postCheckoutHook</code> finds it through <code>core.hooksPath</code> and ignores a non-executable one; a second <code>createWorkspace</code>, in any repository, does nothing while one is being created or set up, and works once its Setup ends, fails or is stopped; Retry reuses the branch; <code>cleanUp</code> removes the folder and the empty branch. <code>WorkspaceStatus</code>'s order with the new states.</p>
+  </section>
+  <section class="req" id="REQ-KIT-19">
+    <header><code class="id">KIT-19</code><h3>Workspace removal</h3><span class="scope tech">Technical</span></header>
+<pre>// WorktreeService
+func remove(repo:worktree:branch:base:) throws -> BranchOutcome   // .deleted or .kept(commits: Int)
+
+// AppModel
+var removingWorkspaceIds: Set<String>         // WSC-07: off screen, their watchers and polls stopped
+func removeWorkspace(id:skipArchive:stashingChanges:) async   // the order of WSC-07</pre>
+    <p>Tests on a temporary repository: a <code>rocky/<em>city</em></code> branch with no commits is deleted; one whose commits are all pushed to its remote branch is deleted; one whose commits are merged into another local branch is deleted; one with a commit nowhere else is kept; a branch without the <code>rocky/</code> prefix is always kept; a status read that fails for a removing id sets no <code>errorMessage</code>; the selection moves to the next workspace, then the previous, then none; a refused removal puts the workspace back.</p>
+  </section>
   <h2>Out of scope</h2>
   <section class="req" id="REQ-OUT-50">
     <header><code class="id">OUT-50</code><h3>Not in M2.9</h3><span class="scope out">Later</span></header>
@@ -490,6 +641,7 @@ enum SwitchTarget { case local(String), remote(String), pullRequest(head: String
     map: svg(14, '<path d="M2 4l4-1.5 4 1.5 4-1.5v9.5l-4 1.5-4-1.5-4 1.5z M6 2.5v9.5M10 4v9.5"/>', 1.3),
     search: svg(13, '<circle cx="7" cy="7" r="4.5"/><path d="M10.4 10.4l3.35 3.35"/>'),
     warn: svg(14, '<path d="M8 2.5l6 10.5H2z M8 6.5v3M8 11.3v.2"/>', 1.4),
+    trash: svg(13, '<path d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.7 8.5h6.6l.7-8.5"/>', 1.3),
     branch: svg(14, '<circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="5.5" r="1.5"/><path d="M4.5 5v6M11.5 7c0 2.5-3 2.5-7 4"/>', 1.3),
     pr: svg(14, '<circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="12.5" r="1.5"/><path d="M4.5 5v6M11.5 11V6.5a2 2 0 0 0-2-2H7.5M9 3l-1.5 1.5L9 6"/>', 1.3),
     issueOpen: svg(14, '<circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="1.2" fill="currentColor"/>', 1.4),
@@ -556,9 +708,15 @@ enum SwitchTarget { case local(String), remote(String), pullRequest(head: String
   function renderSidebar() {
     let html = '';
     for (const rid of Object.keys(repos)) {
-      html += `<div class="repo"><span class="monogram" style="background:${repos[rid].color}">${repos[rid].name[0].toUpperCase()}</span>${esc(repos[rid].name)}</div>`;
+      const busy = preparing();   // WSC-01: one at a time, across repositories, until its Setup ends
+      const tip = busy ? (busy.state === 'creating' ? `Wait for ${busy.city} to be created` : `Wait for ${busy.city} to finish setting up`) : 'New workspace (⌘N)';
+      html += `<div class="repo"><span class="monogram" style="background:${repos[rid].color}">${repos[rid].name[0].toUpperCase()}</span>${esc(repos[rid].name)}<span class="grow"></span><button class="repo-add" data-action="new-ws" data-repo="${rid}" data-req="WSC-01"${busy ? ' disabled' : ''} title="${esc(tip)}" aria-label="New workspace">${busy && busy.repo === rid ? spinner(12) : I.plus}</button></div>`;
       for (const w of workspaces.filter((x) => x.repo === rid)) {
-        html += `<button class="row${w.id === state.selected ? ' selected' : ''}${w.renamed ? ' renamed' : ''}" data-action="select" data-ws="${w.id}"${w.renamed ? ' data-req="GHL-06"' : ''} title="${esc(w.title || w.city)}"><span>${esc(w.title || 'New workspace')}</span><span class="city">${esc(w.city)}</span></button>`;
+        const st = w.state === 'removing' ? ['spin', `Removing ${w.city}…`] : w.state === 'creating' ? ['spin', `Creating ${w.city}: fetching origin and checking out rocky/${w.city}`] : w.state === 'failed' ? ['err', `Couldn't create ${w.city}: ${w.error.split('\n')[0]}`] : w.setup === 'running' ? ['spin', `Setting up ${w.city}: ${w.setupStep || 'the post-checkout hook'}`] : null;
+        const glyph = st ? `<span class="glyph${st[0] === 'err' ? ' err' : ''}" data-req="WSC-02">${st[0] === 'err' ? I.warn : spinner(14)}</span>` : '';
+        const label = w.title || (w.fresh ? `<span class="muted">${esc(w.city)}</span>` : 'New workspace');
+        const rm = !w.state ? `<span class="rm" data-action="rm-ws" data-ws="${w.id}" data-req="WSC-07" title="Remove workspace" role="button">${I.trash}</span>` : '';
+        html += `<button class="row${w.id === state.selected ? ' selected' : ''}${w.renamed ? ' renamed' : ''}${w.state === 'removing' ? ' removing' : ''}${w.leaving ? ' leaving' : ''}" data-action="select" data-ws="${w.id}"${w.renamed ? ' data-req="GHL-06"' : ''} title="${esc(st ? st[1] : (w.title || w.city))}">${glyph}<span>${w.title ? esc(w.title) : label}</span>${w.state === 'removing' ? '<span class="city" data-req="WSC-02">Deleting…</span>' : w.state === 'creating' ? '<span class="city" data-req="WSC-02">Creating…</span>' : w.setup === 'running' ? '<span class="city" data-req="WSC-02">Setting up…</span>' : w.title || !w.fresh ? `<span class="city">${esc(w.city)}</span>` : ''}${rm}</button>`;
         w.renamed = false;
       }
     }
@@ -574,10 +732,14 @@ enum SwitchTarget { case local(String), remote(String), pullRequest(head: String
   function renderChat() {
     const w = W();
     const items = w.msgs.map((m) => m.k === 'user'
-      ? `<div class="msg-user${m.enter ? ' enter' : ''}">${m.chips && m.chips.length ? `<div class="chips-line">${m.chips.map((c) => chipHTML(c)).join('')}</div>` : ''}${m.t ? `<span>${esc(m.t)}</span>` : ''}</div>`
+      ? `<div class="msg-user${m.enter ? ' enter' : ''}${m.queued ? ' queued' : ''}"${m.queued ? ' title="Goes when the agent is ready" data-req="WSC-03"' : ''}>${m.chips && m.chips.length ? `<div class="chips-line">${m.chips.map((c) => chipHTML(c)).join('')}</div>` : ''}${m.t ? `<span>${esc(m.t)}</span>` : ''}</div>`
       : `<div class="msg-agent${m.enter ? ' enter' : ''}">${esc(m.t)}</div>`).join('');
     w.msgs.forEach((m) => { m.enter = false; });
-    $('#chatCol').innerHTML = items || '<p class="chat-empty">A new workspace on <code>rocky/lima</code>.<br>Open + ▸ Link GitHub issue to start from an issue, a pull request or a branch.</p>';
+    if (w.state === 'failed') {   // WSC-06
+      $('#chatCol').innerHTML = `<div class="wsc-fail" data-req="WSC-06"><h4>${I.warn}Couldn't create ${esc(w.city)}</h4><pre>${esc(w.error)}</pre><div class="btns"><button data-action="wsc-remove">Remove</button><button class="primary" data-action="wsc-retry">Retry</button></div></div>`;
+      return;
+    }
+    $('#chatCol').innerHTML = items || `<p class="chat-empty">A new workspace on <code>${esc(w.branch)}</code>.<br>Open + ▸ Link GitHub issue to start from an issue, a pull request or a branch.</p>`;
     $('#chat').scrollTop = $('#chat').scrollHeight;
   }
   function renderComposer(focus) {
@@ -589,6 +751,8 @@ enum SwitchTarget { case local(String), remote(String), pullRequest(head: String
     input.value = w.draft;
     $('#sendBtn').classList.toggle('ready', Boolean(w.draft.trim() || w.chips.length));
     $('#plusBtn').classList.toggle('on', state.menu === 'plus');
+    $('.model-btn').innerHTML = w.state === 'creating' ? `<span style="color:var(--text-2)" data-req="WSC-03" title="Starting Claude Code">${spinner(12)}</span>` : '<span class="agent">C</span>Opus 5.5 <span class="dim">High</span>';
+    $('#composer').style.opacity = w.state === 'failed' ? '0.45' : '';
     if (focus) input.focus();
   }
   function tabDot(t) { return t.st === 'running' ? 'run' : t.st === 'failed' ? 'fail' : 'done'; }
@@ -602,7 +766,9 @@ enum SwitchTarget { case local(String), remote(String), pullRequest(head: String
   function renderPanel() {
     const w = W(); const r = R();
     let run;
-    if (!r.hasTasks) {
+    if (w.state === 'creating' || w.state === 'failed') {
+      run = `<button class="run-mini" disabled title="Creating ${esc(w.city)}…" data-req="WSC-03">${I.play}<span>Run</span></button>`;
+    } else if (!r.hasTasks) {
       run = `<button class="run-mini" data-action="run-script">${I.play}<span>Run</span></button>`;   // no tasks.json: today's button
     } else {
       const def = defaultItem(w);
@@ -727,19 +893,84 @@ enum SwitchTarget { case local(String), remote(String), pullRequest(head: String
     renderComposer(true);
   }
 
+  // ---------- WSC: creating a workspace ----------
+  const CITIES = ['oslo', 'kyoto', 'porto', 'cusco', 'rome', 'lagos'];
+  const preparing = () => workspaces.find((x) => x.state === 'creating' || x.setup === 'running');
+  function createWorkspace(repo) {
+    if (preparing()) return;   // WSC-01: a second click, in any repository, does nothing
+    const city = CITIES.find((c) => !workspaces.some((x) => x.city === c)) || 'rome';
+    const w = { id: 'w' + Date.now(), repo, city, title: '', branch: 'rocky/' + city, dirty: false, msgs: [], chips: [], draft: '', tabs: [], sel: null, state: 'creating', fresh: true };
+    workspaces.push(w); state.selected = w.id;
+    renderAll(true);   // the row and the view at once, before git
+    runCreation(w);
+  }
+  async function runCreation(w) {
+    w.state = 'creating'; renderAll();
+    await wait(1400);   // WSC-04: fetch, then `git -c core.hooksPath=/dev/null worktree add` (no hook, seconds)
+    if (!workspaces.includes(w)) return;   // removed meanwhile
+    if (state.failNext) {
+      state.failNext = false; $('#demoFail').setAttribute('aria-pressed', 'false');
+      w.state = 'failed'; w.error = `fatal: could not create work tree dir '~/dev/celes-platform-worktrees/${w.city}': No space left on device`;
+      renderAll(); return;
+    }
+    w.state = null; w.setup = 'running'; w.setupStep = 'the post-checkout hook';
+    w.msgs.filter((m) => m.queued).forEach((m) => { m.queued = false; setTimeout(() => { w.msgs.push({ k: 'agent', t: 'On it. Setup is still installing dependencies, so I will start by reading the code.', enter: true }); if (w.id === state.selected) renderChat(); }, 900); });
+    const tab = { id: w.id + '-setup', title: 'Setup', kind: 'script', st: 'running', lines: [], enter: true };
+    w.tabs.push(tab); w.sel = tab.id;
+    renderAll();
+    const steps = [   // WSC-05: the repository's own hook, visibly, then rocky.json's Setup
+      ['step', '▸ post-checkout hook · .husky/post-checkout'], ['', 'Linked .env, .env.local from the main clone'], ['', 'node_modules missing → pnpm install'],
+      ['', 'Progress: resolved 1893, reused 1840, downloaded 12, added 640'], ['', 'Progress: resolved 1893, reused 1840, downloaded 53, added 1893, done'], ['', 'Done in 38.2s'],
+      ['end', 'post-checkout exited with code 0'], ['step', '▸ Setup · pnpm db:migrate'], ['', 'Migrations are up to date'], ['end', 'Process exited with code 0'],
+    ];
+    for (const l of steps) {
+      await wait(650);
+      if (!workspaces.includes(w)) return;
+      if (l[0] === 'step' && l[1].startsWith('▸ Setup')) { w.setupStep = 'the Setup script'; renderSidebar(); }
+      tab.lines.push(l);
+      if (w.id === state.selected) renderTerm();
+    }
+    tab.st = 'done'; w.setup = 'done';
+    renderAll();
+  }
+  function removeWorkspace(w) {   // WSC-06: row, half-made folder, prune, the empty branch; no confirmation
+    workspaces.splice(workspaces.indexOf(w), 1);
+    state.selected = workspaces.find((x) => x.repo === w.repo)?.id || workspaces[0].id;
+    toast(`Removed ${w.city}: the half-made folder, git worktree prune and the empty rocky/${w.city}.`);
+    renderAll();
+  }
+
+  // WSC-07: off screen at once, then git in the background; the empty rocky/ branch goes, one with commits stays
+  async function removeLive(w) {
+    const order = workspaces.filter((x) => x.state !== 'removing');
+    const i = order.indexOf(w);
+    const next = order[i + 1] || order[i - 1];
+    w.state = 'removing';
+    if (state.selected === w.id) state.selected = next && next !== w ? next.id : workspaces[0].id;
+    renderAll();
+    await wait(1800);   // git worktree remove (node_modules included), then the branch
+    w.leaving = true; renderSidebar();
+    await wait(170);
+    workspaces.splice(workspaces.indexOf(w), 1);
+    const empty = w.branch.startsWith('rocky/') && !w.msgs.length;
+    toast(`Removed ${w.city}. ${empty ? `Its empty ${w.branch} was deleted.` : `The branch ${w.branch} is kept.`}`);
+    renderAll();
+  }
+
   // ---------- send ----------
   function send() {
     const w = W();
     if (!w.draft.trim() && !w.chips.length) return;
     const first = !w.msgs.some((m) => m.k === 'user');
     const chips = w.chips.slice(); const text = w.draft.trim();
-    w.msgs.push({ k: 'user', t: text, chips, enter: true });
+    w.msgs.push({ k: 'user', t: text, chips, enter: true, queued: w.state === 'creating' });   // WSC-03: goes when the agent is ready
     w.chips = []; w.draft = '';
     const issue = chips.find((c) => c.kind === 'issue');
     if (first) {   // GHL-06: the name comes from the issue; otherwise from the text, as today
       if (issue) { w.title = `#${issue.n} ${issue.title}`; w.renamed = true; } else if (text) { w.title = text.slice(0, 40); }
     }
     renderAll(true);
+    if (w.state === 'creating') return;
     setTimeout(() => {
       w.msgs.push({ k: 'agent', t: issue ? `I read #${issue.n} from ${issue.file}: the description and its comments. Starting with a failing test for it.` : 'On it.', enter: true });
       if (w.id === state.selected) renderChat();
@@ -866,6 +1097,10 @@ enum SwitchTarget { case local(String), remote(String), pullRequest(head: String
       case 'run-menu': if (state.menu === 'run') closeMenu(); else runMenu(b.closest('.run-split')); break;
       case 'run-default': { const def = defaultItem(w); if (def) runItem(def); else runMenu(b.closest('.run-split')); break; }
       case 'stop': stopDefault(); break;
+      case 'new-ws': createWorkspace(b.dataset.repo); break;
+      case 'rm-ws': { e.stopPropagation(); const t = workspaces.find((x) => x.id === b.dataset.ws); if (t && !t.state) removeLive(t); break; }
+      case 'wsc-retry': runCreation(w); break;
+      case 'wsc-remove': removeWorkspace(w); break;
       case 'run-script': runItem('run-script'); break;
       case 'term-tab': w.sel = b.dataset.tab; renderPanel(); break;
       default: break;
@@ -887,6 +1122,7 @@ enum SwitchTarget { case local(String), remote(String), pullRequest(head: String
   function toast(msg) { let t = win.querySelector('.toast'); if (!t) { t = document.createElement('div'); t.className = 'toast'; win.appendChild(t); } t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 3200); }
   $('#demoDirty').addEventListener('click', (e) => { const w = workspaces.find((x) => x.id === 'w2'); w.dirty = !w.dirty; e.currentTarget.setAttribute('aria-pressed', String(w.dirty)); if (state.picker) renderPicker(); });
   $('#demoBadJson').addEventListener('click', (e) => { state.badJson = !state.badJson; e.currentTarget.setAttribute('aria-pressed', String(state.badJson)); renderPanel(); });
+  $('#demoFail').addEventListener('click', (e) => { state.failNext = !state.failNext; e.currentTarget.setAttribute('aria-pressed', String(state.failNext)); });
   $('#demoPins').addEventListener('click', (e) => { e.currentTarget.setAttribute('aria-pressed', String(document.body.classList.toggle('spec-on'))); });
   document.addEventListener('click', (e) => {
     if (!document.body.classList.contains('spec-on')) return;

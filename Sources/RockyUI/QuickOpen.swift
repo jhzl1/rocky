@@ -180,7 +180,9 @@ struct QuickOpenHost: View {
         .ignoresSafeArea()
         // With Quick Open closed, clicks reach the window under it.
         .allowsHitTesting(presenter.isShown)
-        .animation(Theme.Motion.hover, value: presenter.workspaceId)
+        // Only opening animates: it closes at once. Under an animation, the `.identity` removal kept the panel on screen
+        // for 120 ms after its results were cleared, showing "Reading files…" before it went (user report, 2026-09-28).
+        .animation(presenter.workspaceId == nil ? nil : Theme.Motion.hover, value: presenter.workspaceId)
         // Closing the window (⌘W) closes Quick Open, whose key monitor listens to that window alone.
         .onDisappear { presenter.dismiss() }
     }

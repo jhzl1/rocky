@@ -66,6 +66,42 @@ final class PipeDrain: @unchecked Sendable {
     }
 }
 
+/// Stops blocking runs from another thread: WSC-06's Remove while a workspace is being created, and a quit then. The
+/// run in progress gets SIGTERM and throws `CancellationError`, and so does every later run given the same stopper,
+/// without starting, so a series of runs (the fetch, then the checkout) ends where it was.
+public final class ProcessStopper: @unchecked Sendable {
+    private let lock = NSLock()
+    private var running: Process?
+    private var stopped = false
+
+    public init() {}
+
+    public var isStopped: Bool {
+        lock.withLock { stopped }
+    }
+
+    public func stop() {
+        let process = lock.withLock { () -> Process? in
+            stopped = true
+            return running
+        }
+        process?.terminate()
+    }
+
+    /// Called once `process` runs: false when a stop came first, and the caller then terminates it.
+    fileprivate func began(_ process: Process) -> Bool {
+        lock.withLock {
+            guard !stopped else { return false }
+            running = process
+            return true
+        }
+    }
+
+    fileprivate func ended() {
+        lock.withLock { running = nil }
+    }
+}
+
 public enum ProcessRunner {
     /// Runs a command to completion and returns stdout without trailing whitespace.
     /// Blocking: call it from `Task.blocking`, never on the main actor or the cooperative pool.
@@ -74,21 +110,25 @@ public enum ProcessRunner {
         _ executable: URL,
         _ arguments: [String],
         in directory: URL? = nil,
-        environment: [String: String]? = nil
+        environment: [String: String]? = nil,
+        stopper: ProcessStopper? = nil
     ) throws -> String {
-        let data = try Self.output(executable, arguments, in: directory, environment: environment)
+        let data = try Self.output(executable, arguments, in: directory, environment: environment, stopper: stopper)
         return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Runs a command to completion and returns stdout exactly as it was written. For output whose first or last
     /// characters matter: a diff whose last context line is a lone space, or `git status -z`, whose first entry can
-    /// start with one. Blocking, like `run`.
+    /// start with one. Blocking, like `run`. A `stopper` that stops it, or stopped before, makes it throw
+    /// `CancellationError`.
     public static func output(
         _ executable: URL,
         _ arguments: [String],
         in directory: URL? = nil,
-        environment: [String: String]? = nil
+        environment: [String: String]? = nil,
+        stopper: ProcessStopper? = nil
     ) throws -> Data {
+        if stopper?.isStopped == true { throw CancellationError() }
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
@@ -103,6 +143,8 @@ public enum ProcessRunner {
         let exited = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in exited.signal() }
         try process.run()
+        if let stopper, !stopper.began(process) { process.terminate() }
+        defer { stopper?.ended() }
 
         // Drain stderr while stdout is read: a full pipe would block the child forever.
         let errorOutput = PipeDrain(stderr.fileHandleForReading)
@@ -110,6 +152,7 @@ public enum ProcessRunner {
         errorOutput.wait()
         exited.wait()
 
+        if stopper?.isStopped == true { throw CancellationError() }
         guard process.terminationStatus == 0 else {
             throw ProcessFailure(
                 command: ([executable.lastPathComponent] + arguments).joined(separator: " "),

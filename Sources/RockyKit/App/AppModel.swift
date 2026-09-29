@@ -9,19 +9,25 @@ public struct RockyPaths: Sendable {
     public let ciLogs: URL
     /// `AGM-04`'s model catalog (`AgentModelCatalog`).
     public let agentModels: URL
+    /// Where the message box's own files go, a folder each (`PastedFiles`): linked issues, pull requests and branches
+    /// (`GHL-04`, `GHL-05`).
+    public let pastedFiles: URL
 
-    /// `ciLogs` defaults to a `ci-logs` folder next to the database, `agentModels` to `agent-models.json` there.
-    public init(database: URL, adapterPrefix: URL, logs: URL, ciLogs: URL? = nil, agentModels: URL? = nil) {
+    /// `ciLogs` defaults to a `ci-logs` folder next to the database, `agentModels` to `agent-models.json` there and
+    /// `pastedFiles` to a `Pasted` folder there.
+    public init(database: URL, adapterPrefix: URL, logs: URL, ciLogs: URL? = nil, agentModels: URL? = nil, pastedFiles: URL? = nil) {
         self.database = database
         self.adapterPrefix = adapterPrefix
         self.logs = logs
         let support = database.deletingLastPathComponent()
         self.ciLogs = ciLogs ?? support.appendingPathComponent("ci-logs", isDirectory: true)
         self.agentModels = agentModels ?? support.appendingPathComponent("agent-models.json")
+        self.pastedFiles = pastedFiles ?? support.appendingPathComponent("Pasted", isDirectory: true)
     }
 
     /// `~/Library/Application Support/Rocky` for data, the Claude adapter, the CI logs (`ci-logs`) and the model
-    /// catalog (`agent-models.json`), `~/Library/Logs/Rocky` for agent stderr.
+    /// catalog (`agent-models.json`), `~/Library/Logs/Rocky` for agent stderr, `~/Library/Caches/Rocky/Pasted` for the
+    /// message box's own files, as pasted images (Decision 4 of M2.9).
     public static func standard() throws -> RockyPaths {
         let fileManager = FileManager.default
         let support = try fileManager.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
@@ -34,7 +40,8 @@ public struct RockyPaths: Sendable {
         return RockyPaths(
             database: support.appendingPathComponent("rocky.sqlite"),
             adapterPrefix: support.appendingPathComponent("agents", isDirectory: true),
-            logs: logs
+            logs: logs,
+            pastedFiles: PastedFiles.standardFolder()
         )
     }
 }
@@ -76,6 +83,20 @@ public struct ArchiveFailure: Equatable, Sendable {
     }
 }
 
+/// WSC-07: why git did not remove a workspace (uncommitted changes, a locked worktree), in git's words, for the
+/// "Couldn't remove manila" mini-modal. The workspace is back, as it was.
+public struct RemovalFailure: Equatable, Sendable {
+    public let workspaceId: String
+    public let workspaceName: String
+    public let message: String
+
+    public init(workspaceId: String, workspaceName: String, message: String) {
+        self.workspaceId = workspaceId
+        self.workspaceName = workspaceName
+        self.message = message
+    }
+}
+
 /// What `GST-02`'s Pull does once its git steps ran: send the agent to commit first, report a fast-forward, or send the
 /// agent to merge or rebase a diverged branch.
 enum BaseSyncStep: Equatable, Sendable {
@@ -95,18 +116,49 @@ public enum ModelPick: Sendable, Equatable {
     case openedConversation
 }
 
-/// The setup, run and archive scripts and the terminal tabs of one workspace. Kept only while Rocky runs.
+/// Decision 12 of M2.9: a request for a workspace's panel to select one tab and unfold, from a task that starts with
+/// `reveal: always`, a running item chosen again, or a toast's Show. `focus` gives that terminal the keyboard
+/// (`presentation.focus`). The panel acts on each new serial once.
+public struct TerminalReveal: Equatable, Sendable {
+    public let sessionId: UUID
+    public let focus: Bool
+    public let serial: Int
+}
+
+/// The setup, run and archive scripts, the VS Code tasks and the terminal tabs of one workspace. Kept only while Rocky
+/// runs.
 @MainActor
 @Observable
 public final class WorkspaceProcesses {
     public internal(set) var setup: PTYSession?
     public internal(set) var run: PTYSession?
     public internal(set) var archive: PTYSession?
+    /// TSK-03: the tasks' tabs, in the order they opened. A reused tab keeps its place with its new session.
+    public internal(set) var tasks: [PTYSession] = []
     public internal(set) var terminals: [PTYSession] = []
+    /// Each task tab's `presentation.panel`, which says whether a later task may reuse it (Decision 7 of M2.9).
+    @ObservationIgnored var taskPanels: [UUID: VSCodeTask.Panel] = [:]
+    /// A reused task tab's new session, by the id of the one it replaced, so the panel's selection follows the tab.
+    @ObservationIgnored private(set) var replacedSessions: [UUID: UUID] = [:]
 
-    /// Scripts first, then terminals: the order of the panel's tabs.
+    /// Scripts first, then tasks, then terminals: the order of the panel's tabs.
     public var all: [PTYSession] {
-        [setup, run, archive].compactMap { $0 } + terminals
+        [setup, run, archive].compactMap { $0 } + tasks + terminals
+    }
+
+    /// The session a tab selection points at now: the one it names, or the session that took its tab's place.
+    public func current(_ id: UUID?) -> UUID? {
+        var id = id
+        while let next = id.flatMap({ replacedSessions[$0] }) { id = next }
+        return id
+    }
+
+    /// Puts `session` in the place of the task tab at `index`, whose process has ended.
+    func replaceTask(at index: Int, with session: PTYSession) {
+        let old = tasks[index]
+        tasks[index] = session
+        taskPanels[old.id] = nil
+        replacedSessions[old.id] = session.id
     }
 
     func stopAll() async {
@@ -179,7 +231,48 @@ public final class AppModel {
     public private(set) var workspaceTitles: [String: String] = [:]
     public var errorMessage: String?
     public var archiveFailure: ArchiveFailure?
+    /// WSC-07: the last removal git refused; the window shows it until its OK.
+    public var removalFailure: RemovalFailure?
     public private(set) var busyMessage: String?
+    /// WSC-07: the workspaces being removed, by id, from the confirmation until they leave, or come back when git
+    /// refuses: running their archive script on screen, then off screen while git removes them.
+    public private(set) var removals: [String: WorkspaceRemoval] = [:]
+    /// KIT-19: the workspaces off screen while git removes them. Their FileWatcher, pull request refreshes and git reads
+    /// have stopped, and what a read already in flight finds for them, an error included, is dropped.
+    public var removingWorkspaceIds: Set<String> {
+        Set(removals.compactMap { $0.value == .removing ? $0.key : nil })
+    }
+    /// Each removal in flight, so a second Remove does nothing and a quit waits for it (WSC-07).
+    @ObservationIgnored private var removalTasks: [String: Task<Void, Never>] = [:]
+    /// WSC-01: the one workspace being created or set up, in any repository. While it is set, no workspace can be
+    /// created (user decision, 2026-09-28: "no permitir crear un workspace si hay algún proceso corriendo"). Taken on
+    /// the same main-actor turn as `createWorkspace` or `retryCreation`, before any await, so a double click cannot start
+    /// two; released when its Setup ends, fails or is stopped, when there is no Setup, when its creation fails, or when
+    /// it is removed.
+    public private(set) var preparingWorkspaceId: String?
+    /// `preparingWorkspaceId`'s repository, known before its name is: its "+" shows the spinner (WSC-01).
+    public private(set) var preparingRepoId: String?
+    /// WSC-02, WSC-06: the workspaces whose worktree does not exist yet, by id: being created, or failed until Retry or
+    /// Remove. They are in `workspaces` too, in memory only: saved once git has made the worktree, and cleaned up by a
+    /// quit.
+    public private(set) var creations: [String: WorkspaceCreation] = [:]
+    /// WSC-02: the step each Setup tab runs, while it runs, for the row's "Setting up lima: …" tooltip.
+    public private(set) var setupSteps: [String: SetupSteps.Step] = [:]
+    /// What `creations` needs besides its state: the workspace and its conversation, in memory until the save, and the
+    /// attempt in flight with its stopper.
+    @ObservationIgnored private var pendingWorkspaces: [String: PendingWorkspace] = [:]
+
+    private struct PendingWorkspace {
+        var workspace: Workspace
+        /// The first conversation (CNV-02's agent), shown at once and saved with the workspace (WSC-03).
+        var conversation: ChatSessionRecord
+        /// The attempt in flight or last run: true once the worktree exists and the workspace is saved.
+        var attempt: Task<Bool, Never>?
+        /// Stops the attempt's git (WSC-06's Remove, a quit).
+        var stopper = ProcessStopper()
+        /// A failed attempt ran: the next one cleans up what it left first, keeping its branch for `create` to reuse.
+        var hasFailed = false
+    }
     public private(set) var loginEnvironment: [String: String] = [:] {
         didSet { loginBox.value = loginEnvironment }
     }
@@ -206,6 +299,11 @@ public final class AppModel {
     @ObservationIgnored private var fetchedPullRequestHeads: [String: String] = [:]
     /// Each repository's GitHub remote once looked up, for what cannot wait for the lookup (the compare URL).
     @ObservationIgnored private var knownGitHubRepositories: [String: GitHubRepository] = [:]
+    /// `GHL-01`: each repository's link state once resolved (Decision 3 of M2.9), by repository id, until Rocky quits or
+    /// the repository's account changes. Observed: the "+" menu's item reads it.
+    public private(set) var githubLinkStates: [String: GitHubLinkState] = [:]
+    /// The resolutions in flight, so concurrent callers share one probe.
+    @ObservationIgnored private var githubLinkResolutions: [String: Task<GitHubLinkState?, Never>] = [:]
     /// Shows a line in the window's toast (`GST-02`, `GST-03`, `ERR-01`); set by the app.
     @ObservationIgnored public var onToast: (@MainActor (String) -> Void)?
     /// The tab each workspace's right panel shows (`PNL-03`), in memory; none is Changes (`rightPanelTab(workspaceId:)`).
@@ -400,6 +498,15 @@ public final class AppModel {
     private var processes: [String: WorkspaceProcesses] = [:]
     /// `KBD-04`: each workspace's count of ⌃` presses (`requestTerminalToggle`). In memory only.
     public private(set) var terminalToggleRequests: [String: Int] = [:]
+    /// Decision 12 of M2.9: each workspace's latest request to show a panel tab (`revealTerminal`), until its panel has
+    /// acted on it (`terminalRevealHandled`).
+    public private(set) var terminalRevealRequests: [String: TerminalReveal] = [:]
+    @ObservationIgnored private var terminalRevealSerial = 0
+    /// TSK-01, TSK-02: what each workspace's Run button knows of its `tasks.json` and Run script, from its last look
+    /// (`lookForTasks`) or read (`readRunMenu`). In memory; never watched.
+    public private(set) var runMenus: [String: RunMenuState] = [:]
+    /// KIT-17: each workspace's task runner, made on its first task.
+    @ObservationIgnored private var taskRunners: [String: TaskRunner] = [:]
     /// CMD-08: the terminal each conversation runs a Claude Code terminal command in, keyed by conversation. At most
     /// one per conversation, kept only while Rocky runs. Observed: the conversation's view shows it.
     private var embeddedTerminals: [String: EmbeddedTerminal] = [:]
@@ -538,9 +645,11 @@ public final class AppModel {
         await prepareEnvironment(for: workspace)
         let current = self.workspace(id: workspace.id) ?? workspace
         let claudeInstance = repo(id: current.repoId)?.claudeConfigDir
+        // A workspace still being made has no folder yet (WSC-03): its repository's main clone lists the same models.
+        let folder = creations[current.id] == nil ? current.path : repo(id: current.repoId)?.path ?? current.path
         let chat: ChatSessionModel
         do {
-            let launch = try await resolveLaunch(agent, cwd: URL(fileURLWithPath: current.path), environment: environment(for: current))
+            let launch = try await resolveLaunch(agent, cwd: URL(fileURLWithPath: folder), environment: environment(for: current))
             chat = ChatSessionModel(agent: agent, launch: launch)
         } catch {
             modelProbeFailures[key] = "\(error)"
@@ -593,17 +702,66 @@ public final class AppModel {
         chats.contains { chatWorkspaceIds[$0.key] == workspaceId && $0.value.state == .running }
     }
 
-    /// The workspace's sidebar state (ROW-03, ROW-07): needs you › error › working › unread › pull request › merged ›
-    /// idle. The pull request comes from its stored state (PR-07), so every workspace shows one, also after a relaunch.
+    /// The workspace's sidebar state (ROW-03, ROW-07, WSC-02, WSC-07): removing › creating › couldn't create › needs you ›
+    /// error › working › setting up › unread › pull request › merged › idle. The pull request comes from its stored state
+    /// (PR-07), so every workspace shows one, also after a relaunch.
     public func status(workspaceId: String) -> WorkspaceStatus {
         let own = chats.filter { chatWorkspaceIds[$0.key] == workspaceId }.map(\.value)
+        let workspace = self.workspace(id: workspaceId)
+        let name = workspace?.name ?? ""
+        var creating: String?
+        var creationFailure: String?
+        switch creations[workspaceId] {
+        case .creating?: creating = WorkspaceStatus.creatingText(name: name, branch: workspace?.branch ?? "")
+        case .failed(let message)?: creationFailure = WorkspaceStatus.creationFailedText(name: name, message: message)
+        case nil: break
+        }
+        let settingUp = isSettingUp(workspaceId: workspaceId)
+            ? WorkspaceStatus.settingUpText(name: name, step: setupSteps[workspaceId])
+            : nil
         return WorkspaceStatus.resolve(
+            removing: removalHint(workspaceId: workspaceId),
+            creating: creating,
+            creationFailure: creationFailure,
             needsYou: own.contains { $0.pendingPermission != nil || $0.pendingQuestion != nil },
             failure: own.lazy.compactMap(\.failure).first ?? setupFailure(workspaceId: workspaceId),
             working: own.contains { $0.state == .running },
+            settingUp: settingUp,
             unread: unreadWorkspaceIds.contains(workspaceId),
             pullRequest: pullRequests.panels[workspaceId]?.stored
         )
+    }
+
+    /// WSC-05: the workspace's worktree exists and it still holds WSC-01's guard, from the save until its Setup ends.
+    private func isSettingUp(workspaceId: String) -> Bool {
+        preparingWorkspaceId == workspaceId && creations[workspaceId] == nil && workspace(id: workspaceId) != nil
+    }
+
+    /// WSC-01's tooltip on every repository's "+", and why ⌘N and New Workspace are off: "Wait for lima to be created"
+    /// while git runs, "Wait for lima to finish setting up" during Setup; nil while no workspace is being made.
+    public var newWorkspaceWait: String? {
+        guard let id = preparingWorkspaceId else { return nil }
+        guard let workspace = workspace(id: id) else { return "Wait for the new workspace to be created" }
+        return creations[id] == nil
+            ? "Wait for \(workspace.name) to finish setting up"
+            : "Wait for \(workspace.name) to be created"
+    }
+
+    /// WSC-07: "Running manila's archive script" while its archive script runs, then "Removing manila…" off screen: the
+    /// row's tooltip, and why the conversation's message box is off meanwhile; nil when it is not being removed.
+    public func removalHint(workspaceId: String) -> String? {
+        guard let removal = removals[workspaceId], let workspace = workspace(id: workspaceId) else { return nil }
+        return switch removal {
+        case .archiving: WorkspaceStatus.archivingText(name: workspace.name)
+        case .removing: WorkspaceStatus.removingText(name: workspace.name)
+        }
+    }
+
+    /// WSC-03: "Creating lima…", the reason Run, New terminal, the tasks, Open and Link GitHub are off while the
+    /// workspace's worktree does not exist (being created, or failed); nil once it does.
+    public func creatingHint(workspaceId: String) -> String? {
+        guard creations[workspaceId] != nil, let workspace = workspace(id: workspaceId) else { return nil }
+        return "Creating \(workspace.name)…"
     }
 
     /// The row's title: the task title, or the workspace name (drawn dimmer) until a conversation has one (ROW-02).
@@ -714,10 +872,12 @@ public final class AppModel {
             errorMessage = "\(error)"
             return
         }
-        // A running Claude chat keeps the instance it was started with; the next Start picks up the new one.
+        // A running Claude chat keeps the instance it was started with; the next Start picks up the new one. One still
+        // waiting for its worktree (WSC-03) has not started: it gets the new one when it does.
         let repoWorkspaceIds = Set((workspaces[repoId] ?? []).map(\.id))
         for (conversationId, workspaceId) in chatWorkspaceIds
-        where repoWorkspaceIds.contains(workspaceId) && chats[conversationId]?.agent == .claude {
+        where repoWorkspaceIds.contains(workspaceId) && chats[conversationId]?.agent == .claude
+            && chats[conversationId]?.isWaitingForWorkspace == false {
             await stopChat(conversationId: conversationId)
         }
         // The conversation on screen reopens at once with the new instance: its view only opens a conversation when
@@ -802,8 +962,13 @@ public final class AppModel {
         name.wholeMatch(of: /[A-Za-z_][A-Za-z0-9_]*/) != nil
     }
 
-    /// Forgets the repo in Rocky and deletes its secrets. Its folder and worktrees stay on disk.
+    /// Forgets the repo in Rocky and deletes its secrets. Its folder and worktrees stay on disk, except what a creation in
+    /// flight or failed had half made (WSC-06).
     public func removeRepo(id: String) async {
+        for (workspaceId, pending) in pendingWorkspaces where pending.workspace.repoId == id {
+            await removeFailedCreation(workspaceId: workspaceId)
+        }
+        if preparingRepoId == id, let preparingWorkspaceId { releasePreparation(workspaceId: preparingWorkspaceId) }
         for workspace in workspaces[id] ?? [] {
             await stopChats(workspaceId: workspace.id)
             await processes.removeValue(forKey: workspace.id)?.stopAll()
@@ -819,63 +984,326 @@ public final class AppModel {
         }
     }
 
+    // MARK: Creating a workspace (WSC-01…WSC-06, KIT-18)
+
+    /// WSC-01…WSC-04: a new workspace in the repository, on screen at once and made in the background.
+    /// 1. WSC-01's guard is taken before any await, so a second call, in any repository, does nothing until this one's
+    ///    Setup ends.
+    /// 2. The name (`WorkspaceNamer`), then the row, selected, with its first conversation (CNV-02's agent) and its
+    ///    message box, in memory: nothing is stored yet (WSC-03).
+    /// 3. git's part, without hooks (WSC-04), then the save with its port, the links, and Setup with the repository's
+    ///    post-checkout hook first (WSC-05). The conversation's agent starts once the worktree exists, if it is on screen.
+    /// A failure keeps the workspace as failed, with git's message (WSC-06). Returns once git's part has ended, with
+    /// Setup running, so callers can wait for the workspace; the row shows long before.
     public func createWorkspace(repoId: String) async {
-        guard let repo = repo(id: repoId) else { return }
+        guard preparingWorkspaceId == nil, let repo = repo(id: repoId) else { return }
+        let id = UUID().uuidString
+        preparingWorkspaceId = id
+        preparingRepoId = repoId
         let repoURL = URL(fileURLWithPath: repo.path)
         let service = WorktreeService(environment: loginEnvironment)
-        busyMessage = "Creating workspace…"
-        defer { busyMessage = nil }
-        do {
-            let created = try await Task.blocking {
-                let name = WorkspaceNamer.pick(isTaken: { service.isTaken(repo: repoURL, name: $0) })
-                return try service.create(repo: repoURL, name: name)
-            }.value
-            let port = try store.nextPort()
-            let workspace = Workspace(
-                repoId: repo.id,
-                name: created.name,
-                path: created.path.path,
-                branch: created.branch,
-                port: port,
-                baseRef: created.baseRef
-            )
-            try store.add(workspace)
-            reload()
-            selectedWorkspaceId = workspace.id
-            if created.fetchFailed {
-                errorMessage = "git fetch failed; \(created.name) was created from the last fetched \(created.baseRef)."
-            }
-            // rocky.json is read from the new worktree. When it is invalid, Setup does not run and the links come
-            // from the repo settings alone.
-            var config: ScriptConfig?
-            do {
-                config = try scriptConfig(for: workspace)
-            } catch {
-                errorMessage = "\(error)"
-            }
-            // Before Setup, which may read the environment files (a migration reading DATABASE_URL from .env).
-            await linkMainCloneFiles(
-                into: workspace,
-                repo: repo,
-                extraEntries: config?.links ?? ScriptConfigResolver.linkEntries(repo.linkedPaths)
-            )
-            // Setup runs once, right after the worktree exists (spec Section 3). A failure shows in its tab and
-            // leaves the workspace usable.
-            if let setup = config?.setup {
-                await prepareEnvironment(for: workspace)
-                processesCreatingIfNeeded(for: workspace.id).setup = startScript(setup, title: "Setup", in: workspace)
-            }
-        } catch {
-            errorMessage = "Could not create a workspace: \(error)"
+        // A failed creation of the repository keeps its name while it is shown, though git may have left nothing.
+        let reserved = Set(pendingWorkspaces.values.filter { $0.workspace.repoId == repoId }.map(\.workspace.name))
+        let name = await Task.blocking {
+            WorkspaceNamer.pick(isTaken: { reserved.contains($0) || service.isTaken(repo: repoURL, name: $0) })
+        }.value
+        // The repository was removed while the name was picked.
+        guard preparingWorkspaceId == id, self.repo(id: repoId) != nil else {
+            releasePreparation(workspaceId: id)
+            return
         }
+        let path = WorktreeService.worktreesRoot(for: repoURL).appendingPathComponent(name, isDirectory: true)
+        let workspace = Workspace(id: id, repoId: repoId, name: name, path: path.path, branch: WorktreeService.branchPrefix + name)
+        let agent = defaultAgent(repoId: repoId)
+        let conversation = ChatSessionRecord(workspaceId: id, agent: agent.rawValue)
+        pendingWorkspaces[id] = PendingWorkspace(workspace: workspace, conversation: conversation)
+        creations[id] = .creating
+        conversations[id] = [conversation]
+        selectedConversationIds[id] = conversation.id
+        register(pendingChat(conversation: conversation, agent: agent, workspaceId: id, repoId: repoId), conversationId: conversation.id, workspaceId: id)
+        reload()
+        selectedWorkspaceId = id
+        await runCreationAttempt(workspaceId: id)
+    }
+
+    /// WSC-06's Retry: WSC-04 again with the same name, after what the failed attempt left is cleaned up, reusing its
+    /// `rocky/<name>` (`WorktreeService.create`). It takes WSC-01's guard again, so it does nothing while another
+    /// workspace is being made. The conversation's agent starts again once the worktree exists, if it is on screen.
+    public func retryCreation(workspaceId: String) async {
+        guard preparingWorkspaceId == nil, case .failed? = creations[workspaceId], let pending = pendingWorkspaces[workspaceId] else {
+            return
+        }
+        preparingWorkspaceId = workspaceId
+        preparingRepoId = pending.workspace.repoId
+        if selectedWorkspaceId == workspaceId { startInBackground(chats[pending.conversation.id]) }
+        await runCreationAttempt(workspaceId: workspaceId)
+    }
+
+    /// WSC-02's Remove while creating, and WSC-06's Remove: the row goes at once, git stops, then the half-made folder,
+    /// `worktree prune` and the `rocky/<name>` the creation made go (`WorktreeService.cleanUp`, which keeps a branch with
+    /// commits of its own). No confirmation: nothing of the user's is in it. A workspace already saved is not this
+    /// one's: `removeWorkspace` removes it.
+    public func removeFailedCreation(workspaceId: String) async {
+        guard let pending = pendingWorkspaces.removeValue(forKey: workspaceId) else { return }
+        pending.stopper.stop()
+        creations[workspaceId] = nil
+        releasePreparation(workspaceId: workspaceId)
+        await stopChats(workspaceId: workspaceId)
+        conversations[workspaceId] = nil
+        selectedConversationIds[workspaceId] = nil
+        pendingDrafts[pending.conversation.id] = nil
+        if selectedWorkspaceId == workspaceId { selectedWorkspaceId = nil }
+        reload()
+        // Nothing is cleaned up while git may still be writing.
+        _ = await pending.attempt?.value
+        guard let repo = repo(id: pending.workspace.repoId) else { return }
+        let service = WorktreeService(environment: loginEnvironment)
+        let repoURL = URL(fileURLWithPath: repo.path)
+        let path = URL(fileURLWithPath: pending.workspace.path)
+        let branch = pending.workspace.branch
+        let failure = await Task.blocking { () -> String? in
+            do {
+                try service.cleanUp(repo: repoURL, path: path, branch: branch)
+                return nil
+            } catch {
+                return GitBranchService.branchError(error).description
+            }
+        }.value
+        if let failure { onToast?("Could not clean up \(pending.workspace.name): \(failure)") }
+    }
+
+    /// Starts an attempt of the workspace's creation and waits for it.
+    @discardableResult
+    private func runCreationAttempt(workspaceId: String) async -> Bool {
+        guard var pending = pendingWorkspaces[workspaceId] else { return false }
+        let stopper = ProcessStopper()
+        let cleansUpFirst = pending.hasFailed
+        let attempt = Task { await self.performCreationAttempt(workspaceId: workspaceId, stopper: stopper, cleansUpFirst: cleansUpFirst) }
+        pending.stopper = stopper
+        pending.attempt = attempt
+        pendingWorkspaces[workspaceId] = pending
+        creations[workspaceId] = .creating
+        return await attempt.value
+    }
+
+    /// WSC-04, then WSC-05: git makes the worktree, without hooks; the workspace is saved with its port and its
+    /// conversation, the main clone's files are linked, and Setup starts. False when git failed (the workspace stays as
+    /// failed) or the workspace was removed meanwhile (Remove cleans up).
+    private func performCreationAttempt(workspaceId: String, stopper: ProcessStopper, cleansUpFirst: Bool) async -> Bool {
+        // The login environment carries the SSH agent the fetch needs.
+        await launchEnvironment?.value
+        guard let pending = pendingWorkspaces[workspaceId], let repo = repo(id: pending.workspace.repoId) else { return false }
+        let service = WorktreeService(environment: loginEnvironment)
+        let repoURL = URL(fileURLWithPath: repo.path)
+        let name = pending.workspace.name
+        let path = URL(fileURLWithPath: pending.workspace.path)
+        let result = await Task.blocking { () -> Result<CreatedWorktree, Error> in
+            do {
+                // What a failed attempt left goes first; its branch stays, for `create` to reuse (WSC-06's Retry).
+                if cleansUpFirst { try service.cleanUp(repo: repoURL, path: path, branch: nil) }
+                return .success(try service.create(repo: repoURL, name: name, stopper: stopper))
+            } catch {
+                return .failure(error)
+            }
+        }.value
+        // Removed while git ran: Remove has stopped git and cleans up once this returns.
+        guard !stopper.isStopped, let current = pendingWorkspaces[workspaceId] else { return false }
+        let created: CreatedWorktree
+        switch result {
+        case .success(let made):
+            created = made
+        case .failure(let error):
+            failCreation(workspaceId: workspaceId, message: Self.gitMessage(error))
+            return false
+        }
+        var workspace = current.workspace
+        workspace.baseRef = created.baseRef
+        do {
+            workspace.port = try store.nextPort()
+            try store.add(workspace, conversation: current.conversation)
+        } catch {
+            failCreation(workspaceId: workspaceId, message: "\(error)")
+            return false
+        }
+        pendingWorkspaces[workspaceId] = nil
+        creations[workspaceId] = nil
+        reload()
+        reloadConversations(workspaceId: workspaceId)
+        // What the view asked for while the worktree did not exist is due now.
+        refreshShownChangesIfStale()
+        refreshShownFilesIfNeeded()
+        Task { await pullRequests.refresh(workspaceId: workspaceId, reason: .action) }
+        if created.fetchFailed {
+            onToast?("git fetch failed; \(created.name) was created from the last fetched \(created.baseRef).")
+        }
+        // rocky.json is read from the new worktree. When it is invalid, its Setup does not run and the links come from
+        // the repo settings alone; the repository's hook still runs, as git would have run it.
+        var config: ScriptConfig?
+        do {
+            config = try scriptConfig(for: workspace)
+        } catch {
+            errorMessage = "\(error)"
+        }
+        // Before Setup, which may read the environment files (a migration reading DATABASE_URL from .env).
+        await linkMainCloneFiles(
+            into: workspace,
+            repo: repo,
+            extraEntries: config?.links ?? ScriptConfigResolver.linkEntries(repo.linkedPaths)
+        )
+        await startSetup(workspaceId: workspaceId, script: config?.setup)
+        return true
+    }
+
+    /// WSC-06: the workspace stays, in memory, as failed with git's message; WSC-01's guard goes.
+    private func failCreation(workspaceId: String, message: String) {
+        pendingWorkspaces[workspaceId]?.hasFailed = true
+        creations[workspaceId] = .failed(message)
+        releasePreparation(workspaceId: workspaceId)
+    }
+
+    /// git's own words for WSC-06's card and WSC-07's "Couldn't remove manila": all of its message, which the card cuts at
+    /// 8 lines, with nothing that looks like a token.
+    static func gitMessage(_ error: Error) -> String {
+        guard let failure = error as? ProcessFailure else {
+            return GitHubAccounts.withoutTokenShapes("\(error)")
+        }
+        let message = failure.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        return GitHubAccounts.withoutTokenShapes(message.isEmpty ? "\(failure.command) exited \(failure.status)." : message)
+    }
+
+    /// WSC-05: the Setup tab, once the worktree exists and its files are linked: the repository's post-checkout hook,
+    /// where git would have run it, then `script`, in one tab that is selected and unfolded as it starts. Without
+    /// either there is no tab, and WSC-01's guard goes at once; with one, it goes when the tab's process ends.
+    private func startSetup(workspaceId: String, script: String?) async {
+        guard let workspace = workspace(id: workspaceId), let repo = repo(id: workspace.repoId) else {
+            releasePreparation(workspaceId: workspaceId)
+            return
+        }
+        let service = WorktreeService(environment: loginEnvironment)
+        let worktree = URL(fileURLWithPath: workspace.path)
+        let mainClone = URL(fileURLWithPath: repo.path)
+        let hook = await Task.blocking { () -> SetupSteps.Hook? in
+            guard let path = service.postCheckoutHook(worktree: worktree), let head = try? service.head(worktree: worktree) else {
+                return nil
+            }
+            return SetupSteps.Hook(path: path, label: SetupSteps.Hook.label(of: path, worktree: worktree, mainClone: mainClone), head: head)
+        }.value
+        let steps = SetupSteps(hook: hook, script: script)
+        guard !steps.isEmpty else {
+            releasePreparation(workspaceId: workspaceId)
+            return
+        }
+        setupSteps[workspaceId] = steps.steps.first
+        await prepareEnvironment(for: workspace)
+        // Removed while the hook was looked for.
+        guard let current = self.workspace(id: workspaceId), creations[workspaceId] == nil else {
+            setupSteps[workspaceId] = nil
+            releasePreparation(workspaceId: workspaceId)
+            return
+        }
+        let session = startScript(steps.command, title: "Setup", in: current)
+        processesCreatingIfNeeded(for: workspaceId).setup = session
+        watchSetup(session, steps: steps, workspaceId: workspaceId)
+        revealTerminal(workspaceId: workspaceId, sessionId: session.id)
+    }
+
+    /// WSC-02's step for the row's tooltip, from the Setup script's step line in the tab's output, and WSC-01's guard
+    /// released once the tab's process ends, however it ends.
+    private func watchSetup(_ session: PTYSession, steps: SetupSteps, workspaceId: String) {
+        let viewer = UUID()
+        if steps.steps.count > 1, let line = steps.scriptLine,
+           let watch = try? SetupStepWatch(line: line, onLine: { [weak self] in self?.setupSteps[workspaceId] = .script }) {
+            _ = session.attach(viewer) { [weak session] bytes in
+                if watch.feed(bytes) { session?.detach(viewer) }
+            }
+        }
+        Task {
+            _ = await session.waitForExit()
+            session.detach(viewer)
+            setupSteps[workspaceId] = nil
+            releasePreparation(workspaceId: workspaceId)
+        }
+    }
+
+    /// WSC-01's way out of a Setup that hangs: its tab closes, and its process stops if it still runs, which releases
+    /// the guard. The one script tab that closes (TERM-02's Run and Archive keep theirs).
+    public func closeSetup(workspaceId: String) async {
+        guard let own = processes[workspaceId], let setup = own.setup else { return }
+        await setup.stop()
+        own.setup = nil
+        setupSteps[workspaceId] = nil
+        releasePreparation(workspaceId: workspaceId)
+    }
+
+    /// WSC-01: the next workspace can be made, once `workspaceId` no longer holds the guard.
+    private func releasePreparation(workspaceId: String) {
+        guard preparingWorkspaceId == workspaceId else { return }
+        preparingWorkspaceId = nil
+        preparingRepoId = nil
+    }
+
+    /// WSC-03: the chat of a conversation made with its workspace, before the worktree exists. Its launch waits for the
+    /// creation's attempt (`launchOnceCreated`); the rest is `buildChat`'s.
+    private func pendingChat(conversation: ChatSessionRecord, agent: AgentKind, workspaceId: String, repoId: String) -> ChatSessionModel {
+        let conversationId = conversation.id
+        let callbacks = chatCallbacks(conversationId: conversationId, workspaceId: workspaceId)
+        let chat = ChatSessionModel(
+            agent: agent,
+            launchWhenReady: { [weak self] in
+                try await self?.launchOnceCreated(workspaceId: workspaceId, conversationId: conversationId, agent: agent)
+            },
+            onPersist: callbacks.persist,
+            onSessionReady: callbacks.sessionReady
+        )
+        configure(chat, workspaceId: workspaceId, repoId: repoId, agent: agent)
+        return chat
+    }
+
+    /// The launch of a conversation made with its workspace, once the attempt in flight has made the worktree: the saved
+    /// workspace's environment, with its port and base, as `buildChat` resolves one. nil when the attempt failed or the
+    /// workspace was removed; Retry starts the chat again.
+    private func launchOnceCreated(workspaceId: String, conversationId: String, agent: AgentKind) async throws -> AgentLaunch? {
+        if let pending = pendingWorkspaces[workspaceId] {
+            guard let attempt = pending.attempt, await attempt.value else { return nil }
+        }
+        guard creations[workspaceId] == nil, let workspace = workspace(id: workspaceId) else { return nil }
+        await launchEnvironment?.value
+        await prepareEnvironment(for: workspace)
+        let current = self.workspace(id: workspaceId) ?? workspace
+        let launch = try await resolveLaunch(agent, cwd: URL(fileURLWithPath: current.path), environment: environment(for: current))
+        // AGM-04's catalog under the Claude instance the agent starts with now, which the setting may have changed
+        // while the worktree was made.
+        if let chat = chats[conversationId] { configure(chat, workspaceId: workspaceId, repoId: current.repoId, agent: agent) }
+        return launch
+    }
+
+    /// AGM-02 before the worktree exists (WSC-03): the conversation is in memory only, so its agent changes there, with
+    /// a new chat that waits for the worktree as the old one did. A conversation with a message queued keeps its agent:
+    /// AGM-03's new conversation needs the saved workspace.
+    private func switchPendingAgent(workspaceId: String, to agent: AgentKind, model: String?, draft: MessageHistory.Entry?) async -> ModelPick? {
+        guard var pending = pendingWorkspaces[workspaceId], let old = chats[pending.conversation.id], old.queue.isEmpty else {
+            return nil
+        }
+        let conversationId = pending.conversation.id
+        pending.conversation.agent = agent.rawValue
+        pendingWorkspaces[workspaceId] = pending
+        conversations[workspaceId] = [pending.conversation]
+        let fresh = pendingChat(conversation: pending.conversation, agent: agent, workspaceId: workspaceId, repoId: pending.workspace.repoId)
+        fresh.pendingModel = modelChoice(model, agent: agent, workspaceId: workspaceId, chat: nil)
+        if let draft, !draft.isEmpty { pendingDrafts[conversationId] = draft }
+        let wasStarted = old.state != .idle
+        register(fresh, conversationId: conversationId, workspaceId: workspaceId)
+        await old.stop()
+        if wasStarted { startInBackground(fresh) }
+        return .switchedInPlace
     }
 
     /// Symlinks the main clone's environment files and `extraEntries` into a new workspace (see `WorktreeLinker`).
     /// A problem is added to `errorMessage` and never stops the workspace or its Setup.
     ///
-    /// `git worktree add` has already run the repo's post-checkout hook, and a repo whose hook runs its own
-    /// setup-worktree script (veritas, celes-platform) has these links by now. The linker leaves every existing
-    /// destination alone, so either one may run first.
+    /// git runs no hook while it makes the worktree (WSC-04): a repo whose post-checkout hook runs its own
+    /// setup-worktree script (veritas, celes-platform) runs it after this, from Setup. The linker leaves every existing
+    /// destination alone, and those scripts leave the links alone, so either one may run first.
     private func linkMainCloneFiles(into workspace: Workspace, repo: Repo, extraEntries: [String]) async {
         let linker = WorktreeLinker(environment: loginEnvironment)
         let mainClone = URL(fileURLWithPath: repo.path)
@@ -899,74 +1327,151 @@ public final class AppModel {
         return "Rocky did not link \(list) into \(workspaceName): linked files must be paths inside the main folder."
     }
 
-    /// Stops the workspace's agent, scripts and terminals, runs its archive script, then removes the worktree
-    /// folder and keeps its branch. A failing archive script deletes nothing and sets `archiveFailure`;
-    /// `skipArchive` is the user's "Remove Anyway". Git still refuses while there are uncommitted changes, unless
-    /// `stashingChanges` (PR-06's "Archive anyway") puts them in a git stash of the repository first.
+    /// WSC-07, KIT-19: removes a saved workspace in WSC-07's order, and returns once it has gone or come back:
+    /// 1. rocky.json is read first, so one that cannot be read stops nothing and sets `archiveFailure`;
+    /// 2. with an archive script (`skipArchive` is the user's "Remove Anyway"), its agents stop where they are, their
+    ///    chats kept so the conversation keeps its transcript, then its tasks, scripts and terminals, and the script runs
+    ///    visibly: its Archive tab selected and unfolded, the row spinning, the message box off. A failing script
+    ///    removes nothing and sets `archiveFailure`;
+    /// 3. off screen at once: the selection moves on (`selectionAfterRemoving`), and its FileWatcher, pull request
+    ///    refreshes and git reads stop before any git runs. Without an archive script its agents and processes stop
+    ///    only now: with nothing to show, the workspace does not wait on screen for them;
+    /// 4. in the background, the row spinning with "Removing manila…": the stash when `stashingChanges` (PR-06's
+    ///    "Archive anyway"), `git worktree remove` and the branch rule (`WorktreeService.remove`), then the store. The
+    ///    row then leaves.
+    /// git's refusal (uncommitted changes, a locked worktree) brings the workspace back as it was, not selected, and
+    /// sets `removalFailure`. A second call while one runs does nothing, and a quit waits for it (`stopAllProcesses`).
     public func removeWorkspace(id: String, skipArchive: Bool = false, stashingChanges: Bool = false) async {
+        // WSC-06: one whose worktree does not exist yet has nothing to archive or keep.
+        if pendingWorkspaces[id] != nil {
+            await removeFailedCreation(workspaceId: id)
+            return
+        }
+        guard removalTasks[id] == nil, workspace(id: id) != nil else { return }
+        let removal = Task { await self.performRemoval(id: id, skipArchive: skipArchive, stashingChanges: stashingChanges) }
+        removalTasks[id] = removal
+        await removal.value
+        removalTasks[id] = nil
+    }
+
+    private func performRemoval(id: String, skipArchive: Bool, stashingChanges: Bool) async {
         guard let workspace = self.workspace(id: id), let repo = repo(id: workspace.repoId) else { return }
         archiveFailure = nil
-        await stopChats(workspaceId: id)
-        await processes[id]?.stopAll()
+        var archive: String?
         if !skipArchive {
-            let archive: String?
             do {
                 archive = try scriptConfig(for: workspace).archive
             } catch {
+                // Read before anything stops: a rocky.json that cannot be read leaves the workspace as it was.
                 archiveFailure = ArchiveFailure(workspaceId: id, workspaceName: workspace.name, message: "\(error)")
                 return
             }
-            if let archive {
-                await prepareEnvironment(for: workspace)
-                busyMessage = "Running the archive script of \(workspace.name)…"
-                let session = startScript(archive, title: "Archive", in: workspace)
-                processesCreatingIfNeeded(for: id).archive = session
-                let result = await session.waitForExit()
-                busyMessage = nil
-                guard result == .exited(0) else {
-                    archiveFailure = ArchiveFailure(workspaceId: id, workspaceName: workspace.name, message: Self.archiveMessage(result))
-                    return
-                }
+        }
+        if let archive {
+            removals[id] = .archiving
+            await stopAgents(workspaceId: id)
+            await stopProcesses(workspaceId: id)
+            await prepareEnvironment(for: workspace)
+            let session = startScript(archive, title: "Archive", in: workspace)
+            processesCreatingIfNeeded(for: id).archive = session
+            revealTerminal(workspaceId: id, sessionId: session.id)
+            let result = await session.waitForExit()
+            guard result == .exited(0) else {
+                removals[id] = nil
+                archiveFailure = ArchiveFailure(workspaceId: id, workspaceName: workspace.name, message: Self.archiveMessage(result))
+                return
             }
         }
+        let next = selectionAfterRemoving(id)
+        removals[id] = .removing
+        if selectedWorkspaceId == id { selectedWorkspaceId = next }
+        // Its stream stops here, before git deletes a file; the monitor and the git reads skip it from now on.
+        syncWatchers()
+        await stopChats(workspaceId: id)
+        await stopProcesses(workspaceId: id)
         let service = WorktreeService(environment: loginEnvironment)
         let branchService = GitBranchService(environment: loginEnvironment)
         let repoURL = URL(fileURLWithPath: repo.path)
         let worktreeURL = URL(fileURLWithPath: workspace.path)
+        // The record's branch: its own `rocky/<name>`, or one GHL-05 switched it to, which the rule keeps.
+        let branch = self.workspace(id: id)?.branch ?? workspace.branch
         let stashMessage = stashingChanges ? "Rocky archived \(workspace.name)" : nil
-        do {
-            try await Task.blocking {
+        let removed = await Task.blocking { () -> Result<BranchOutcome, Error> in
+            do {
                 if let stashMessage { try branchService.stashAll(worktree: worktreeURL, message: stashMessage) }
-                try service.remove(repo: repoURL, worktree: worktreeURL)
-            }.value
-            try store.deleteWorkspace(id: id)
-            processes.removeValue(forKey: id)
-            fetchedPullRequestHeads[id] = nil
-            rightPanelTabs[id] = nil
-            diffTabs[id] = nil
-            selectedDiffTabs[id] = nil
-            diffTabModes[id] = nil
-            diffScrollRequests[id] = nil
-            handledLineScrolls[id] = nil
-            commentDrafts[id] = nil
-            editors[id] = nil
-            editorBases[id] = nil
-            previewTabs[id] = nil
-            revealedPaths[id] = nil
-            recentFiles[id] = nil
-            fileTrees[id] = nil
-            staleFileTrees[id] = nil
-            mergeMethodPicks[id] = nil
-            mergeConfirmations[id] = nil
-            mergeErrors[id] = nil
-            if selectedWorkspaceId == id { selectedWorkspaceId = nil }
+                return .success(try service.remove(repo: repoURL, worktree: worktreeURL, branch: branch))
+            } catch {
+                return .failure(error)
+            }
+        }.value
+        let outcome: BranchOutcome
+        switch removed {
+        case .success(let branchOutcome):
+            outcome = branchOutcome
+        case .failure(let error):
+            // git refused, so the worktree is as it was: the workspace comes back, not selected, and is read again.
+            removals[id] = nil
             reload()
-            // AGT-03's logs live outside the worktree, so they go with the workspace.
-            let ciLogs = CILogs.folder(for: id, in: paths.ciLogs)
-            await Task.blocking { _ = try? FileManager.default.removeItem(at: ciLogs) }.value
-        } catch {
-            errorMessage = "Could not remove \(workspace.name): \(error)"
+            removalFailure = RemovalFailure(workspaceId: id, workspaceName: workspace.name, message: Self.gitMessage(error))
+            return
         }
+        do {
+            try store.deleteWorkspace(id: id)
+        } catch {
+            removals[id] = nil
+            reload()
+            errorMessage = "Could not remove \(workspace.name): \(error)"
+            return
+        }
+        processes.removeValue(forKey: id)
+        taskRunners[id] = nil
+        runMenus[id] = nil
+        terminalRevealRequests[id] = nil
+        fetchedPullRequestHeads[id] = nil
+        rightPanelTabs[id] = nil
+        diffTabs[id] = nil
+        selectedDiffTabs[id] = nil
+        diffTabModes[id] = nil
+        diffScrollRequests[id] = nil
+        forgetWatchedState(workspaceId: id)
+        mergeMethodPicks[id] = nil
+        mergeConfirmations[id] = nil
+        mergeErrors[id] = nil
+        setupSteps[id] = nil
+        conversations[id] = nil
+        selectedConversationIds[id] = nil
+        unreadWorkspaceIds.remove(id)
+        // WSC-01: removed before its Setup began, so no Setup end will release the guard.
+        releasePreparation(workspaceId: id)
+        if selectedWorkspaceId == id { selectedWorkspaceId = selectionAfterRemoving(id) }
+        // The row leaves in the same update as its state, so the sidebar plays its exit motion.
+        removals[id] = nil
+        reload()
+        if case .notDeleted(let reason) = outcome {
+            onToast?("Removed \(workspace.name), but git kept \(branch): \(reason)")
+        }
+        // AGT-03's logs live outside the worktree, so they go with the workspace.
+        let ciLogs = CILogs.folder(for: id, in: paths.ciLogs)
+        await Task.blocking { _ = try? FileManager.default.removeItem(at: ciLogs) }.value
+    }
+
+    /// WSC-07: where the selection goes when `workspaceId` leaves the screen: the workspace below it in the sidebar,
+    /// else the one above, else none (the empty state). The sidebar's order (`visibleWorkspaceIds`) when it lists the
+    /// workspace, else every repository's workspaces in the model's order; workspaces already off screen are skipped.
+    func selectionAfterRemoving(_ workspaceId: String) -> String? {
+        let all = repos.flatMap { workspaces[$0.id] ?? [] }.map(\.id)
+        let order = (visibleWorkspaceIds.contains(workspaceId) ? visibleWorkspaceIds : all).filter { id in
+            id == workspaceId || (removals[id] != .removing && workspace(id: id) != nil)
+        }
+        guard let index = order.firstIndex(of: workspaceId) else { return nil }
+        if index + 1 < order.count { return order[index + 1] }
+        return index > 0 ? order[index - 1] : nil
+    }
+
+    /// WSC-07's copy: the sentence the Remove confirmation and the merged pull request's Archive message end with.
+    nonisolated public static func branchSentence(branch: String) -> String {
+        guard branch.hasPrefix(WorktreeService.branchPrefix) else { return "The branch \(branch) is kept." }
+        return "The branch \(branch) is deleted if all its commits are also on another branch, the remote or a tag; otherwise it is kept."
     }
 
     static func archiveMessage(_ state: PTYState) -> String {
@@ -983,6 +1488,12 @@ public final class AppModel {
     /// default agent, CNV-02). Its agent starts in the background, so the model list is there and the first message
     /// does not wait; the other tabs' agents start when their tab is shown (user decision, 2026-09-23).
     public func showConversations(workspace: Workspace) async {
+        // WSC-03: its one conversation, in memory with its chat since the call; its agent starts once the worktree exists.
+        if case .creating? = creations[workspace.id] {
+            startInBackground(existingChat(workspaceId: workspace.id))
+            return
+        }
+        if creations[workspace.id] != nil { return }
         reloadConversations(workspaceId: workspace.id)
         let open = conversations[workspace.id] ?? []
         if let id = selectedConversationIds[workspace.id], open.contains(where: { $0.id == id }) {
@@ -1035,6 +1546,8 @@ public final class AppModel {
         model: String? = nil,
         draft: MessageHistory.Entry? = nil
     ) async -> ChatSessionModel? {
+        // WSC-03: one conversation until the worktree exists; a second could not be stored before the workspace is.
+        guard creations[workspace.id] == nil else { return nil }
         do {
             let record = ChatSessionRecord(workspaceId: workspace.id, agent: agent.rawValue)
             try store.add(record)
@@ -1079,6 +1592,9 @@ public final class AppModel {
                 chat.pendingModel = modelChoice(model, agent: agent, workspaceId: workspaceId, chat: chat)
             }
             return .setModel
+        }
+        if let workspaceId = chatWorkspaceIds[conversationId], pendingWorkspaces[workspaceId] != nil {
+            return await switchPendingAgent(workspaceId: workspaceId, to: agent, model: model, draft: draft)
         }
         guard let record = try? store.session(id: conversationId), let workspace = workspace(id: record.workspaceId) else {
             return nil
@@ -1176,6 +1692,8 @@ public final class AppModel {
 
     /// Closes a tab: stops its agent and hides it. The conversation stays in the store.
     public func closeConversation(workspace: Workspace, conversationId: String) async {
+        // WSC-03: the one conversation of a workspace being made stays, as its tab shows no ×.
+        guard creations[workspace.id] == nil else { return }
         agentSwitches[conversationId] = nil
         pendingDrafts[conversationId] = nil
         await stopChat(conversationId: conversationId)
@@ -1274,47 +1792,81 @@ public final class AppModel {
         let environment = self.environment(for: current)
         let launch = try await resolveLaunch(agent, cwd: URL(fileURLWithPath: current.path), environment: environment)
         let history = try store.messages(sessionId: record.id).map(ChatItem.init(record:))
-        let store = self.store
-        let conversationId = record.id
-        let workspaceId = workspace.id
+        let callbacks = chatCallbacks(conversationId: record.id, workspaceId: workspace.id)
         let chat = ChatSessionModel(
             agent: agent,
             launch: launch,
             history: history,
             resumeSessionId: record.acpSessionId,
-            onPersist: { [weak self] item in
+            onPersist: callbacks.persist,
+            onSessionReady: callbacks.sessionReady
+        )
+        configure(chat, workspaceId: workspace.id, repoId: current.repoId, agent: agent)
+        return chat
+    }
+
+    /// A chat's transcript and session id going to the store, and its first message naming the conversation.
+    private func chatCallbacks(conversationId: String, workspaceId: String) -> (
+        persist: @MainActor (ChatItem) -> Void,
+        sessionReady: @MainActor (String) -> Void
+    ) {
+        let store = self.store
+        return (
+            persist: { [weak self] item in
                 try? store.upsert(ChatMessageRecord(item: item, sessionId: conversationId))
-                if item.kind == .user { self?.titleIfNeeded(conversationId: conversationId, workspaceId: workspaceId, from: item.text) }
+                if item.kind == .user {
+                    self?.titleIfNeeded(conversationId: conversationId, workspaceId: workspaceId, from: item.text, attachments: item.attachments)
+                }
             },
-            onSessionReady: { sessionId in
+            sessionReady: { sessionId in
                 // Re-read: the stored record may have gained a title since this chat was made.
                 guard var stored = try? store.session(id: conversationId), stored.acpSessionId != sessionId else { return }
                 stored.acpSessionId = sessionId
                 try? store.update(stored)
             }
         )
+    }
+
+    /// The model's hooks on a new chat: attention, the command lists, the model catalog and the toast.
+    private func configure(_ chat: ChatSessionModel, workspaceId: String, repoId: String, agent: AgentKind) {
         chat.onAttention = { [weak self] kind in self?.attention(kind, workspaceId: workspaceId) }
-        let commandKey = CommandListKey(repoId: current.repoId, agent: agent)
+        let commandKey = CommandListKey(repoId: repoId, agent: agent)
         chat.onCommands = { [weak self] commands in self?.lastCommands[commandKey] = commands }
         // AGM-04: under the Claude instance the chat started with, which a later change of the setting does not reach.
-        let claudeInstance = repo(id: current.repoId)?.claudeConfigDir
+        let claudeInstance = repo(id: repoId)?.claudeConfigDir
         chat.onModelOption = { [weak self] option in
             self?.modelCatalog.record(option, agent: agent, claudeInstance: claudeInstance)
         }
         chat.onToast = { [weak self] text in self?.onToast?(text) }
-        return chat
     }
 
-    /// The conversation's first message that is not a command names it (TITLE-01); a command leaves it untitled.
-    private func titleIfNeeded(conversationId: String, workspaceId: String, from text: String) {
-        guard var record = try? store.session(id: conversationId), record.title == nil,
-              let title = Self.title(from: text, commands: knownCommands(for: record)) else { return }
+    /// The conversation's first message that is not a command names it (TITLE-01); a command leaves it untitled, and so
+    /// does a message with no words and no issue (M2.9 Decision 6). A message carrying a linked issue is named by it
+    /// (GHL-06): its file's first line, read now, off the main actor, while the file exists.
+    private func titleIfNeeded(conversationId: String, workspaceId: String, from text: String, attachments: [String]) {
+        guard let record = try? store.session(id: conversationId), record.title == nil else { return }
+        let commands = knownCommands(for: record)
+        guard LinkAttachments.firstIssue(in: attachments) != nil else {
+            setTitleIfNeeded(Self.title(from: text, commands: commands), conversationId: conversationId, workspaceId: workspaceId)
+            return
+        }
+        Task {
+            let issue = await Task.blocking { LinkAttachments.issueTitle(attachments: attachments) }.value
+            setTitleIfNeeded(Self.title(from: text, issueTitle: issue, commands: commands), conversationId: conversationId, workspaceId: workspaceId)
+        }
+    }
+
+    /// Stores `title` unless the conversation got one meanwhile.
+    private func setTitleIfNeeded(_ title: String?, conversationId: String, workspaceId: String) {
+        guard let title, var record = try? store.session(id: conversationId), record.title == nil else { return }
         record.title = title
         try? store.update(record)
         reloadConversations(workspaceId: workspaceId)
     }
 
     private func reloadConversations(workspaceId: String) {
+        // WSC-03: in memory until the workspace is saved with it.
+        guard pendingWorkspaces[workspaceId] == nil else { return }
         var open = (try? store.openConversations(workspaceId: workspaceId)) ?? []
         // Conversations saved before titles existed get one from their first message that is not a command.
         for index in open.indices where open[index].title == nil {
@@ -1339,12 +1891,18 @@ public final class AppModel {
 
     /// TITLE-01's rule. While the conversation's list is unknown (at launch, before any agent has started), a message
     /// that starts with "/name" counts as a command: a wrong title stays for good, a missing one comes with the next
-    /// message.
-    nonisolated static func title(from message: String, commands: [SlashCommand]?) -> String? {
-        guard let commands else {
-            return SlashCommand.leadingName(in: message) == nil ? ChatSessionRecord.title(from: message) : nil
+    /// message. GHL-06: `issueTitle`, "#4573 Un filtro…" from the message's linked issue, names it in place of its text,
+    /// cut to 40 characters as any title. nil for a command, and for a message with neither words nor an issue, which
+    /// used to store an empty title (M2.9 Decision 6).
+    nonisolated static func title(from message: String, issueTitle: String? = nil, commands: [SlashCommand]?) -> String? {
+        let isCommand = if let commands {
+            SlashCommand.invoked(by: message, among: commands) != nil
+        } else {
+            SlashCommand.leadingName(in: message) != nil
         }
-        return ChatSessionRecord.title(from: message, commands: commands)
+        guard !isCommand else { return nil }
+        let title = ChatSessionRecord.title(from: issueTitle ?? message)
+        return title.isEmpty ? nil : title
     }
 
     /// Stops the conversation's agent and its embedded terminal (closing the tab, changing the Claude instance).
@@ -1364,6 +1922,23 @@ public final class AppModel {
         }
     }
 
+    /// WSC-07: the workspace's agents and embedded terminals stop, and their chats stay, stopped, so its conversation
+    /// keeps its transcript on screen while the archive script runs.
+    private func stopAgents(workspaceId: String) async {
+        for (conversationId, owner) in chatWorkspaceIds where owner == workspaceId {
+            await chats[conversationId]?.stop()
+        }
+        for (conversationId, terminal) in embeddedTerminals where terminal.workspaceId == workspaceId {
+            await closeEmbeddedTerminal(conversationId: conversationId)
+        }
+    }
+
+    /// The workspace's tasks, scripts and terminals (TSK-06: its tasks' chains start nothing more).
+    private func stopProcesses(workspaceId: String) async {
+        await taskRunners[workspaceId]?.stopAll()
+        await processes[workspaceId]?.stopAll()
+    }
+
     /// Stops every chat's agent process.
     public func stopAllAgents() async {
         for chat in chats.values { await chat.stop() }
@@ -1371,19 +1946,34 @@ public final class AppModel {
         chatWorkspaceIds.removeAll()
     }
 
-    /// Called before quitting, so no agent, terminal or script outlives Rocky.
+    /// Called before quitting, so no agent, terminal or script outlives Rocky, and no creation leaves a half-made
+    /// worktree: git stops and WSC-06's cleanup runs (WSC-03). A removal under way ends first, so no half-removed
+    /// worktree stays in the store (WSC-07); one still running its archive script stops with it and removes nothing.
     public func stopAllProcesses() async {
+        for workspaceId in Array(pendingWorkspaces.keys) {
+            await removeFailedCreation(workspaceId: workspaceId)
+        }
         await stopAllAgents()
         let all = Array(processes.values)
+        let runners = Array(taskRunners.values)
         let embedded = embeddedTerminals.values.map(\.session)
         embeddedTerminals.removeAll()
         await withTaskGroup(of: Void.self) { group in
+            // TSK-06: a chain still starting starts nothing more.
+            for runner in runners {
+                group.addTask { await runner.stopAll() }
+            }
             for workspaceProcesses in all {
                 group.addTask { await workspaceProcesses.stopAll() }
             }
             for session in embedded {
                 group.addTask { await session.stop() }
             }
+        }
+        while let removal = removalTasks.values.first {
+            await removal.value
+            // Its own caller may not have run yet to take it out.
+            removalTasks = removalTasks.filter { $0.value != removal }
         }
     }
 
@@ -1404,7 +1994,8 @@ public final class AppModel {
     public func openEmbeddedTerminal(conversationId: String, command: TerminalOnlyCommand) async -> PTYSession? {
         let workspaceId = chatWorkspaceIds[conversationId] ?? (try? store.session(id: conversationId))?.workspaceId
         await launchEnvironment?.value
-        guard let workspaceId, let workspace = self.workspace(id: workspaceId) else { return nil }
+        // WSC-03: no folder to run it in yet.
+        guard let workspaceId, let workspace = self.workspace(id: workspaceId), creations[workspaceId] == nil else { return nil }
         guard let claude = AgentLauncher.installedClaudeCodeBinary(prefix: paths.adapterPrefix) else {
             errorMessage = "Rocky's Claude Code is not installed yet. Start a Claude Code conversation, then run \(command.label) again."
             return nil
@@ -1447,9 +2038,11 @@ public final class AppModel {
         terminalToggleRequests[workspaceId, default: 0] += 1
     }
 
-    /// Starts the workspace's run script. In `nonconcurrent` mode it first stops every other workspace's run.
+    /// Starts the workspace's run script. In `nonconcurrent` mode it first stops every other workspace's run and tasks
+    /// (`stopRunsElsewhere`).
     public func startRun(workspaceId: String) async {
-        guard let workspace = self.workspace(id: workspaceId) else { return }
+        // WSC-03: Run waits for the worktree.
+        guard let workspace = self.workspace(id: workspaceId), creations[workspaceId] == nil else { return }
         let config: ScriptConfig
         do {
             config = try scriptConfig(for: workspace)
@@ -1465,11 +2058,21 @@ public final class AppModel {
         let own = processesCreatingIfNeeded(for: workspaceId)
         if own.run?.state.isRunning == true { return }
         if config.runMode == .nonconcurrent {
-            for (id, other) in processes where id != workspaceId {
-                if let session = other.run, session.state.isRunning { await session.stop() }
-            }
+            await stopRunsElsewhere(than: workspaceId)
         }
         own.run = startScript(script, title: "Run", in: workspace)
+    }
+
+    /// `nonconcurrent` mode (TSK-03, Decision 10 of M2.9): before a workspace's Run script or task starts, the Run
+    /// scripts and the tasks of every other workspace stop, in every repository, since tasks bind fixed ports as run
+    /// scripts do (8000 and 6379 in celes-platform). One rule for both.
+    private func stopRunsElsewhere(than workspaceId: String) async {
+        for (id, other) in processes where id != workspaceId {
+            if let session = other.run, session.state.isRunning { await session.stop() }
+        }
+        for (id, runner) in taskRunners where id != workspaceId {
+            await runner.stopAll()
+        }
     }
 
     public func stopRun(workspaceId: String) async {
@@ -1480,7 +2083,8 @@ public final class AppModel {
     /// repository account's token the first time (ENV-01).
     @discardableResult
     public func openTerminal(workspaceId: String) async -> PTYSession? {
-        guard let found = self.workspace(id: workspaceId) else { return nil }
+        // WSC-03: New terminal waits for the worktree.
+        guard let found = self.workspace(id: workspaceId), creations[workspaceId] == nil else { return nil }
         await prepareEnvironment(for: found)
         // Re-read: the workspace may have been removed or renamed meanwhile.
         guard let workspace = self.workspace(id: workspaceId) else { return nil }
@@ -1509,6 +2113,148 @@ public final class AppModel {
         guard let own = processes[workspaceId], let session = own.terminals.first(where: { $0.id == sessionId }) else { return }
         await session.stop()
         own.terminals.removeAll { $0.id == sessionId }
+    }
+
+    /// Decision 12 of M2.9: asks the workspace's panel to select `sessionId`'s tab and unfold, and with `focus` to give
+    /// that terminal the keyboard.
+    public func revealTerminal(workspaceId: String, sessionId: UUID, focus: Bool = false) {
+        terminalRevealSerial += 1
+        terminalRevealRequests[workspaceId] = TerminalReveal(sessionId: sessionId, focus: focus, serial: terminalRevealSerial)
+    }
+
+    /// The panel acted on the request with `serial`; a newer one stays.
+    public func terminalRevealHandled(workspaceId: String, serial: Int) {
+        if terminalRevealRequests[workspaceId]?.serial == serial { terminalRevealRequests[workspaceId] = nil }
+    }
+
+    // MARK: VS Code tasks (TSK-01…TSK-07, KIT-16, KIT-17, M2.9)
+
+    /// TSK-02: whether the workspace's repository has a `.vscode/tasks.json`, in the worktree or the main clone, looked
+    /// up when its panel appears: one look at two paths, nothing read, so Run can be the split button. A file already
+    /// read keeps what was read until the next read.
+    public func lookForTasks(workspaceId: String) async {
+        guard let workspace = workspace(id: workspaceId), let repo = repo(id: workspace.repoId) else { return }
+        let worktree = URL(fileURLWithPath: workspace.path), clone = URL(fileURLWithPath: repo.path)
+        let exists = await Task.blocking { VSCodeTasks.fileURL(worktree: worktree, mainClone: clone) != nil }.value
+        var state = runMenus[workspaceId] ?? RunMenuState(tasks: .missing)
+        if !exists {
+            state.tasks = .missing
+        } else if state.tasks == .missing {
+            state.tasks = .unread
+        }
+        runMenus[workspaceId] = state
+    }
+
+    /// TSK-01: reads the workspace's `tasks.json` and its Run script, each time the Run menu opens or its main part is
+    /// clicked. Never watched, never on a timer.
+    @discardableResult
+    public func readRunMenu(workspaceId: String) async -> RunMenuState? {
+        guard let workspace = workspace(id: workspaceId), let repo = repo(id: workspace.repoId) else { return nil }
+        let worktree = URL(fileURLWithPath: workspace.path), clone = URL(fileURLWithPath: repo.path)
+        let (tasks, runScript, failure) = await Task.blocking { () -> (RunMenuState.Tasks, String?, String?) in
+            let tasks = VSCodeTasks.read(worktree: worktree, mainClone: clone)
+            do {
+                return (tasks, try ScriptConfigResolver.resolve(workspace: worktree, repo: repo).run, nil)
+            } catch {
+                return (tasks, nil, "\(error)")
+            }
+        }.value
+        let state = RunMenuState(tasks: tasks, runScript: runScript, hasReadRunScript: true, runScriptFailure: failure)
+        runMenus[workspaceId] = state
+        return state
+    }
+
+    /// TSK-03…TSK-05: runs `label` from the workspace's `tasks.json` as last read (read now if it never was). Its
+    /// chain's inputs are asked through `ask`, once each, before anything starts (TSK-04); then, when the repository's
+    /// run scripts do not run concurrently, the Run script and tasks of every other workspace stop (Decision 10); then
+    /// the chain starts in the panel's tabs. A task that is already running is not started twice: its tab shows.
+    public func runTask(workspaceId: String, label: String, ask: @MainActor (TaskInput) async -> String?) async -> TaskRunOutcome {
+        // WSC-03: the tasks wait for the worktree.
+        guard creations[workspaceId] == nil else { return .cancelled }
+        var state = runMenus[workspaceId]
+        if state?.file == nil { state = await readRunMenu(workspaceId: workspaceId) }
+        guard let file = state?.file else { return .invalid(.noSuchTask(label)) }
+        let plan: TaskPlan
+        do {
+            plan = try VSCodeTasks.plan(label, in: file)
+        } catch let error as TaskError {
+            return .invalid(error)
+        } catch {
+            return .invalid(.noSuchTask(label))
+        }
+        let runner = taskRunner(for: workspaceId)
+        if let running = runner.process(of: label) {
+            revealTerminal(workspaceId: workspaceId, sessionId: running.id)
+            return .alreadyRunning(running.id)
+        }
+        guard let found = workspace(id: workspaceId) else { return .stopped }
+        await prepareEnvironment(for: found)
+        guard let workspace = workspace(id: workspaceId) else { return .stopped }
+        let context = TaskContext(worktree: URL(fileURLWithPath: workspace.path), environment: environment(for: workspace))
+        let outcome = await runner.run(plan, context: context, ask: ask) { [weak self] in
+            guard let self, let workspace = self.workspace(id: workspaceId),
+                  (try? self.scriptConfig(for: workspace).runMode) == .nonconcurrent else { return }
+            await self.stopRunsElsewhere(than: workspaceId)
+        }
+        if case .alreadyRunning(let sessionId) = outcome { revealTerminal(workspaceId: workspaceId, sessionId: sessionId) }
+        return outcome
+    }
+
+    /// TSK-06's Stop: the task, and the dependencies its run started that no other running task needs, newest first.
+    public func stopTask(workspaceId: String, label: String) async {
+        await taskRunners[workspaceId]?.stop(label)
+    }
+
+    /// The task's tab while its process runs; nil otherwise. Never starts anything, so a view can read it.
+    public func taskSession(workspaceId: String, label: String) -> PTYSession? {
+        processes[workspaceId]?.tasks.last { $0.title == label && $0.state.isRunning }
+    }
+
+    /// TSK-06: closing a task's tab stops only that process.
+    public func closeTask(workspaceId: String, sessionId: UUID) async {
+        guard let own = processes[workspaceId], let session = own.tasks.first(where: { $0.id == sessionId }) else { return }
+        await session.stop()
+        own.tasks.removeAll { $0.id == sessionId }
+        own.taskPanels[sessionId] = nil
+    }
+
+    private func taskRunner(for workspaceId: String) -> TaskRunner {
+        if let existing = taskRunners[workspaceId] { return existing }
+        let runner = TaskRunner(launcher: WorkspaceTaskLauncher { [weak self] launch, onOutput in
+            self?.startTaskSession(launch, workspaceId: workspaceId, onOutput: onOutput) ?? EndedTaskProcess()
+        })
+        taskRunners[workspaceId] = runner
+        return runner
+    }
+
+    /// Decision 7 of M2.9: a task's tab is a `PTYSession` titled with its label. "dedicated" reuses the tab of the same
+    /// label once its process ended, "shared" the first shared tab whose process ended, each in its place, and "new"
+    /// always opens one; the panel's selection follows a reused tab (`WorkspaceProcesses.current`). A reused tab is a new
+    /// session, so it starts blank: `presentation.clear` needs nothing more. `reveal: always` selects the tab and unfolds
+    /// the panel (Decision 12). The runner's output watcher is attached before the process starts (Decision 8).
+    private func startTaskSession(_ launch: TaskLaunch, workspaceId: String, onOutput: ((ArraySlice<UInt8>) -> Void)?) -> any TaskProcess {
+        let own = processesCreatingIfNeeded(for: workspaceId)
+        let session = PTYSession(title: launch.label, command: launch.command, stopGracePeriod: processStopGracePeriod)
+        let process = TaskSession(session: session, onOutput: onOutput)
+        let reusable: Int? = switch launch.panel {
+        case .dedicated:
+            own.tasks.firstIndex { !$0.state.isRunning && $0.title == launch.label && own.taskPanels[$0.id] == .dedicated }
+        case .shared:
+            own.tasks.firstIndex { !$0.state.isRunning && own.taskPanels[$0.id] == .shared }
+        case .new:
+            nil
+        }
+        if let reusable {
+            own.replaceTask(at: reusable, with: session)
+        } else {
+            own.tasks.append(session)
+        }
+        own.taskPanels[session.id] = launch.panel
+        session.start()
+        if launch.reveal == .always {
+            revealTerminal(workspaceId: workspaceId, sessionId: session.id, focus: launch.focus)
+        }
+        return process
     }
 
     /// The environment of every process started for `workspace`: agent, terminal and script (spec Section 3).
@@ -1624,6 +2370,8 @@ public final class AppModel {
         let chosen = (login?.isEmpty ?? true) ? nil : login
         guard chosen != repo.githubLogin else { return }
         repo.githubLogin = chosen
+        // GHL-01: the new account may read the repository, or not.
+        githubLinkStates[repoId] = nil
         do {
             try store.update(repo)
             reload()
@@ -1647,11 +2395,243 @@ public final class AppModel {
         return githubAccounts.cachedToken(for: login)
     }
 
+    // MARK: GitHub links (GHL-01…GHL-06, M2.9)
+
+    /// `GHL-01`: the workspace's link state as resolved so far; nil until `resolveGitHubLinks` has answered for its
+    /// repository. Never runs anything, so a view can read it.
+    public func githubLinkState(workspaceId: String) -> GitHubLinkState? {
+        workspace(id: workspaceId).flatMap { githubLinkStates[$0.repoId] }
+    }
+
+    /// `GHL-01`, Decision 3: the repository's GitHub remote and account (`ACC-01`), then one `canRead` of the account
+    /// they give, since the default falls back to gh's active account even when it cannot read the repository. Once
+    /// per repository and launch, shared by concurrent callers. An answer that says nothing about the account (offline,
+    /// rate limited) is not kept, and reads as available: the picker's own requests then say what is wrong.
+    @discardableResult
+    public func resolveGitHubLinks(workspaceId: String) async -> GitHubLinkState {
+        guard let workspace = workspace(id: workspaceId), let repo = repo(id: workspace.repoId) else {
+            return .unavailable(GitHubLinkState.noRemote)
+        }
+        if let known = githubLinkStates[repo.id] { return known }
+        let resolution: Task<GitHubLinkState?, Never>
+        if let running = githubLinkResolutions[repo.id] {
+            resolution = running
+        } else {
+            resolution = Task { await self.lookUpGitHubLinkState(repo: repo) }
+            githubLinkResolutions[repo.id] = resolution
+        }
+        let state = await resolution.value
+        if githubLinkResolutions[repo.id] == resolution { githubLinkResolutions[repo.id] = nil }
+        guard let state else { return .available }
+        githubLinkStates[repo.id] = state
+        return state
+    }
+
+    private func lookUpGitHubLinkState(repo: Repo) async -> GitHubLinkState? {
+        guard let repository = await githubRepository(for: repo) else { return .unavailable(GitHubLinkState.noRemote) }
+        guard let login = await githubLogin(for: repo) else { return .unavailable(GitHubLinkState.noAccount) }
+        do {
+            let readable = try await githubClient(login: login).canRead(repository: repository)
+            return readable ? .available : .unavailable(GitHubLinkState.noAccount)
+        } catch is GitHubAccountError {
+            // gh has no token for the account.
+            return .unavailable(GitHubLinkState.noAccount)
+        } catch {
+            return nil
+        }
+    }
+
+    /// The repository and the client of the workspace's account, once its link state allows them.
+    private func githubLinkContext(workspaceId: String) async throws -> (repository: GitHubRepository, client: GitHubClient) {
+        if case .unavailable(let reason) = await resolveGitHubLinks(workspaceId: workspaceId) {
+            throw GitHubLinkError.unavailable(reason)
+        }
+        guard let workspace = workspace(id: workspaceId), let repo = repo(id: workspace.repoId) else { throw CancellationError() }
+        guard let repository = await githubRepository(for: repo) else { throw GitHubLinkError.unavailable(GitHubLinkState.noRemote) }
+        return (repository, try await githubClient(for: repo))
+    }
+
+    /// `GHL-03`'s Issues tab: the first page for an empty `query`, else GitHub's search, over `URLSession` with the
+    /// repository's account. The caller's cancellation cancels the request (Decision 2).
+    public func githubIssues(workspaceId: String, query: String) async throws -> [IssueSummary] {
+        let context = try await githubLinkContext(workspaceId: workspaceId)
+        return try await context.client.issues(repository: context.repository, query: query)
+    }
+
+    /// `GHL-03`'s Pull requests tab, as `githubIssues` does for issues.
+    public func githubPullRequests(workspaceId: String, query: String) async throws -> [PullRequestSummary] {
+        let context = try await githubLinkContext(workspaceId: workspaceId)
+        return try await context.client.pullRequests(repository: context.repository, query: query)
+    }
+
+    /// `GHL-03`'s Branches tab, from git alone: the repository's branches, which worktree holds each, and where the
+    /// workspace's worktree is, for the rows' reasons. Local runs only.
+    public func linkBranches(workspaceId: String) async throws -> LinkBranches {
+        guard let workspace = workspace(id: workspaceId), let repo = repo(id: workspace.repoId) else { throw CancellationError() }
+        // WSC-03: no worktree to read yet; the "+" item is off meanwhile.
+        if let hint = creatingHint(workspaceId: workspaceId) { throw GitHubLinkError.unavailable(hint) }
+        let service = GitBranchService(environment: environment(for: workspace))
+        let worktree = URL(fileURLWithPath: workspace.path)
+        let mainClone = URL(fileURLWithPath: repo.path)
+        let result = await Task.blocking { () -> Result<[BranchRef], GitBranchError> in
+            do {
+                return .success(try service.branches(worktree: worktree))
+            } catch {
+                return .failure(GitBranchService.branchError(error))
+            }
+        }.value
+        return LinkBranches(branches: try result.get(), worktree: worktree, mainClone: mainClone)
+    }
+
+    /// `GHL-03`'s one `git fetch origin --prune` when the Branches tab first shows, so its list can be read again. The
+    /// repository account's token first, for an HTTPS remote (`ENV-01`). A failure (offline) leaves the list as it was
+    /// and says nothing: the list still shows what git knows.
+    public func fetchLinkBranches(workspaceId: String) async {
+        guard let found = workspace(id: workspaceId), creations[workspaceId] == nil else { return }
+        await prepareEnvironment(for: found)
+        guard let workspace = workspace(id: workspaceId) else { return }
+        let service = GitBranchService(environment: environment(for: workspace))
+        let worktree = URL(fileURLWithPath: workspace.path)
+        _ = await Task.blocking { (try? service.fetchPruning(worktree: worktree)) != nil }.value
+    }
+
+    /// `GHL-05`'s notice: why the workspace cannot switch now, from its unsaved edits and its local status (uncommitted
+    /// changes, commits its base lacks); nil when it can, or when git cannot tell. `switchWorktree` checks again at pick
+    /// time.
+    public func linkSwitchRefusal(workspaceId: String) async -> GitHubLinkError? {
+        guard let workspace = workspace(id: workspaceId) else { return nil }
+        if !unsavedEditors(workspaceId: workspaceId).isEmpty { return .unsavedEdits }
+        guard let status = await localStatus(of: workspace, base: workspace.baseRef) else { return nil }
+        if status.uncommitted > 0 { return .uncommittedChanges }
+        if status.commitsAheadOfBase > 0 { return .commitsOfItsOwn }
+        return nil
+    }
+
+    /// `GHL-04`: the issue in full, written as its attachment (`LinkAttachments.issue`), a snapshot of pick time.
+    /// Returns the file for the message box.
+    public func linkIssue(workspaceId: String, number: Int) async throws -> URL {
+        let context = try await githubLinkContext(workspaceId: workspaceId)
+        let issue = try await context.client.issue(repository: context.repository, number: number)
+        return try await writeLinkAttachment(LinkAttachments.issue(issue))
+    }
+
+    /// `GHL-05`: the worktree switched to the pull request's head (`switchWorktree`), then its attachment written.
+    public func linkPullRequest(workspaceId: String, number: Int) async throws -> URL {
+        let switched = try await switchWorktree(workspaceId: workspaceId, to: .pullRequest(number))
+        guard let pullRequest = switched.pullRequest else { throw GitHubError.notFound }
+        return try await writeLinkAttachment(LinkAttachments.pullRequest(pullRequest))
+    }
+
+    /// `GHL-05`: the worktree switched to the branch (`switchWorktree`), then its attachment written, with the last 20
+    /// commits the workspace's base lacks.
+    public func linkBranch(workspaceId: String, branch: BranchRef) async throws -> URL {
+        try await switchWorktree(workspaceId: workspaceId, to: .branch(branch))
+        guard let workspace = workspace(id: workspaceId) else { throw CancellationError() }
+        let service = GitBranchService(environment: environment(for: workspace))
+        let worktree = URL(fileURLWithPath: workspace.path)
+        // A workspace made before M2 has no base: origin's default branch, as its status counts from.
+        let base = workspace.baseRef ?? "origin/HEAD"
+        let name = branch.name
+        let log = await Task.blocking { () -> (lines: [String], total: Int) in
+            (try? service.commits(of: name, notIn: base, worktree: worktree)) ?? ([], 0)
+        }.value
+        let document = LinkAttachments.branch(name: name, upstream: branch.upstream, base: base, commits: log.lines, total: log.total)
+        return try await writeLinkAttachment(document)
+    }
+
+    private func writeLinkAttachment(_ document: (fileName: String, markdown: String)) async throws -> URL {
+        let folder = paths.pastedFiles
+        return try await Task.blocking { try LinkAttachments.write(document, in: folder) }.value
+    }
+
+    /// Decision 5, `GHL-05`: switches the workspace's worktree to a branch or a pull request's head, in this order:
+    /// 1. the target: a pull request is fetched from GitHub, and one from a fork is refused (`OUT-50`);
+    /// 2. the preconditions, read now: no unsaved edits, no uncommitted changes, no commits the base lacks, and the
+    ///    branch not held by a worktree (the workspace's own: already on it);
+    /// 3. the switch (`GitBranchService.switchTo`), with the workspace's own empty `rocky/<name>` deleted after it;
+    /// 4. the record's `branch`, and a pull request's `origin/<baseRefName>` as its `baseRef`, so Changes and new
+    ///    processes' `ROCKY_DEFAULT_BRANCH` follow;
+    /// 5. the pull request panel refreshed at once (`PR-07`'s `.action`), and the changes.
+    /// A refusal or a git failure throws `GitHubLinkError` and leaves the worktree and the record as they were. Running
+    /// scripts, tasks and terminals keep running, on the new branch's files.
+    @discardableResult
+    public func switchWorktree(workspaceId: String, to target: WorktreeSwitchTarget) async throws -> WorktreeSwitch {
+        guard let found = workspace(id: workspaceId), let repo = repo(id: found.repoId) else { throw CancellationError() }
+        // WSC-03: no worktree to switch yet.
+        if let hint = creatingHint(workspaceId: workspaceId) { throw GitHubLinkError.unavailable(hint) }
+        let branch: String
+        let gitTarget: SwitchTarget
+        var baseRef = found.baseRef
+        var pullRequest: GitHubIssue?
+        switch target {
+        case .branch(let ref):
+            branch = ref.name
+            gitTarget = ref.isRemoteOnly ? .remote(ref.name) : .local(ref.name)
+        case .pullRequest(let number):
+            let context = try await githubLinkContext(workspaceId: workspaceId)
+            let fetched = try await context.client.pullRequest(repository: context.repository, number: number)
+            guard let details = fetched.pullRequest else { throw GitHubError.notFound }
+            guard !details.isCrossRepository else { throw GitHubLinkError.fromFork }
+            branch = details.headRefName
+            gitTarget = .pullRequest(head: details.headRefName)
+            baseRef = "origin/\(details.baseRefName)"
+            pullRequest = fetched
+        }
+        if !unsavedEditors(workspaceId: workspaceId).isEmpty { throw GitHubLinkError.unsavedEdits }
+        // The token first: a pull request's head is fetched, and an HTTPS remote signs with the account (ENV-01).
+        await prepareEnvironment(for: found)
+        guard let workspace = workspace(id: workspaceId) else { throw CancellationError() }
+        let service = GitBranchService(environment: environment(for: workspace))
+        let worktree = URL(fileURLWithPath: workspace.path)
+        let mainClone = URL(fileURLWithPath: repo.path)
+        let base = workspace.baseRef
+        let ownBranch = WorktreeService.branchPrefix + workspace.name
+        let outcome = await Task.blocking { () -> Result<String?, GitHubLinkError> in
+            do {
+                let status = try service.status(worktree: worktree, base: base)
+                if status.uncommitted > 0 { return .failure(.uncommittedChanges) }
+                if status.commitsAheadOfBase > 0 { return .failure(.commitsOfItsOwn) }
+                if let holder = try service.worktreeHolders(worktree: worktree)[branch] {
+                    return .failure(BranchLinks.samePath(holder, worktree)
+                        ? .currentBranch(branch)
+                        : .checkedOut(BranchLinks.holderLabel(holder, mainClone: mainClone)))
+                }
+                // Only the workspace's own branch goes: one it switched to before is a real branch.
+                let dropping = status.branch == ownBranch ? ownBranch : nil
+                let dropped = try service.switchTo(gitTarget, worktree: worktree, dropping: dropping)
+                return .success(dropped ? dropping : nil)
+            } catch {
+                return .failure(.git(GitBranchService.branchError(error).description))
+            }
+        }.value
+        let deleted = try outcome.get()
+        // A fresh copy of the record, so the pull request columns the monitor wrote meanwhile stay (`savePullRequest`).
+        guard var record = try store.workspaces(repoId: repo.id).first(where: { $0.id == workspaceId }) else {
+            throw CancellationError()
+        }
+        record.branch = branch
+        record.baseRef = baseRef
+        try store.update(record)
+        reload()
+        fetchedPullRequestHeads[workspaceId] = nil
+        Task {
+            await refreshChanges(workspaceId: workspaceId)
+        }
+        Task {
+            await pullRequests.refresh(workspaceId: workspaceId, reason: .action)
+        }
+        return WorktreeSwitch(branch: branch, baseRef: baseRef, deletedBranch: deleted, pullRequest: pullRequest)
+    }
+
     // MARK: Pull request (PR-07)
 
     /// What the workspace's panel header shows (HDR-02, ERR-01), whether or not a turn runs.
     public func pullRequestHeader(workspaceId: String) -> HeaderPresentation {
-        (pullRequests.panels[workspaceId] ?? PullRequestPanelState()).header()
+        // WSC-03: a branch that does not exist yet has none, and nothing to create one from.
+        if creations[workspaceId] != nil {
+            return HeaderPresentation(group: .noPR, label: "No pull request", isDim: true)
+        }
+        return (pullRequests.panels[workspaceId] ?? PullRequestPanelState()).header()
     }
 
     /// The GitHub client of a login: every request carries that login's token, fetched once per launch (ACC-01).
@@ -1668,7 +2648,9 @@ public final class AppModel {
     /// (REV-01). A tick runs no git and no gh.
     func loadPullRequest(workspaceId: String, includeLocal: Bool, comments: Bool) async throws -> (PullRequestSnapshot, LocalGitStatus?, [PendingComment]?) {
         await launchEnvironment?.value
-        guard let workspace = self.workspace(id: workspaceId), let repo = self.repo(id: workspace.repoId) else {
+        // WSC-03: nothing to read before the worktree exists; the save refreshes it. WSC-07: nor while git removes it.
+        guard let workspace = self.workspace(id: workspaceId), let repo = self.repo(id: workspace.repoId), creations[workspaceId] == nil,
+              removals[workspaceId] != .removing else {
             throw CancellationError()
         }
         guard let repository = await githubRepository(for: repo) else { throw PullRequestLoadError.noGitHubRemote }
@@ -1841,6 +2823,9 @@ public final class AppModel {
     /// `AGT-00`: whether the panel's agent buttons can send now. They cannot while the selected conversation's turn
     /// runs, or while its agent is stopped.
     public func agentActionAvailability(workspaceId: String) -> AgentActionAvailability {
+        if creations[workspaceId] != nil {
+            return .creating(creatingHint(workspaceId: workspaceId) ?? "The workspace is being created")
+        }
         guard let chat = existingChat(workspaceId: workspaceId) else { return .available }
         switch chat.state {
         case .running: return .working
@@ -2148,9 +3133,9 @@ public final class AppModel {
         "\(workspaceName) has \(uncommitted) uncommitted \(uncommitted == 1 ? "change" : "changes"). Archive anyway?"
     }
 
-    /// `PR-06`: today's remove flow (the archive script, then the worktree's removal; the branch and the remote branch
-    /// stay). `stashingChanges` is the answer Archive to `archiveQuestion`: the changes go to a git stash of the
-    /// repository first, so git can remove the worktree and nothing is lost.
+    /// `PR-06`: the remove flow (`removeWorkspace`: the archive script, then the worktree's removal and WSC-07's branch
+    /// rule; the remote branch stays). `stashingChanges` is the answer Archive to `archiveQuestion`: the changes go to a
+    /// git stash of the repository first, so git can remove the worktree and nothing is lost.
     public func archiveMergedWorkspace(workspaceId: String, stashingChanges: Bool = false) async {
         await perform(.archive, workspaceId: workspaceId) {
             await self.removeWorkspace(id: workspaceId, stashingChanges: stashingChanges)
@@ -2159,7 +3144,8 @@ public final class AppModel {
 
     /// `SET-01`: with Archive on merge on, a merge the monitor sees archives the workspace (`PR-06`).
     private func pullRequestMerged(workspaceId: String) {
-        guard archiveOnMerge, let workspace = workspace(id: workspaceId) else { return }
+        // WSC-07: one already being removed is not archived again.
+        guard archiveOnMerge, removals[workspaceId] == nil, let workspace = workspace(id: workspaceId) else { return }
         Task { await archiveAfterMerge(workspace) }
     }
 
@@ -2246,7 +3232,8 @@ public final class AppModel {
     /// its All files tab (FIL-02's letters, FIL-05's "Becoming changed"), in a diff tab on screen, so an open diff
     /// follows the agent with the panel on Checks or closed, or in Quick Open (FIL-08's letters and changed files).
     private func showsChanges(workspaceId: String) -> Bool {
-        guard workspaceId == selectedWorkspaceId else { return false }
+        // WSC-03: its tabs show a spinner until the worktree exists.
+        guard workspaceId == selectedWorkspaceId, creations[workspaceId] == nil else { return false }
         return visibleRightPanelTab == .changes || visibleRightPanelTab == .files || selectedDiffTabs[workspaceId] != nil
             || quickOpenWorkspaceId == workspaceId
     }
@@ -2254,7 +3241,8 @@ public final class AppModel {
     /// GIT-01's "on a change": the sidebar's stats for every workspace, and the full diff for the one on screen. Called
     /// on the main actor for each batch of the workspace's stream; `events` name the folders (FIL-07's tree reads them).
     private func filesChanged(workspaceId: String, events: FolderEvents) {
-        guard workspace(id: workspaceId) != nil else { return }
+        // WSC-07: a batch that was on its way when the stream stopped reads nothing of a workspace going away.
+        guard workspace(id: workspaceId) != nil, removals[workspaceId] != .removing else { return }
         Task { await refreshChanges(workspaceId: workspaceId) }
         // EDIT-03: the workspace's open editors look at their files.
         checkEditors(workspaceId: workspaceId)
@@ -2266,6 +3254,8 @@ public final class AppModel {
     /// change on disk). Serialized per workspace: asked again while a run is in flight, it runs once more after it, so a
     /// burst of events never piles up git processes. Returns once the workspace's state is current.
     public func refreshChanges(workspaceId: String) async {
+        // WSC-07: git runs no more for a workspace off screen, whose worktree git is removing.
+        guard creations[workspaceId] == nil, removals[workspaceId] != .removing else { return }
         if let running = gitRefreshes[workspaceId] {
             gitRefreshes[workspaceId]?.runsAgain = true
             await running.task.value
@@ -2295,7 +3285,7 @@ public final class AppModel {
 
     private func refreshGitOnce(workspaceId: String) async {
         await launchEnvironment?.value
-        guard let workspace = workspace(id: workspaceId) else { return }
+        guard let workspace = workspace(id: workspaceId), removals[workspaceId] != .removing else { return }
         let wantsChanges = showsChanges(workspaceId: workspaceId)
         let service = GitChangesService(environment: environment(for: workspace))
         let worktree = URL(fileURLWithPath: workspace.path)
@@ -2313,8 +3303,9 @@ public final class AppModel {
                 return .failed(GitBranchService.branchError(error).description)
             }
         }.value
-        // Removed while git ran.
-        guard self.workspace(id: workspaceId) != nil else { return }
+        // Removed, or going, while git ran: what it found is dropped, a "fatal:" from the half-deleted folder included
+        // (WSC-07).
+        guard self.workspace(id: workspaceId) != nil, removals[workspaceId] != .removing else { return }
         switch reading {
         case .changes(let found):
             if showsChanges(workspaceId: workspaceId) { changes[workspaceId] = found }
@@ -2347,28 +3338,42 @@ public final class AppModel {
     /// kept for it. A new stream reads the stats once, so the sidebar has them without waiting for a change.
     private func syncWatchers() {
         let ids = Set(workspaces.values.joined().map(\.id))
+        // WSC-07: the stream of a workspace going away stops before git deletes its files. What it kept stays, so a
+        // removal git refuses brings the workspace back as it was, unsaved edits included.
+        for id in watchedWorkspaceIds.intersection(removingWorkspaceIds) {
+            watchedWorkspaceIds.remove(id)
+            watchers.removeValue(forKey: id)?.stop()
+        }
         for id in watchedWorkspaceIds.subtracting(ids) {
             watchedWorkspaceIds.remove(id)
             watchers.removeValue(forKey: id)?.stop()
-            diffStats[id] = nil
-            changes[id] = nil
-            changesFailures[id] = nil
-            commits[id] = nil
-            staleChanges.remove(id)
-            editors[id] = nil
-            editorBases[id] = nil
-            fileTrees[id] = nil
-            staleFileTrees[id] = nil
-            canonicalWorktrees[id] = nil
-            previewTabs[id] = nil
-            revealedPaths[id] = nil
-            recentFiles[id] = nil
-            commentDrafts[id] = nil
-            handledLineScrolls[id] = nil
+            forgetWatchedState(workspaceId: id)
         }
-        for workspace in workspaces.values.joined() where !watchedWorkspaceIds.contains(workspace.id) {
+        // WSC-03: a workspace's stream starts once its worktree exists, and none starts for one going away.
+        for workspace in workspaces.values.joined()
+        where !watchedWorkspaceIds.contains(workspace.id) && creations[workspace.id] == nil && removals[workspace.id] != .removing {
             startWatching(workspace)
         }
+    }
+
+    /// What a workspace's stream fed and its tabs kept, dropped once it is gone: by `syncWatchers`, and by a removal,
+    /// whose stream had already stopped (WSC-07).
+    private func forgetWatchedState(workspaceId id: String) {
+        diffStats[id] = nil
+        changes[id] = nil
+        changesFailures[id] = nil
+        commits[id] = nil
+        staleChanges.remove(id)
+        editors[id] = nil
+        editorBases[id] = nil
+        fileTrees[id] = nil
+        staleFileTrees[id] = nil
+        canonicalWorktrees[id] = nil
+        previewTabs[id] = nil
+        revealedPaths[id] = nil
+        recentFiles[id] = nil
+        commentDrafts[id] = nil
+        handledLineScrolls[id] = nil
     }
 
     private func startWatching(_ workspace: Workspace) {
@@ -2663,7 +3668,7 @@ public final class AppModel {
     /// Whether the workspace's All files tab shows now: it is selected and its panel is open on that tab. Git's list and
     /// the folders are read only then (FIL-07).
     private func showsFiles(workspaceId: String) -> Bool {
-        workspaceId == selectedWorkspaceId && visibleRightPanelTab == .files
+        workspaceId == selectedWorkspaceId && visibleRightPanelTab == .files && creations[workspaceId] == nil
     }
 
     /// FIL-03's Show Ignored Files of the workspace's repository.
@@ -2676,7 +3681,8 @@ public final class AppModel {
     /// nothing.
     private func prepareFileTree(workspaceId: String) -> FileTreeState? {
         if let state = fileTrees[workspaceId] { return state }
-        guard workspaceId == selectedWorkspaceId, workspace(id: workspaceId) != nil else { return nil }
+        // WSC-03: no files to list before the worktree exists; Quick Open lists nothing meanwhile.
+        guard workspaceId == selectedWorkspaceId, workspace(id: workspaceId) != nil, creations[workspaceId] == nil else { return nil }
         var state = FileTreeState()
         do {
             state.expanded = try store.expandedFolders(workspaceId: workspaceId)
@@ -3541,7 +4547,11 @@ public final class AppModel {
             if repos.contains(where: { $0.colorIndex == nil }) { repos = try assignMissingRepoColors(repos) }
             self.repos = repos
             var byRepo: [String: [Workspace]] = [:]
-            for repo in repos { byRepo[repo.id] = try store.workspaces(repoId: repo.id) }
+            // WSC-03: a workspace being made shows after the stored ones, where it will be once saved.
+            let pending = pendingWorkspaces.values.map(\.workspace).sorted { $0.createdAt < $1.createdAt }
+            for repo in repos {
+                byRepo[repo.id] = try store.workspaces(repoId: repo.id) + pending.filter { $0.repoId == repo.id }
+            }
             workspaces = byRepo
             pullRequests.seed(byRepo.values.flatMap { $0 })
             syncWatchers()
@@ -3598,4 +4608,82 @@ extension ChatMessageRecord {
             deletions: item.diffStat?.deletions
         )
     }
+}
+
+/// A task's tab (KIT-17): its `PTYSession`, and the viewer the runner reads a background task's output through until
+/// its pattern matched (Decision 8 of M2.9), attached here, before the session starts.
+@MainActor
+private final class TaskSession: TaskProcess {
+    let session: PTYSession
+    private let watcherId = UUID()
+
+    init(session: PTYSession, onOutput: ((ArraySlice<UInt8>) -> Void)?) {
+        self.session = session
+        if let onOutput { _ = session.attach(watcherId, onOutput: onOutput) }
+    }
+
+    var id: UUID { session.id }
+    var isRunning: Bool { session.state.isRunning }
+
+    func waitForExit() async -> PTYState {
+        await session.waitForExit()
+    }
+
+    func stop() async {
+        await session.stop()
+    }
+
+    func stopWatchingOutput() {
+        session.detach(watcherId)
+    }
+}
+
+/// WSC-02: reads a Setup tab's output until the Setup script's step line ("▸ Setup · …") comes, which says the hook
+/// ended and the script started, with `TaskOutputWatcher`'s lines.
+@MainActor
+private final class SetupStepWatch {
+    private var watcher: TaskOutputWatcher
+    private let onLine: @MainActor () -> Void
+
+    init(line: String, onLine: @escaping @MainActor () -> Void) throws {
+        let pattern = "^" + NSRegularExpression.escapedPattern(for: line) + "$"
+        watcher = try TaskOutputWatcher(beginsPattern: nil, endsPattern: pattern)
+        self.onLine = onLine
+    }
+
+    /// True once the line has come; nothing more needs reading then.
+    func feed(_ bytes: ArraySlice<UInt8>) -> Bool {
+        guard watcher.feed(bytes).contains(.ends) else { return false }
+        onLine()
+        return true
+    }
+}
+
+/// `AppModel`'s launcher: each workspace's runner starts its tasks' sessions through the model.
+@MainActor
+private final class WorkspaceTaskLauncher: TaskLauncher {
+    private let startSession: @MainActor (TaskLaunch, ((ArraySlice<UInt8>) -> Void)?) -> any TaskProcess
+
+    init(_ startSession: @escaping @MainActor (TaskLaunch, ((ArraySlice<UInt8>) -> Void)?) -> any TaskProcess) {
+        self.startSession = startSession
+    }
+
+    func start(_ launch: TaskLaunch, onOutput: ((ArraySlice<UInt8>) -> Void)?) -> any TaskProcess {
+        startSession(launch, onOutput)
+    }
+}
+
+/// What a runner gets once its model is gone: a process that never started.
+@MainActor
+private final class EndedTaskProcess: TaskProcess {
+    let id = UUID()
+    var isRunning: Bool { false }
+
+    func waitForExit() async -> PTYState {
+        .failedToStart
+    }
+
+    func stop() async {}
+
+    func stopWatchingOutput() {}
 }

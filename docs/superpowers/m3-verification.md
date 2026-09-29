@@ -292,5 +292,4 @@ files (`AppModel`, `ChatView`, `WorkspaceDetailView`); only the final tree was b
 ## Known issues
 
 - Undo history is lost when a file tab is hidden (the text stays).
-- Terminal shells inherit every open file descriptor of Rocky (carried over from M2.7).
 - Only the final tree was built and tested; the intermediate commits were not built one by one.

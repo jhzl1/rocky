@@ -13,6 +13,9 @@ struct ChatView: View {
     let conversationId: String
     /// False while a file tab covers the conversation: the view stays, with its draft, but takes no shortcut.
     var isActive = true
+    /// WSC-07: why the message box takes nothing now ("Running manila's archive script"): the agent is stopped and the
+    /// workspace is being removed, while the transcript stays. nil for the box as usual.
+    var closedReason: String?
     /// The slash commands the message box offers, `AppModel.commands(for:)`: the conversation's own list, or the last
     /// one of its repository and agent until its own arrives (`confirmed` false).
     var commands: [SlashCommand] = []
@@ -33,6 +36,8 @@ struct ChatView: View {
     @State private var liveActive = LiveFlag()
     /// Bumped once after the conversation is laid out (`selectionRefresh`).
     @State private var selectionRefresh = 0
+    /// The message box's frame in the window, which the GitHub picker sits above (`GHL-02`).
+    @State private var composerFrame: CGRect = .zero
     @Environment(\.openFile) private var openFile
     @Environment(MenuPresenter.self) private var menus: MenuPresenter?
     /// The sidebar list has the keyboard: a workspace chosen with ↑/↓ must not take it into its message box, or the
@@ -53,6 +58,7 @@ struct ChatView: View {
         workspaceId: String,
         conversationId: String,
         isActive: Bool = true,
+        closedReason: String? = nil,
         commands: (commands: [SlashCommand], confirmed: Bool) = ([], false),
         terminal: EmbeddedTerminalHost,
         lineComment: @escaping @MainActor (LineRangeAttachment, String, [URL]) async -> LineComment
@@ -62,6 +68,7 @@ struct ChatView: View {
         self.workspaceId = workspaceId
         self.conversationId = conversationId
         self.isActive = isActive
+        self.closedReason = closedReason
         self.commands = commands.commands
         self.commandsConfirmed = commands.confirmed
         self.terminal = terminal
@@ -103,6 +110,7 @@ struct ChatView: View {
                                     QueuedMessageRow(
                                         message: message,
                                         isAgentWorking: chat.state == .running,
+                                        isWaitingForAgent: chat.isWaitingForWorkspace,
                                         canEdit: !composerText.hasContent && !composerText.hasLineChip,
                                         onSendNow: { Task { await chat.sendQueuedNow(id: message.id) } },
                                         onEdit: { edit(message) },
@@ -169,6 +177,8 @@ struct ChatView: View {
         .onChange(of: isActive) {
             liveActive.value = isActive
             if isActive { composerText.focus() } else { composerText.resignFocus() }
+            // A file tab over the conversation takes its GitHub picker with it.
+            if !isActive { GitHubLinkPresenter.shared.dismiss(conversationId: conversationId) }
         }
         .onChange(of: commands, initial: true) { composerText.setCommands(commands, confirmed: commandsConfirmed) }
         .onChange(of: commandsConfirmed) { composerText.setCommands(commands, confirmed: commandsConfirmed) }
@@ -177,6 +187,7 @@ struct ChatView: View {
             if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
             keyMonitor = nil
             ConversationComposers.unregister(composerText, conversationId: conversationId)
+            GitHubLinkPresenter.shared.dismiss(conversationId: conversationId)
         }
         // DLG-06: the agent's permission request, while this conversation is on screen, as the sheet was. Its answer
         // goes to the agent; Cancel, Esc and a click outside answer no option.
@@ -224,6 +235,24 @@ struct ChatView: View {
 
     @ViewBuilder
     private var footer: some View {
+        if let closedReason {
+            // WSC-07: the box stays where it was, dimmed and off, instead of the stopped agent's Restart; the reason is
+            // its tooltip.
+            composer
+                .disabled(true)
+                .opacity(0.55)
+                .overlay {
+                    Color.clear
+                        .contentShape(RoundedRectangle(cornerRadius: 12))
+                        .help(closedReason)
+                }
+        } else {
+            agentFooter
+        }
+    }
+
+    @ViewBuilder
+    private var agentFooter: some View {
         switch chat.state {
         case .stopped(let reason):
             HStack {
@@ -292,6 +321,11 @@ struct ChatView: View {
             composerText.insert(files: files)
             return !files.isEmpty
         }
+        // GHL-02: the GitHub picker stays on the box's top and left edges when the layout moves.
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+            composerFrame = frame
+            GitHubLinkPresenter.shared.move(conversationId: conversationId, to: frame)
+        }
     }
 
     private var composerBody: some View {
@@ -334,7 +368,8 @@ struct ChatView: View {
         .padding(Self.boxPadding)
     }
 
-    /// The + next to Send, like Conductor's: attach files, and plan mode when the agent has one.
+    /// The + next to Send, like Conductor's: attach files, link a GitHub issue, pull request or branch (`GHL-01`), and
+    /// plan mode when the agent has one.
     private var plusMenu: some View {
         MenuButton(id: "composer-\(ObjectIdentifier(chat))", placement: .aboveTrailing, width: 250) { isOpen in
             Image(systemName: "plus")
@@ -344,6 +379,7 @@ struct ChatView: View {
                 .contentShape(Rectangle())
         } content: {
             MenuItem(title: "Add attachment", icon: .symbol("paperclip"), shortcut: "⌘U", action: chooseAttachments)
+            LinkGitHubMenuItem(model: model, workspaceId: workspaceId, action: openGitHubPicker)
             // CMD-07: where to find the agent's commands.
             MenuItem(title: "Commands", icon: .symbol("slash.circle"), shortcut: "/") { composerText.startCommand() }
             if chat.canUsePlanMode {
@@ -352,7 +388,12 @@ struct ChatView: View {
                 }
             }
         }
-        .help("Attach files, run one of the agent's commands or switch plan mode")
+        .help("Attach files, link GitHub, run one of the agent's commands or switch plan mode")
+    }
+
+    /// `GHL-01`: the picker above this message box, on Issues (Decision 1).
+    private func openGitHubPicker() {
+        GitHubLinkPresenter.shared.show(workspaceId: workspaceId, conversationId: conversationId, model: model, anchor: composerFrame)
     }
 
     private func send() {
@@ -373,8 +414,9 @@ struct ChatView: View {
             offerTerminal(for: command)
             return
         }
-        // While the agent works, the message waits for its turn to end (like Conductor's queue).
-        if chat.state == .running {
+        // While the agent works, the message waits for its turn to end (like Conductor's queue); while its workspace's
+        // worktree is being made, it waits there, shown, and goes once the agent is ready (WSC-03).
+        if chat.state == .running || chat.isWaitingForWorkspace {
             chat.enqueue(message.text, attachments: message.files)
         } else {
             Task { await chat.send(message.text, attachments: message.files) }
@@ -466,9 +508,11 @@ struct ChatView: View {
     private func handleKey(_ event: NSEvent) -> NSEvent? {
         // A mini-modal (a permission request, a confirmation, an error, the commit, DLG-01) keeps every key while it
         // shows, Esc included, which cancels it before it could stop the turn (DLG-03), and ⌘U attaches nothing behind
-        // it. Quick Open takes Esc and the arrows while it shows, and ⌘U attaches nothing behind it (FIL-08). Their
-        // state is read from their presenters, references, at the key's time.
-        if DialogPresenter.shared.isShowing || QuickOpenPresenter.shared.isShown { return event }
+        // it. Quick Open takes Esc and the arrows while it shows, and ⌘U attaches nothing behind it (FIL-08); so does the
+        // GitHub picker (GHL-02). Their state is read from their presenters, references, at the key's time.
+        if DialogPresenter.shared.isShowing || QuickOpenPresenter.shared.isShown || GitHubLinkPresenter.shared.isShown {
+            return event
+        }
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         guard liveActive.value, let window = event.window, window.isKeyWindow else { return event }
         // A file picker types in a window of its own, and so does the app-modal alert of quitting with unsaved edits

@@ -21,7 +21,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Asks about unsaved edits first (EDIT-02), then stops every agent, terminal and script before quitting, so none
-    /// keeps running (and using energy) after Rocky. With the window, the question is Rocky's own mini-modal on it, and
+    /// keeps running (and using energy) after Rocky, and waits for a workspace removal under way, so no half-removed
+    /// worktree stays in the store (WSC-07). With the window, the question is Rocky's own mini-modal on it, and
     /// its answer replies later (DLG-05); with no window, the native alert. Save All that cannot save a file (it changed
     /// on disk, or the write failed) cancels the quit and shows that file's tab, with its banner.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -230,7 +231,8 @@ private struct CompactTitleBar: NSViewRepresentable {
     }
 }
 
-/// File ▸ New Workspace (⌘N, KBD-01): in the selected workspace's repository, else the first; off without any.
+/// File ▸ New Workspace (⌘N, KBD-01): in the selected workspace's repository, else the first; off without any, and
+/// while any workspace is being created or set up (WSC-01).
 private struct NewWorkspaceCommand: View {
     let model: AppModel
 
@@ -240,7 +242,7 @@ private struct NewWorkspaceCommand: View {
             Task { await model.createWorkspace(repoId: repoId) }
         }
         .keyboardShortcut("n", modifiers: .command)
-        .disabled(model.newWorkspaceRepoId == nil)
+        .disabled(model.newWorkspaceRepoId == nil || model.newWorkspaceWait != nil)
     }
 }
 

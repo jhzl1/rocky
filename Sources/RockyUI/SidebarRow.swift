@@ -21,8 +21,17 @@ struct SidebarRow: View {
     let isCommandHeld: Bool
     /// GIT-03's `+A −D` against the workspace's base; nil until git has read it, hidden while it is empty.
     let diffStat: DiffStat?
+    /// WSC-02: its worktree does not exist yet: being created (the menus have Remove only), or failed (Retry and
+    /// Remove). Nothing on disk to open or copy from meanwhile.
+    var creation: WorkspaceCreation?
+    /// WSC-01: why Retry has to wait for another workspace; nil when it can run.
+    var retryWait: String?
+    /// WSC-07: it is being removed: running its archive script (no hover actions or menu), or off screen while git
+    /// removes it (dimmed, and not selectable either).
+    var removal: WorkspaceRemoval?
     let onSelect: () -> Void
     let onRemove: () -> Void
+    var onRetry: () -> Void = {}
 
     @State private var hovering = false
     @Environment(MenuPresenter.self) private var presenter: MenuPresenter?
@@ -32,44 +41,88 @@ struct SidebarRow: View {
 
     private var moreMenuId: String { "workspace-more-\(workspace.id)" }
 
-    /// Also while its More menu is open, so the button that opened it does not fade out from under the menu.
+    /// Also while its More menu is open, so the button that opened it does not fade out from under the menu. None while
+    /// it is being removed: there is nothing left to do with it (WSC-07).
     private var showsActions: Bool {
-        hovering || hasKeyboardFocus || presenter?.isOpen(moreMenuId) == true
+        !isInert && (hovering || hasKeyboardFocus || presenter?.isOpen(moreMenuId) == true)
+    }
+
+    /// No action at all on it: while it is created (user decision, 2026-09-28: "si está creando no quiero permitir
+    /// habilitar ninguna acción sobre ese worktree") and while it is removed (WSC-07). No hover actions, no menu, no
+    /// accessibility actions. A failed creation has its Retry and Remove again.
+    private var isInert: Bool {
+        removal != nil || creation == .creating
     }
 
     var body: some View {
-        Button(action: onSelect) {
-            HStack(spacing: 8) {
-                WorkspaceStatusGlyph(status: status, size: 14)
-                    .frame(width: Zoom.shared(16), height: Zoom.shared(16))
-                Text(title)
-                    .font(.rocky(13))
-                    // ROW-07: a merged workspace's title steps back.
-                    .foregroundStyle(status == .merged ? Theme.textTertiary : titleIsFallback ? Theme.textSecondary : Theme.textPrimary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                if let shortcutHint, !showsActions {
-                    Text(shortcutHint)
-                        .font(.rocky(11))
-                        .foregroundStyle(Theme.textTertiary)
-                } else if let diffStat, !diffStat.isEmpty, !showsActions, !isCommandHeld {
-                    DiffStatLabel(stat: diffStat)
-                }
+        // One view in every state, only dimmed and made unclickable while git removes it: switching to another view
+        // for the removal made the list's animation cross-fade the two, and the row jumped (user report, 2026-09-28).
+        row
+            .opacity(removal == .removing ? 0.55 : 1)
+            .allowsHitTesting(removal != .removing)
+    }
+
+    /// What the row is doing, said in its trailing slot: the spinner alone did not tell (user request, 2026-09-28:
+    /// "sería bueno que diga deleting, porque no se sabe qué está haciendo"; the same for creating and setting up, by
+    /// the user's answer). WSC-07's removal, WSC-02's creation and WSC-05's Setup; nil otherwise.
+    private var activity: String? {
+        if let removal { return removal == .archiving ? "Archiving…" : "Deleting…" }
+        switch status {
+        case .creating: return "Creating…"
+        case .settingUp: return "Setting up…"
+        default: return nil
+        }
+    }
+
+    /// The glyph, the title and the trailing slot, as one 28-point line.
+    private var content: some View {
+        HStack(spacing: 8) {
+            WorkspaceStatusGlyph(status: status, size: 14)
+                .frame(width: Zoom.shared(16), height: Zoom.shared(16))
+            Text(title)
+                .font(.rocky(13))
+                // ROW-07: a merged workspace's title steps back.
+                .foregroundStyle(status == .merged ? Theme.textTertiary : titleIsFallback ? Theme.textSecondary : Theme.textPrimary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let activity {
+                Text(activity)
+                    .font(.rocky(11.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .fixedSize()
+            } else if let shortcutHint, !showsActions {
+                Text(shortcutHint)
+                    .font(.rocky(11))
+                    .foregroundStyle(Theme.textTertiary)
+            } else if let diffStat, !diffStat.isEmpty, !showsActions, !isCommandHeld {
+                DiffStatLabel(stat: diffStat)
             }
-            .padding(.leading, 24)
-            // The hover actions sit 4 from the right edge; the title stops 8 before them.
-            .padding(.trailing, showsActions ? 4 + Zoom.shared(Self.actionsWidth) + 8 : 8)
-            .frame(height: Zoom.shared(28))
-            .contentShape(Rectangle())
+        }
+        .padding(.leading, 24)
+        // The hover actions sit 4 from the right edge; the title stops 8 before them.
+        .padding(.trailing, showsActions ? 4 + Zoom.shared(Self.actionsWidth) + 8 : 8)
+        .frame(height: Zoom.shared(28))
+        .contentShape(Rectangle())
+    }
+
+    private var row: some View {
+        Button(action: onSelect) {
+            content
         }
         .buttonStyle(SidebarRowButtonStyle())
         .clickable()
         .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .accessibilityAction(named: "Remove Workspace…", onRemove)
-        .accessibilityAction(named: "Open in Finder", openInFinder)
-        .accessibilityAction(named: "Copy Branch Name", copyBranch)
+        .accessibilityActions {
+            if !isInert {
+                Button(creation == nil ? "Remove Workspace…" : "Remove", action: onRemove)
+                if creation == nil {
+                    Button("Open in Finder", action: openInFinder)
+                    Button("Copy Branch Name", action: copyBranch)
+                }
+            }
+        }
         .overlay(alignment: .trailing) {
             actions
         }
@@ -86,7 +139,7 @@ struct SidebarRow: View {
         }
         .onHover { inside in withAnimation(Theme.Motion.hover) { hovering = inside } }
         .help(tooltip)
-        .rockyContextMenu(id: "workspace-\(workspace.id)") { menuItems }
+        .rockyContextMenu(id: "workspace-\(workspace.id)", isEnabled: !isInert) { menuItems }
     }
 
     /// ROW-05: they replace the trailing slot and fade in 120 ms.
@@ -96,7 +149,7 @@ struct SidebarRow: View {
                 Label("Remove workspace", systemImage: "archivebox")
             }
             .buttonStyle(RockyIconButtonStyle(size: 22))
-            .help("Remove workspace…")
+            .help(removeHelp)
             MenuButton(id: moreMenuId, placement: .belowTrailing, width: 220) { isOpen in
                 SidebarMenuIcon(systemImage: "ellipsis", label: "More actions", isOpen: isOpen)
             } content: {
@@ -112,13 +165,28 @@ struct SidebarRow: View {
         .animation(Theme.Motion.hover, value: showsActions)
     }
 
-    /// The same menu for More and a right-click (ROW-05).
+    private var removeHelp: String {
+        creation == nil ? "Remove workspace…" : "Remove"
+    }
+
+    /// The same menu for More and a right-click (ROW-05): none while it is created (`isInert`), Retry and Remove once it
+    /// failed. WSC-07: no Remove while its archive script runs, since its removal is under way.
     @ViewBuilder
     private var menuItems: some View {
-        MenuItem(title: "Open in Finder", icon: .symbol("folder"), action: openInFinder)
-        MenuItem(title: "Copy Branch Name", icon: .symbol("doc.on.doc"), action: copyBranch)
-        MenuDivider()
-        MenuItem(title: "Remove Workspace…", icon: .symbol("archivebox"), isDestructive: true, action: onRemove)
+        switch creation {
+        case .creating?:
+            EmptyView()
+        case .failed?:
+            MenuItem(title: "Retry", icon: .symbol("arrow.clockwise"), disabledReason: retryWait, action: onRetry)
+            MenuItem(title: "Remove", icon: .symbol("archivebox"), isDestructive: true, action: onRemove)
+        case nil:
+            MenuItem(title: "Open in Finder", icon: .symbol("folder"), action: openInFinder)
+            MenuItem(title: "Copy Branch Name", icon: .symbol("doc.on.doc"), action: copyBranch)
+            if removal == nil {
+                MenuDivider()
+                MenuItem(title: "Remove Workspace…", icon: .symbol("archivebox"), isDestructive: true, action: onRemove)
+            }
+        }
     }
 
     /// The title and the state, then the stats when there are some (A11Y-01, GIT-03).
@@ -131,10 +199,15 @@ struct SidebarRow: View {
     }
 
     /// Title; "branch · workspace name" (the name is otherwise only in the path); the failure in the error state
-    /// (ROW-01).
+    /// (ROW-01), and the words of WSC-02's and WSC-07's states, which the row shows only as their glyph.
     private var tooltip: String {
         var lines = [title, "\(workspace.branch) · \(workspace.name)"]
-        if case .failed(let message) = status { lines.append(message) }
+        switch status {
+        case .failed(let message), .creating(let message), .creationFailed(let message), .settingUp(let message), .removing(let message):
+            lines.append(message)
+        default:
+            break
+        }
         return lines.joined(separator: "\n")
     }
 
@@ -164,6 +237,11 @@ struct WorkspaceStatusGlyph: View {
 
     var body: some View {
         switch status {
+        case .creating, .settingUp, .removing:
+            // WSC-02, WSC-07: the working spinner, with no text in the row (user decision, 2026-09-23).
+            CircularProgress(size: size, tint: Theme.textPrimary)
+        case .creationFailed:
+            symbol("exclamationmark.triangle", color: Theme.danger)
         case .needsYou:
             // An 8-point dot with a 3-point halo at 20 %.
             Circle()
@@ -225,9 +303,13 @@ extension WorkspaceStatus {
     /// What VoiceOver reads after a row's title (A11Y-01).
     var accessibilityName: String {
         switch self {
+        case .removing: "Removing"
+        case .creating: "Creating"
+        case .creationFailed: "Couldn't create"
         case .needsYou: "Needs you"
         case .failed: "Error"
         case .working: "Working"
+        case .settingUp: "Setting up"
         case .unread: "Unread reply"
         case .pullRequest: "Pull request"
         case .merged: "Merged"

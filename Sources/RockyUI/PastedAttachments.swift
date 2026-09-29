@@ -1,4 +1,5 @@
 import AppKit
+import RockyKit
 
 /// What ⌘V in the message box attaches instead of pasting as text.
 enum PastedAttachments {
@@ -21,19 +22,12 @@ enum PastedAttachments {
     }
 
     /// Writes the image as `image.png`, the name its badge shows (as Conductor's does), in a folder of its own under
-    /// ~/Library/Caches/Rocky/Pasted so pastes never overwrite each other.
+    /// ~/Library/Caches/Rocky/Pasted so pastes never overwrite each other, as linked issues are (`PastedFiles`, M2.9
+    /// Decision 4).
     private static func save(_ image: NSImage) -> URL? {
         guard let tiff = image.tiffRepresentation,
               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]),
-              let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return nil }
-        let folder = caches.appendingPathComponent("Rocky/Pasted/\(UUID().uuidString)", isDirectory: true)
-        let url = folder.appendingPathComponent("image.png")
-        do {
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            try png.write(to: url)
-            return url
-        } catch {
-            return nil
-        }
+              let folder = PastedFiles.standardFolder() else { return nil }
+        return try? PastedFiles.write(png, named: "image.png", in: folder)
     }
 }

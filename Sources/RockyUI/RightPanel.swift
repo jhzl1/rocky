@@ -48,7 +48,12 @@ struct RightPanel: View {
                 MergeErrorLine(text: failure) { model.dismissMergeError(workspaceId: workspace.id) }
             }
             Group {
+                let isCreating = model.creations[workspace.id] != nil
                 switch tab {
+                case .files where isCreating, .changes where isCreating:
+                    // WSC-03: one spinner where the files will be, until the worktree exists.
+                    CircularProgress(size: 14)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 case .files:
                     FilesTab(model: model, workspace: workspace)
                 case .changes:
@@ -139,9 +144,10 @@ private struct MergeErrorLine: View {
     }
 }
 
-/// PNL-03: Conductor's pill tabs, 4 apart, drawn from `RightPanelTab.allCases` (CHG-01: All files · Changes N ·
-/// Checks), in a 34-point row with 8 points at its sides and the hairline at its bottom, like the conversation's tab
-/// row (`ConversationTabs`), so their lines are one line across the window (LAY-01).
+/// PNL-03: the panel's tabs, drawn from `RightPanelTab.allCases` (CHG-01: All files · Changes N · Checks), in a
+/// 34-point row with the hairline at its bottom, like the conversation's tab row (`ConversationTabs`), so their lines are
+/// one line across the window (LAY-01). Tabs like the conversation's, not pills, so both rows read alike (user request,
+/// 2026-09-28: "en vez de botones tengamos algo así como lo que tenemos en la parte central").
 private struct RightPanelTabRow: View {
     let selection: RightPanelTab
     /// A tab's number after its title (CHG-01's changed files); none, or 0, shows nothing.
@@ -150,9 +156,7 @@ private struct RightPanelTabRow: View {
 
     var body: some View {
         let tabs = RightPanelTab.allCases
-        HStack(spacing: 4) {
-            // M2.7 drew its lone Checks tab as a title (a single pill read as a button that did nothing); with
-            // Changes there is something to switch to, so every tab is a pill.
+        HStack(spacing: 0) {
             ForEach(tabs, id: \.self) { tab in
                 RightPanelTabButton(title: tab.title, count: counts[tab] ?? 0, isSelected: tab == selection) { select(tab) }
             }
@@ -167,8 +171,9 @@ private struct RightPanelTabRow: View {
     }
 }
 
-/// One pill of PNL-03: 26 points, radius 6, 12.5 `textSecondary`; `fillHover` on hover; `fillSelected` and
-/// `textPrimary` when selected. CHG-01: a count after the title, 11 mono `textTertiary`, 5 apart, hidden at 0.
+/// One tab of PNL-03, as a conversation's tab draws it (`WorkspaceTab`): 12.5, `textSecondary` at rest, `textPrimary` on
+/// hover and while selected, and a 2-point `textPrimary` underline on the row's hairline under the selected one; no
+/// fill. CHG-01: a count after the title, 11 mono `textTertiary`, 5 apart, hidden at 0.
 private struct RightPanelTabButton: View {
     let title: String
     var count = 0
@@ -188,12 +193,13 @@ private struct RightPanelTabButton: View {
                         .foregroundStyle(Theme.textTertiary)
                 }
             }
-            .padding(.horizontal, 9)
-            .frame(height: Zoom.shared(26))
-            .background(
-                isSelected ? Theme.fillSelected : hovering ? Theme.fillHover : Color.clear,
-                in: RoundedRectangle(cornerRadius: 6)
-            )
+            .padding(.horizontal, 10)
+            .frame(height: Zoom.shared(34))
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(isSelected ? Theme.textPrimary : Color.clear)
+                    .frame(height: 2)
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

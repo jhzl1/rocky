@@ -151,7 +151,12 @@ public final class ChatSessionModel {
     /// A line for the window's toast (`AppModel.onToast`): a picked model the agent does not have (`AGM-02`).
     @ObservationIgnored public var onToast: (@MainActor (String) -> Void)?
 
-    @ObservationIgnored private let launch: AgentLaunch
+    /// nil for a chat made before its workspace's worktree existed, until its first start resolves it
+    /// (`resolveLaunch`, WSC-03).
+    @ObservationIgnored private var launch: AgentLaunch?
+    /// WSC-03: where such a chat's launch comes from, once the worktree exists; nil when there is none yet (the
+    /// creation failed, or the workspace was removed), and the chat then stays idle until its next start.
+    @ObservationIgnored private var resolveLaunch: (@MainActor () async throws -> AgentLaunch?)?
     @ObservationIgnored private let flushInterval: Duration
     @ObservationIgnored private let onPersist: @MainActor (ChatItem) -> Void
     @ObservationIgnored private let onSessionReady: @MainActor (String) -> Void
@@ -201,6 +206,33 @@ public final class ChatSessionModel {
         self.onSessionReady = onSessionReady
     }
 
+    /// WSC-03: the conversation of a workspace whose worktree does not exist yet, on screen at once with its message
+    /// box. Its launch comes from `launchWhenReady` at its first start, which waits in `.starting` (the model button's
+    /// spinner, AGM-05) until git has made the worktree; nil there leaves it idle. Messages sent meanwhile wait in the
+    /// queue (`isWaitingForWorkspace`) and go once the agent is ready.
+    public init(
+        agent: AgentKind,
+        launchWhenReady: @escaping @MainActor () async throws -> AgentLaunch?,
+        flushInterval: Duration = .milliseconds(100),
+        onPersist: @escaping @MainActor (ChatItem) -> Void = { _ in },
+        onSessionReady: @escaping @MainActor (String) -> Void = { _ in }
+    ) {
+        self.agent = agent
+        self.launch = nil
+        self.resolveLaunch = launchWhenReady
+        self.items = []
+        self.resumeSessionId = nil
+        self.flushInterval = flushInterval
+        self.onPersist = onPersist
+        self.onSessionReady = onSessionReady
+    }
+
+    /// WSC-03: the chat has no launch yet, since its workspace's worktree does not exist yet: a message sent now waits
+    /// in the queue, shown, and goes once the agent is ready.
+    public var isWaitingForWorkspace: Bool {
+        launch == nil
+    }
+
     /// Starts the agent. A second call while it is starting waits for the same start, so a message sent while
     /// the agent starts in the background goes out once it is ready.
     public func start() async {
@@ -236,6 +268,7 @@ public final class ChatSessionModel {
         resumeSessionId = sessionId ?? resumeSessionId
         sessionId = nil
         earlyCommands = nil
+        guard let launch = await launchForStart() else { return }
         do {
             let connection = try ACPConnection(
                 executable: launch.executable,
@@ -280,10 +313,10 @@ public final class ChatSessionModel {
                     // The agent no longer has that session, for example after the repo switched Claude instances.
                     // Shown but not saved: it says why the agent forgot the conversation, and it must not pile up.
                     items.append(ChatItem(kind: .error, text: "Could not resume the previous conversation (\(message)); started a new one."))
-                    try await startNewSession(on: connection)
+                    try await startNewSession(on: connection, cwd: launch.cwd)
                 }
             } else {
-                try await startNewSession(on: connection)
+                try await startNewSession(on: connection, cwd: launch.cwd)
             }
             await applyPendingModel()
             // Stopped while it started (AGM-02 stops an agent that may still be starting): it stays stopped, and the
@@ -294,10 +327,42 @@ public final class ChatSessionModel {
             }
             state = .ready
             if let sessionId { onSessionReady(sessionId) }
+            // WSC-03: what was written while the workspace was being made goes now, in order. A queue on hold (a stop,
+            // an error) stays on hold, as after any start.
+            if !queue.isEmpty, !isQueueHeld {
+                let next = queue.removeFirst()
+                Task { await sendNextQueued(next) }
+            }
         } catch {
             // Stopped while it started: the stop says what happened, not the exit it caused (M2.8 Decision 3).
             if !isStopped { fail(Self.describe(error)) }
             await connection?.terminate()
+        }
+    }
+
+    /// The launch, resolved at the first start of a chat made before its worktree existed (WSC-03). nil ends the start:
+    /// there is no worktree to start in yet, so the chat goes back to idle; or it was stopped while it waited, and stays
+    /// stopped. A launch that cannot be resolved (the agent's install failed) fails the start, as an agent that cannot
+    /// start does, and the next start tries again.
+    private func launchForStart() async -> AgentLaunch? {
+        if let launch { return launch }
+        guard let resolveLaunch else {
+            state = .idle
+            return nil
+        }
+        do {
+            let resolved = try await resolveLaunch()
+            guard !isStopped else { return nil }
+            guard let resolved else {
+                state = .idle
+                return nil
+            }
+            launch = resolved
+            self.resolveLaunch = nil
+            return resolved
+        } catch {
+            if !isStopped { fail(Self.describe(error)) }
+            return nil
         }
     }
 
@@ -321,8 +386,8 @@ public final class ChatSessionModel {
         }
     }
 
-    private func startNewSession(on connection: ACPConnection) async throws {
-        let result = try await connection.call("session/new", ACPProtocol.newSessionParams(cwd: launch.cwd))
+    private func startNewSession(on connection: ACPConnection, cwd: URL) async throws {
+        let result = try await connection.call("session/new", ACPProtocol.newSessionParams(cwd: cwd))
         guard let id = ACPProtocol.sessionId(fromNewSession: result) else {
             throw ACPConnectionError.rpc(code: 0, message: "session/new returned no sessionId")
         }
@@ -515,6 +580,15 @@ public final class ChatSessionModel {
             queue.insert(message, at: 0)
             steers = true
             await cancel()
+            return
+        }
+        // WSC-03: no agent to send it to until the worktree exists. It goes first once the agent is ready, with the
+        // rest of the queue after it, rather than racing the queue for the first turn.
+        if isWaitingForWorkspace {
+            queue.insert(message, at: 0)
+            isQueueHeld = false
+            // A start already waits for the worktree, or this one begins to; either way nothing is to wait for here.
+            if state != .starting { Task { await start() } }
             return
         }
         if case .stopped = state { await start() }

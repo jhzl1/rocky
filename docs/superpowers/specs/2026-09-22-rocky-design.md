@@ -86,7 +86,7 @@ tab is shown, so its settings are ready without a click. Hidden tabs start nothi
   agent replaying recorded JSON-RPC; energy script reading `CurrentPowerlog.PLSQL` over 30 min.
 
 ## Milestones (each gets its own implementation plan)
-Status as of 2026-09-25 (after M2.8's merge). **Done** means merged into `development`; each plan's first lines say the same.
+Status as of 2026-09-29 (after M2.9's merge). **Done** means merged into `development`; each plan's first lines say the same.
 
 | # | What | Done when | Status |
 | --- | --- | --- | --- |
@@ -97,8 +97,42 @@ Status as of 2026-09-25 (after M2.8's merge). **Done** means merged into `develo
 | M2.6 | Slash commands | the agent's commands in the message box; terminal-only ones in an embedded terminal (added 2026-09-23) | **Done** 2026-09-23, pushed; Task 9 with real agents still open (`m2.6-verification.md`) |
 | M2.7 | GitHub pull request panel | Conductor's right panel, one GitHub account per repository, PR state, checks, merge and agent actions (added 2026-09-23) | **Done** 2026-09-24, pushed; manual checklist on a throwaway repository still open (`m2.7-verification.md`) |
 | M2.8 | Conversations and agents | "+" creates at once, the default agent, agents in the model menu (added 2026-09-23); ⌃` toggles the terminal (added 2026-09-25); Rocky's own mini-modals in place of the native dialogs (added 2026-09-25) | **Done** 2026-09-25, pushed; "+" and the default agent shipped early with M3's follow-up branch; manual checklist still open (`m2.8-verification.md`) |
+| M2.9 | GitHub links and VS Code tasks | link an issue, a pull request or a branch from the message box's "+", switching the worktree to a pull request or branch and naming the workspace after the issue; run `.vscode/tasks.json`'s tasks from Run, now a split button, with their inputs, dependencies and background waits (added 2026-09-25) | **Done** 2026-09-29, pushed; manual checklist still open (`m2.9-verification.md`) |
 | M3 | Diff, comments, editor, files | review, comment, edit and commit; the All files tab to browse and edit any file (added 2026-09-24); its PR part moved to M2.7 | **Done** 2026-09-24; manual checklist still open (`m3-verification.md`) |
 | M4 | Multi-account + energy | per-repo account everywhere; energy measured vs Conductor | **Not planned**: M2.7 already gives each repository its account and `GH_TOKEN`; left: git identity and SSH key per account, and the energy measurement |
+| M5 | Distribution | friends install Rocky with one command and hear about new versions (added 2026-09-25) | **Not planned** (user decision, 2026-09-25: "lo dejemos escrito, pero aún no lo haremos"); what it holds is in "Distribution (M5, not planned)" below |
+
+## Distribution (M5, not planned)
+
+Written down on 2026-09-25 at the user's request, to be planned later. Today `scripts/make-app.sh` builds
+`build/Rocky.app` only: signed ad hoc (or with the local "Rocky Local" certificate), `arm64` only, version `0.1.0`
+(build `1`) since the start, no `.dmg`, no update check.
+
+- **Releases.** `scripts/release.sh`:
+  - raises `CFBundleShortVersionString` and `CFBundleVersion` in `Resources/Info.plist`;
+  - builds the app and zips it (`ditto -c -k --keepParent`);
+  - creates a GitHub Release on `jhzl1/rocky` (public) with `Rocky.zip` attached (`gh release create`).
+- **Install with one command.** An `install.sh` at the repository's root, run as
+  `curl -fsSL https://raw.githubusercontent.com/jhzl1/rocky/main/install.sh | bash`:
+  - it downloads the latest release's zip with `curl`, unzips it into `/Applications` and clears
+    `com.apple.quarantine`;
+  - files that `curl` downloads are not quarantined, so Gatekeeper does not block the ad hoc-signed app, and no Apple
+    Developer ID is needed;
+  - the script stays short and readable, since the user runs it with their own permissions.
+- **Knowing about a new version.** It follows the agents' update check (`AgentVersions`):
+  - once a day, over `URLSession`, Rocky asks `api.github.com/repos/jhzl1/rocky/releases/latest` and compares the
+    version with its own;
+  - when a newer one exists, a Rocky banner offers Update, which downloads the zip (not quarantined), replaces
+    `/Applications/Rocky.app` and relaunches;
+  - there is no other network use at rest (energy rules).
+- **Later, only if Rocky goes beyond friends:**
+  - a Developer ID certificate (Apple Developer Program, USD 99 a year) and notarization (`xcrun notarytool`,
+    `xcrun stapler`) in `release.sh`, so a `.dmg` downloaded from a browser opens without "Apple could not verify…";
+  - Sparkle, once the app is signed with Developer ID;
+  - a Homebrew tap (`brew install --cask`), whose downloads are quarantined unless the app is notarized.
+- **What the other Mac needs:** Apple Silicon, since the build is `arm64` (a universal build would add Intel), macOS 15,
+  git, Node (the agents are installed with npm), `gh` signed in for GitHub, and its own Claude Code or OpenCode
+  account.
 
 ## M0 answers
 - `gh auth git-credential` honors `GH_TOKEN` for git over HTTPS (verified with `git ls-remote`; `git push` uses the same credential helper but was not exercised): with `GH_TOKEN` set, `gh`/git-over-HTTPS act as that token's account; without it, they fall back to the active `gh` account via `gh auth git-credential` (not an `osxkeychain` cache). Details: `docs/superpowers/spikes/2026-09-22-m0-findings.md`.

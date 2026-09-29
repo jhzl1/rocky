@@ -350,9 +350,9 @@ private struct MergeMethodMenu: View {
     }
 }
 
-/// PR-06's Archive, in the merged header: today's remove flow at once when the worktree is clean; with uncommitted
+/// PR-06's Archive, in the merged header: the remove flow at once when the worktree is clean; with uncommitted
 /// changes or untracked files, first "tokyo has 3 uncommitted changes. Archive anyway?" (Cancel / Archive), whose
-/// Archive stashes them before removing the worktree. The branch, and the one on GitHub, stay.
+/// Archive stashes them before removing the worktree. The branch follows WSC-07's rule; the one on GitHub stays.
 private struct ArchiveButton: View {
     let model: AppModel
     let workspace: Workspace
@@ -368,13 +368,13 @@ private struct ArchiveButton: View {
         }
         .buttonStyle(HeaderButtonStyle(kind: .archive))
         .disabled(running || isChecking)
-        .help("Run the archive script and remove the worktree; the branch is kept")
+        .help("Run the archive script and remove the worktree")
         .rockyDialog(item: $uncommitted) { count in
             let model = self.model
             let workspaceId = workspace.id
             return Dialog(
                 title: AppModel.archiveQuestion(workspaceName: workspace.name, uncommitted: count),
-                message: "Rocky puts them in a git stash of the repository first, then removes the worktree. The branch \(workspace.branch) is kept.",
+                message: "Rocky puts them in a git stash of the repository first, then removes the worktree. \(AppModel.branchSentence(branch: workspace.branch))",
                 buttons: [
                     .cancel(),
                     .destructive("Archive") {

@@ -91,6 +91,10 @@ public enum AgentActionAvailability: Equatable, Sendable {
     case working
     /// Its agent stopped (on an error, or it was stopped): it cannot take a prompt until restarted.
     case stopped
+    /// Its worktree is being created, or could not be (WSC-03): no action on it until it exists (user decision,
+    /// 2026-09-28: "si está creando no quiero permitir habilitar ninguna acción sobre ese worktree"). The text is the
+    /// tooltip, "Creating lima…".
+    case creating(String)
 
     /// The disabled buttons' tooltip.
     public var reason: String? {
@@ -98,6 +102,7 @@ public enum AgentActionAvailability: Equatable, Sendable {
         case .available: nil
         case .working: "The agent is working"
         case .stopped: "Restart the agent first"
+        case .creating(let hint): hint
         }
     }
 }

@@ -238,6 +238,168 @@ struct AppModelProcessTests {
         await model.stopAllProcesses()
     }
 
+    // MARK: VS Code tasks (TSK-01…TSK-06, M2.9)
+
+    /// Writes `tasks.json` into the main clone only, untracked, so the worktree has none and Rocky reads the clone's
+    /// (TSK-01).
+    private func writeTasks(_ json: String, in model: AppModel, repoId: String) throws {
+        let clone = URL(fileURLWithPath: try #require(model.repo(id: repoId)).path)
+        try FileManager.default.createDirectory(at: clone.appendingPathComponent(".vscode"), withIntermediateDirectories: true)
+        try Data(json.utf8).write(to: clone.appendingPathComponent(VSCodeTasks.relativePath))
+    }
+
+    /// The wiring on real `/bin/zsh` sessions: the main clone's file; the input asked once; a hidden dependency in a
+    /// silent shared tab, with its echo line; a background dependency done on its pattern and still running; the task in
+    /// its dedicated tab, selected, in `options.cwd` with the workspace's environment plus `options.env`; then Stop of
+    /// the task and of the dependency it started.
+    @Test func aTaskRunsItsChainInTabs() async throws {
+        let model = try makeModel()
+        let repoId = try await addRepo(model)
+        await model.createWorkspace(repoId: repoId)
+        let workspace = try #require(model.workspaces[repoId]?.first)
+        #expect(!FileManager.default.fileExists(atPath: workspace.path + "/.vscode"))
+        try writeTasks(#"""
+        { "version": "2.0.0",
+          "tasks": [
+            { "label": "Run: App", "type": "shell",
+              "command": "printf '%s %s' \"$GREETING\" \"$PORT\" > greeting.txt; sleep 30",
+              "options": { "cwd": "${workspaceFolder}/app", "env": { "GREETING": "hello ${input:who}" } },
+              "dependsOn": ["_prepare", "_server"], "dependsOrder": "sequence",
+              "presentation": { "panel": "dedicated" } },
+            // A shell, as VS Code's are, and a server that says when it is ready.
+            { "label": "_prepare", "type": "shell", "command": "mkdir -p app", "presentation": { "reveal": "silent" } },
+            { "label": "_server", "type": "shell", "command": "echo \"serving ${input:who}\"; echo 'ready in 5 ms'; sleep 30",
+              "isBackground": true, "problemMatcher": { "background": { "endsPattern": "ready in \\d+" } },
+              "presentation": { "panel": "dedicated", "reveal": "silent" } },
+          ],
+          "inputs": [ { "id": "who", "type": "pickString", "options": ["world", "rocky"], "default": "world" } ]
+        }
+        """#, in: model, repoId: repoId)
+
+        await model.lookForTasks(workspaceId: workspace.id)
+        #expect(model.runMenus[workspace.id]?.tasks == .unread)
+        let asked = AskLog()
+        let outcome = await model.runTask(workspaceId: workspace.id, label: "Run: App") { input in
+            asked.ids.append(input.id)
+            return "rocky"
+        }
+        #expect(asked.ids == ["who"])
+        let tasks = try #require(model.existingProcesses(for: workspace.id)?.tasks)
+        #expect(tasks.map(\.title) == ["_prepare", "_server", "Run: App"])
+        let (prepare, server, app) = (tasks[0], tasks[1], tasks[2])
+        #expect(outcome == .started(app.id))
+        #expect(model.terminalRevealRequests[workspace.id]?.sessionId == app.id)
+        #expect(prepare.state == .exited(0))
+        try await waitUntil { prepare.outputText.contains("> mkdir -p app") }
+        #expect(server.state.isRunning)
+        #expect(server.outputText.contains("serving rocky"))
+        #expect(model.taskSession(workspaceId: workspace.id, label: "Run: App") === app)
+        try await waitUntil { FileManager.default.fileExists(atPath: workspace.path + "/app/greeting.txt") }
+        try await waitUntil { (try? String(contentsOfFile: workspace.path + "/app/greeting.txt", encoding: .utf8)) == "hello rocky 41000" }
+
+        // Chosen again, it is not started twice: its tab shows.
+        #expect(await model.runTask(workspaceId: workspace.id, label: "Run: App") { _ in nil } == .alreadyRunning(app.id))
+
+        await model.stopTask(workspaceId: workspace.id, label: "Run: App")
+        #expect(!app.state.isRunning && app.stopRequested)
+        #expect(!server.state.isRunning && server.stopRequested)
+        #expect(model.taskSession(workspaceId: workspace.id, label: "Run: App") == nil)
+        await model.stopAllProcesses()
+    }
+
+    /// Decision 7: a shared tab whose task ended is reused in place, and the selection follows it; "new" opens a tab
+    /// each run; closing a task's tab stops it and removes it.
+    @Test func finishedTaskTabsAreReusedInPlace() async throws {
+        let model = try makeModel()
+        let repoId = try await addRepo(model)
+        await model.createWorkspace(repoId: repoId)
+        let workspace = try #require(model.workspaces[repoId]?.first)
+        try writeTasks("""
+        { "version": "2.0.0", "tasks": [
+          { "label": "Build", "type": "shell", "command": "echo built" },
+          { "label": "Once", "type": "shell", "command": "echo once", "presentation": { "panel": "new" } },
+          { "label": "Serve", "type": "shell", "command": "sleep 30" }
+        ] }
+        """, in: model, repoId: repoId)
+        await model.readRunMenu(workspaceId: workspace.id)
+        _ = await model.runTask(workspaceId: workspace.id, label: "Build") { _ in nil }
+        let processes = try #require(model.existingProcesses(for: workspace.id))
+        let first = try #require(processes.tasks.first)
+        #expect(await first.waitForExit() == .exited(0))
+
+        _ = await model.runTask(workspaceId: workspace.id, label: "Build") { _ in nil }
+        let second = try #require(processes.tasks.first)
+        #expect(processes.tasks.count == 1)
+        #expect(second !== first)
+        #expect(processes.current(first.id) == second.id)
+        #expect(await second.waitForExit() == .exited(0))
+
+        for _ in 0..<2 {
+            _ = await model.runTask(workspaceId: workspace.id, label: "Once") { _ in nil }
+            #expect(await processes.tasks.last?.waitForExit() == .exited(0))
+        }
+        #expect(processes.tasks.map(\.title) == ["Build", "Once", "Once"])
+
+        // "Build" ended, so "Serve" takes its shared tab.
+        _ = await model.runTask(workspaceId: workspace.id, label: "Serve") { _ in nil }
+        let serve = try #require(model.taskSession(workspaceId: workspace.id, label: "Serve"))
+        #expect(processes.tasks.map(\.title) == ["Serve", "Once", "Once"])
+        #expect(processes.current(first.id) == serve.id)
+        await model.closeTask(workspaceId: workspace.id, sessionId: serve.id)
+        #expect(serve.stopRequested)
+        #expect(processes.tasks.map(\.title) == ["Once", "Once"])
+    }
+
+    /// TSK-03, Decision 10: in `nonconcurrent` mode a task stops the Run script and the tasks of every other workspace.
+    @Test func aNonconcurrentTaskStopsOtherWorkspacesRunsAndTasks() async throws {
+        let model = try makeModel()
+        let repoId = try await addRepo(model)
+        model.setScripts(repoId: repoId, setup: "", run: "sleep 30", archive: "", runMode: .nonconcurrent)
+        await model.createWorkspace(repoId: repoId)
+        await model.createWorkspace(repoId: repoId)
+        let all = try #require(model.workspaces[repoId])
+        try #require(all.count == 2)
+        try writeTasks(#"{ "version": "2.0.0", "tasks": [ { "label": "Serve", "type": "shell", "command": "sleep 30" } ] }"#, in: model, repoId: repoId)
+
+        await model.startRun(workspaceId: all[0].id)
+        let run = try #require(model.existingProcesses(for: all[0].id)?.run)
+        _ = await model.runTask(workspaceId: all[1].id, label: "Serve") { _ in nil }
+        let firstTask = try #require(model.taskSession(workspaceId: all[1].id, label: "Serve"))
+        #expect(run.stopRequested)
+
+        _ = await model.runTask(workspaceId: all[0].id, label: "Serve") { _ in nil }
+        #expect(firstTask.stopRequested)
+        #expect(model.taskSession(workspaceId: all[0].id, label: "Serve")?.state.isRunning == true)
+
+        // The Run script keeps the same rule: it stops the other workspace's task too.
+        await model.startRun(workspaceId: all[1].id)
+        #expect(model.taskSession(workspaceId: all[0].id, label: "Serve") == nil)
+        await model.stopAllProcesses()
+    }
+
+    /// TSK-07: a chain Rocky cannot run starts nothing, and a failed dependency stops it.
+    @Test func brokenAndFailingChainsStartNothing() async throws {
+        let model = try makeModel()
+        let repoId = try await addRepo(model)
+        await model.createWorkspace(repoId: repoId)
+        let workspace = try #require(model.workspaces[repoId]?.first)
+        try writeTasks("""
+        { "version": "2.0.0", "tasks": [
+          { "label": "Open", "type": "shell", "command": "open ${file}" },
+          { "label": "Run: Web Client", "type": "shell", "command": "echo web", "dependsOn": "_Dev: Cleanup orphans" },
+          { "label": "_Dev: Cleanup orphans", "type": "shell", "command": "exit 4" }
+        ] }
+        """, in: model, repoId: repoId)
+        #expect(await model.runTask(workspaceId: workspace.id, label: "Open") { _ in nil } == .invalid(.unsupportedVariable(task: "Open", variable: "${file}")))
+        #expect(model.existingProcesses(for: workspace.id)?.tasks.isEmpty != false)
+
+        let outcome = await model.runTask(workspaceId: workspace.id, label: "Run: Web Client") { _ in nil }
+        let cleanup = try #require(model.existingProcesses(for: workspace.id)?.tasks.first)
+        #expect(outcome == .failed(dependency: "_Dev: Cleanup orphans", process: cleanup.id))
+        #expect(cleanup.state == .exited(4))
+        #expect(model.existingProcesses(for: workspace.id)?.tasks.map(\.title) == ["_Dev: Cleanup orphans"])
+    }
+
     @Test func rejectsInvalidVariableNames() async throws {
         let model = try makeModel()
         let repoId = try await addRepo(model)

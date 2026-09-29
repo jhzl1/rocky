@@ -606,9 +606,19 @@ final class ComposerTextView: NSTextView {
             FilePreviewPanel.shared.hide(previous.path)
         }
         hoveredBadge = attachment
+        // A link's badge has its title as its tooltip (GHL-04); the view's tooltip follows the badge under the pointer.
+        toolTip = attachment.flatMap { LinkBadgeTitles.cached($0.path) }
         guard let attachment else { return }
         attachment.isHovered = true
         redraw(attachment)
+        if toolTip == nil, LinkAttachments.kind(ofPath: attachment.path) != nil {
+            let path = attachment.path
+            Task { [weak self, weak attachment] in
+                let title = await LinkBadgeTitles.title(for: path)
+                guard let self, let attachment, self.hoveredBadge === attachment else { return }
+                self.toolTip = title
+            }
+        }
         FilePreviewPanel.shared.show(attachment.path, in: window) { [weak self, weak attachment] in
             guard let self, let attachment, let window = self.window,
                   let frame = self.badgeFrames().first(where: { $0.attachment === attachment })?.frame else { return nil }

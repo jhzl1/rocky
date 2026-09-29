@@ -104,7 +104,7 @@ struct SettingsContent: View {
                 SettingsSection("GitHub") {
                     SettingsRow(
                         "Archive a workspace when its pull request merges",
-                        detail: "Runs its archive script and removes its worktree; the branch is kept. A worktree with uncommitted changes is left as it is."
+                        detail: "Runs its archive script and removes its worktree, and its rocky/ branch when all its commits are also elsewhere. A worktree with uncommitted changes is left as it is."
                     ) {
                         Toggle("Archive a workspace when its pull request merges", isOn: archiveOnMerge)
                             .toggleStyle(.switch)

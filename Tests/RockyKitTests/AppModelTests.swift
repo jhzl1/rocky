@@ -718,7 +718,8 @@ struct AppModelTests {
         await sending
         let next = try #require(await model.newConversation(workspace: workspace))
         #expect(next.agent == .opencode)
-        #expect(model.conversations[workspace.id]?.map(\.agent) == ["claude", "opencode", "opencode"])
+        // The workspace's first conversation came with it (WSC-03), with Claude Code before any message.
+        #expect(model.conversations[workspace.id]?.map(\.agent) == ["claude", "claude", "opencode", "opencode"])
         #expect(model.selectedConversationIds[workspace.id] == model.conversations[workspace.id]?.last?.id)
 
         // A Claude Code conversation picked from the bridge, with no message sent, leaves the default alone.
@@ -827,7 +828,8 @@ struct AppModelTests {
         #expect(stored.agent == "opencode")
         #expect(stored.acpSessionId == nil)
         #expect(model.conversations[workspace.id]?.map(\.id) == tabs)
-        #expect(model.conversations[workspace.id]?.map(\.agent) == ["opencode", "claude"])
+        // After the conversation the workspace came with (WSC-03).
+        #expect(model.conversations[workspace.id]?.map(\.agent) == ["claude", "opencode", "claude"])
         #expect(model.selectedConversationIds[workspace.id] == conversationId)
         #expect(old.state == .stopped("Stopped"))
         #expect(other.state == .ready)
@@ -864,7 +866,8 @@ struct AppModelTests {
         #expect(opencode.state == .stopped("Stopped"))
         #expect(opencode.failure == nil)
         #expect(claude.option(SessionConfigOption.model)?.current == "opus")
-        #expect(model.conversations[workspace.id]?.map(\.agent) == ["claude"])
+        // The first is the conversation the workspace came with (WSC-03).
+        #expect(model.conversations[workspace.id]?.map(\.agent) == ["claude", "claude"])
         await model.stopAllAgents()
     }
 
@@ -910,7 +913,8 @@ struct AppModelTests {
         chat.enqueue("after this turn")
 
         #expect(await model.pickModel(conversationId: conversationId, agent: .opencode, model: nil) == .openedConversation)
-        #expect(model.conversations[workspace.id]?.map(\.agent) == ["claude", "opencode"])
+        // After the conversation the workspace came with (WSC-03).
+        #expect(model.conversations[workspace.id]?.map(\.agent) == ["claude", "claude", "opencode"])
         #expect(model.chat(conversationId: conversationId) === chat)
         #expect(chat.queue.map(\.text) == ["after this turn"])
         await model.stopAllAgents()
@@ -1540,7 +1544,8 @@ struct AppModelTests {
     }
 
     /// PR-06: the question counts what is uncommitted, and its Archive puts the changes, untracked files included, in
-    /// a stash of the repository before git removes the worktree; the branch stays.
+    /// a stash of the repository before git removes the worktree. The branch, with nothing of its own, then goes (WSC-07's
+    /// rule, user decision of 2026-09-28); the stash keeps the changes.
     @Test func archiveAnywayStashesTheChangesFirst() async throws {
         let model = try makeModel()
         await model.bootstrap()
@@ -1561,7 +1566,7 @@ struct AppModelTests {
         #expect(!FileManager.default.fileExists(atPath: workspace.path))
         #expect(try await GitFixture.gitOffMain(["stash", "list", "--format=%s"], in: repo).contains("Rocky archived \(workspace.name)"))
         #expect(try await GitFixture.gitOffMain(["show", "--name-only", "--format=", "stash@{0}^3"], in: repo).contains("DRAFT.md"))
-        #expect(try await GitFixture.gitOffMain(["rev-parse", "--verify", "--quiet", "refs/heads/\(workspace.branch)"], in: repo).isEmpty == false)
+        #expect(try await GitFixture.gitOffMain(["branch", "--list", workspace.branch], in: repo).isEmpty)
     }
 
     // MARK: Sidebar (ROW-07)
@@ -2730,5 +2735,278 @@ struct AppModelTests {
         await model.bootstrap()
         #expect(model.loginEnvironment["PATH"] != nil)
         #expect(model.errorMessage?.hasPrefix("Could not read your login shell environment") == true)
+    }
+
+    // MARK: GitHub links (GHL-01…GHL-06, M2.9)
+
+    /// GitHub's answers for the link tests: the full issue #4573; the full pull request `number`, from `head` into
+    /// `release`, a fork's for #4402; the pull request panel's snapshot for any other query; and `readable`'s answer to
+    /// ACC-01's GET of the repository.
+    private static func linkReplies(head: String = "fix/test-pr-validation", readable: Bool = true) -> @Sendable (StubURLProtocol.Sent) -> StubURLProtocol.Reply {
+        { sent in
+            guard sent.request.url?.path == "/graphql" else { return .init(status: readable ? 200 : 404) }
+            let query = sent.graphQL?.query ?? ""
+            let number = sent.graphQL?.variables["number"]
+            guard query.contains("comments(first: 100)") else { return .init(body: GitHubStubs.snapshot()) }
+            if query.contains("issue(number: $number)") {
+                return .init(body: Data(#"""
+                    {"data":{"repository":{"issue":{"number":4573,"title":"Un filtro negativo de proveedor aplica también a los productos sin proveedor",
+                    "url":"https://github.com/jhzl1/app/issues/4573","state":"OPEN","stateReason":null,"createdAt":"2026-09-20T10:00:00Z",
+                    "body":"Steps.","author":{"login":"jhzl1"},"labels":{"nodes":[]},"assignees":{"nodes":[]},
+                    "comments":{"totalCount":1,"nodes":[{"author":{"login":"ana"},"createdAt":"2026-09-21T10:00:00Z","body":"Seen."}]}}}}}
+                    """#.utf8))
+            }
+            let fork = number == .number(4402)
+            return .init(body: Data("""
+                {"data":{"repository":{"pullRequest":{"number":\(fork ? 4402 : 4536),"title":"Validate the PR comment flow",
+                "url":"https://github.com/jhzl1/app/pull/4536","state":"OPEN","isDraft":false,"headRefName":"\(head)",
+                "baseRefName":"release","isCrossRepository":\(fork),"createdAt":"2026-09-22T10:00:00Z","body":"",
+                "author":{"login":"jhzl1"},"labels":{"nodes":[]},"assignees":{"nodes":[]},"comments":{"totalCount":0,"nodes":[]}}}}}
+                """.utf8))
+        }
+    }
+
+    /// A workspace of "app", a clone of a bare origin (`GitFixture.clonedRepo`, default branch `trunk`) that is jhzl1/app
+    /// on GitHub, with `branches` pushed to origin first. Its base is `origin/trunk`, its branch `rocky/<name>`.
+    private func linkWorkspace(
+        pushing branches: [String] = [],
+        _ reply: @escaping @Sendable (StubURLProtocol.Sent) -> StubURLProtocol.Reply = AppModelTests.linkReplies()
+    ) async throws -> (model: AppModel, workspace: Workspace, parent: URL, route: RoutedGitHubProtocol.Route) {
+        let parent = try Fixtures.temporaryDirectory("links")
+        let repo = try await GitFixture.clonedRepoOffMain(in: parent)
+        for branch in branches {
+            try await pushOffMain(branch, in: parent)
+        }
+        let (token, route) = RoutedGitHubProtocol.route(reply)
+        let model = try githubModel(token: token)
+        await model.bootstrap()
+        await model.addRepo(at: repo)
+        let repoId = try #require(model.repos.first?.id)
+        await model.createWorkspace(repoId: repoId)
+        let workspace = try #require(model.workspaces[repoId]?.first)
+        #expect(workspace.baseRef == "origin/trunk")
+        return (model, workspace, parent, route)
+    }
+
+    /// Someone else pushing `branch` to origin, one commit on top of `trunk`.
+    private func pushOffMain(_ branch: String, in parent: URL) async throws {
+        let other = parent.appendingPathComponent("pusher-\(UUID().uuidString)", isDirectory: true)
+        try await GitFixture.gitOffMain(["clone", "-q", "-b", "trunk", parent.appendingPathComponent("origin.git").path, other.path], in: parent)
+        try await GitFixture.gitOffMain(["switch", "-q", "-c", branch], in: other)
+        try await Task.blocking { try Data("\(branch)\n".utf8).write(to: other.appendingPathComponent("pushed.txt")) }.value
+        try await GitFixture.gitOffMain(["add", "pushed.txt"], in: other)
+        try await GitFixture.gitOffMain(["commit", "-q", "-m", "Push \(branch)"], in: other)
+        try await GitFixture.gitOffMain(["push", "-q", "origin", branch], in: other)
+    }
+
+    private func currentBranch(of workspace: Workspace) async throws -> String {
+        try await GitFixture.gitOffMain(["rev-parse", "--abbrev-ref", "HEAD"], in: URL(fileURLWithPath: workspace.path))
+    }
+
+    private func hasLocalBranch(_ name: String, in workspace: Workspace) async -> Bool {
+        (try? await GitFixture.gitOffMain(["rev-parse", "--verify", "--quiet", "refs/heads/\(name)"], in: URL(fileURLWithPath: workspace.path))) != nil
+    }
+
+    /// What `body` threw, as a `GitHubLinkError`.
+    private func linkError(_ body: () async throws -> Void) async -> GitHubLinkError? {
+        do {
+            try await body()
+            return nil
+        } catch {
+            return error as? GitHubLinkError
+        }
+    }
+
+    /// GHL-01, Decision 3: no GitHub remote, no gh account, and an account that cannot read the repository each disable
+    /// the item with their reason; the probe runs once per repository and launch.
+    @Test func linkStateIsUnavailableWithNoAccountThatCanRead() async throws {
+        func workspace(in model: AppModel) async throws -> Workspace {
+            await model.bootstrap()
+            await model.addRepo(at: try await GitFixture.localRepoOffMain(in: try Fixtures.temporaryDirectory("repos")))
+            let repoId = try #require(model.repos.first?.id)
+            await model.createWorkspace(repoId: repoId)
+            return try #require(model.workspaces[repoId]?.first)
+        }
+
+        let noRemote = try makeModel()
+        let local = try await workspace(in: noRemote)
+        #expect(noRemote.githubLinkState(workspaceId: local.id) == nil)
+        #expect(await noRemote.resolveGitHubLinks(workspaceId: local.id) == .unavailable("This repository has no GitHub remote"))
+        #expect(noRemote.githubLinkState(workspaceId: local.id) == .unavailable(GitHubLinkState.noRemote))
+
+        let noAccount = try makeModel(remotes: FakeRemotes(["app": GitHubRepository(owner: "jhzl1", name: "app")]))
+        let unlogged = try await workspace(in: noAccount)
+        #expect(await noAccount.resolveGitHubLinks(workspaceId: unlogged.id) == .unavailable("Add a GitHub account that can read this repository in Settings"))
+
+        let (token, route) = RoutedGitHubProtocol.route(Self.linkReplies(readable: false))
+        let unreadable = try githubModel(token: token)
+        let refused = try await workspace(in: unreadable)
+        #expect(await unreadable.resolveGitHubLinks(workspaceId: refused.id) == .unavailable(GitHubLinkState.noAccount))
+        #expect(await unreadable.resolveGitHubLinks(workspaceId: refused.id) == .unavailable(GitHubLinkState.noAccount))
+        #expect(route.requests.filter { $0.request.url?.path == "/repos/jhzl1/app" }.count == 1)
+        // The picker's requests say so too, without asking GitHub.
+        let error = await linkError { _ = try await unreadable.githubIssues(workspaceId: refused.id, query: "") }
+        #expect(error == .unavailable(GitHubLinkState.noAccount))
+        #expect(!route.requests.contains { $0.graphQL?.query.contains("issues(states: [OPEN]") == true })
+
+        let (readableToken, _) = RoutedGitHubProtocol.route(Self.linkReplies())
+        let readable = try githubModel(token: readableToken)
+        let linked = try await workspace(in: readable)
+        #expect(await readable.resolveGitHubLinks(workspaceId: linked.id) == .available)
+    }
+
+    /// GHL-04: an issue is fetched in full and written as its attachment, under the model's pasted files.
+    @Test func linkingAnIssueWritesItsFile() async throws {
+        let (model, workspace, _, route) = try await linkWorkspace()
+        let file = try await model.linkIssue(workspaceId: workspace.id, number: 4573)
+
+        #expect(file.lastPathComponent == "[GITHUB]-4573.md")
+        #expect(file.deletingLastPathComponent().deletingLastPathComponent().path == model.paths.pastedFiles.path)
+        let text = try await Task.blocking { try String(contentsOf: file, encoding: .utf8) }.value
+        #expect(text.hasPrefix("# #4573 Un filtro negativo de proveedor aplica también a los productos sin proveedor\n"))
+        #expect(text.contains("### @ana, 2026-09-21\n\nSeen."))
+        #expect(!text.contains("gho_test"))
+        let full = route.requests.compactMap(\.graphQL).filter { $0.query.contains("issue(number: $number)") }
+        #expect(full.map(\.variables) == [["owner": "jhzl1", "name": "app", "number": 4573]])
+        // Linking changes nothing in the worktree.
+        #expect(model.workspace(id: workspace.id)?.branch == workspace.branch)
+    }
+
+    /// GHL-05: a branch only on origin is tracked, the workspace keeps its base, its own empty branch is deleted, and
+    /// the file lists the commits the base lacks.
+    @Test func linkingABranchSwitchesTheWorktreeAndDeletesTheOwnBranch() async throws {
+        let (model, workspace, _, _) = try await linkWorkspace(pushing: ["feat/look-and-feel-3"])
+        await model.fetchLinkBranches(workspaceId: workspace.id)
+        let branches = try await model.linkBranches(workspaceId: workspace.id)
+        let remote = try #require(branches.branches.first { $0.name == "feat/look-and-feel-3" })
+        #expect(remote.isRemoteOnly)
+        #expect(branches.reason(for: remote) == nil)
+        let own = try #require(branches.branches.first { $0.name == workspace.branch })
+        #expect(branches.reason(for: own) == "Current branch")
+
+        let file = try await model.linkBranch(workspaceId: workspace.id, branch: remote)
+        #expect(file.lastPathComponent == "[BRANCH]-feat-look-and-feel-3.md")
+        let switched = try #require(model.workspace(id: workspace.id))
+        #expect(switched.branch == "feat/look-and-feel-3")
+        #expect(switched.baseRef == "origin/trunk")
+        #expect(try await currentBranch(of: workspace) == "feat/look-and-feel-3")
+        #expect(await !hasLocalBranch(workspace.branch, in: workspace))
+        #expect(try model.store.workspaces(repoId: workspace.repoId).first?.branch == "feat/look-and-feel-3")
+        let text = try await Task.blocking { try String(contentsOf: file, encoding: .utf8) }.value
+        #expect(text.hasPrefix("# feat/look-and-feel-3\n\n- Upstream: origin/feat/look-and-feel-3\n- Base: origin/trunk\n"))
+        #expect(text.contains("## Commits not in origin/trunk (1)"))
+        #expect(text.contains(" Push feat/look-and-feel-3\n"))
+    }
+
+    /// GHL-05: a pull request switches to its head, fetched first, and its base becomes the workspace's, so Changes and
+    /// new processes' ROCKY_DEFAULT_BRANCH follow.
+    @Test func linkingAPullRequestSwitchesToItsHeadAndBase() async throws {
+        let (model, workspace, _, _) = try await linkWorkspace(pushing: ["fix/test-pr-validation", "release"])
+        let file = try await model.linkPullRequest(workspaceId: workspace.id, number: 4536)
+
+        #expect(file.lastPathComponent == "[GITHUB]-PR-4536.md")
+        let switched = try #require(model.workspace(id: workspace.id))
+        #expect(switched.branch == "fix/test-pr-validation")
+        #expect(switched.baseRef == "origin/release")
+        #expect(model.environment(for: switched)["ROCKY_DEFAULT_BRANCH"] == "release")
+        #expect(try await currentBranch(of: workspace) == "fix/test-pr-validation")
+        #expect(await !hasLocalBranch(workspace.branch, in: workspace))
+        let text = try await Task.blocking { try String(contentsOf: file, encoding: .utf8) }.value
+        #expect(text.contains("- Branch: fix/test-pr-validation → release\n"))
+    }
+
+    /// GHL-05's refusals, each at pick time, each leaving the worktree and the record as they were: a fork's pull
+    /// request, uncommitted changes, commits of its own, unsaved edits, a branch another worktree holds, the current
+    /// branch.
+    @Test func switchingIsRefusedWhileTheWorkspaceHasSomethingOfItsOwn() async throws {
+        let (model, workspace, _, _) = try await linkWorkspace(pushing: ["feat/x"])
+        let worktree = URL(fileURLWithPath: workspace.path)
+        await model.fetchLinkBranches(workspaceId: workspace.id)
+        let target = try #require(try await model.linkBranches(workspaceId: workspace.id).branches.first { $0.name == "feat/x" })
+        #expect(await model.linkSwitchRefusal(workspaceId: workspace.id) == nil)
+
+        #expect(await linkError { _ = try await model.linkPullRequest(workspaceId: workspace.id, number: 4402) } == .fromFork)
+
+        try await Task.blocking { try Data("draft\n".utf8).write(to: worktree.appendingPathComponent("notes.txt")) }.value
+        #expect(await model.linkSwitchRefusal(workspaceId: workspace.id) == .uncommittedChanges)
+        #expect(await linkError { _ = try await model.linkBranch(workspaceId: workspace.id, branch: target) } == .uncommittedChanges)
+
+        try await GitFixture.gitOffMain(["add", "notes.txt"], in: worktree)
+        try await GitFixture.gitOffMain(["commit", "-q", "-m", "notes"], in: worktree)
+        #expect(await model.linkSwitchRefusal(workspaceId: workspace.id) == .commitsOfItsOwn)
+        #expect(await linkError { _ = try await model.linkBranch(workspaceId: workspace.id, branch: target) } == .commitsOfItsOwn)
+        try await GitFixture.gitOffMain(["reset", "-q", "--hard", "origin/trunk"], in: worktree)
+
+        let readme = worktree.appendingPathComponent("README.md").path
+        await model.openEditor(workspaceId: workspace.id, path: readme)
+        model.setEditorText("edited\n", workspaceId: workspace.id, path: readme)
+        #expect(await model.linkSwitchRefusal(workspaceId: workspace.id) == .unsavedEdits)
+        #expect(await linkError { _ = try await model.linkBranch(workspaceId: workspace.id, branch: target) } == .unsavedEdits)
+        model.setEditorText("hello\n", workspaceId: workspace.id, path: readme)
+        #expect(await model.linkSwitchRefusal(workspaceId: workspace.id) == nil)
+
+        // A second workspace holds its own branch.
+        await model.createWorkspace(repoId: workspace.repoId)
+        let other = try #require(model.workspaces[workspace.repoId]?.first { $0.id != workspace.id })
+        let branches = try await model.linkBranches(workspaceId: workspace.id)
+        let held = try #require(branches.branches.first { $0.name == other.branch })
+        #expect(branches.reason(for: held) == "Checked out in app-worktrees/\(other.name)")
+        #expect(await linkError { _ = try await model.linkBranch(workspaceId: workspace.id, branch: held) } == .checkedOut("app-worktrees/\(other.name)"))
+
+        let own = try #require(branches.branches.first { $0.name == workspace.branch })
+        #expect(await linkError { _ = try await model.linkBranch(workspaceId: workspace.id, branch: own) } == .currentBranch(workspace.branch))
+
+        #expect(model.workspace(id: workspace.id)?.branch == workspace.branch)
+        #expect(model.workspace(id: workspace.id)?.baseRef == "origin/trunk")
+        #expect(try await currentBranch(of: workspace) == workspace.branch)
+        #expect(await hasLocalBranch(workspace.branch, in: workspace))
+    }
+
+    /// GHL-06, Decision 6: the first message's issue names the conversation and the sidebar row, cut as any title.
+    @Test func theFirstMessagesIssueNamesTheWorkspace() async throws {
+        let (model, workspace) = try await emptyWorkspace(store: try RockyStore.inMemory())
+        let folder = try Fixtures.temporaryDirectory("pasted")
+        let issue = try await Task.blocking {
+            try LinkAttachments.write(("[GITHUB]-4573.md", "# #4573 Un filtro negativo de proveedor aplica también a los productos sin proveedor\n\n- State: open\n"), in: folder)
+        }.value
+        let chat = try #require(await model.openChat(workspace: workspace, agent: .claude))
+        async let sending: Void = chat.send(PromptAttachment.marker, attachments: [issue])
+        try await answerNextPermission(chat)
+        await sending
+
+        try await waitUntil { model.conversations[workspace.id]?.first?.title != nil }
+        #expect(model.conversations[workspace.id]?.map(\.title) == ["#4573 Un filtro negativo de proveedor ap…"])
+        #expect(model.title(for: workspace) == ("#4573 Un filtro negativo de proveedor ap…", false))
+        await model.stopAllAgents()
+    }
+
+    /// Decision 6: a message with neither words nor an issue leaves the conversation untitled, instead of an empty
+    /// title; the next one with words names it.
+    @Test func aMessageWithoutWordsOrIssueLeavesTheConversationUntitled() async throws {
+        let (model, workspace) = try await emptyWorkspace(store: try RockyStore.inMemory())
+        let folder = try Fixtures.temporaryDirectory("pasted")
+        let image = try await Task.blocking { try PastedFiles.write(Data([0x89]), named: "image.png", in: folder) }.value
+        let chat = try #require(await model.openChat(workspace: workspace, agent: .claude))
+        async let first: Void = chat.send(PromptAttachment.marker, attachments: [image])
+        try await answerNextPermission(chat)
+        await first
+        #expect(model.conversations[workspace.id]?.map(\.title) == [nil])
+        #expect(model.title(for: workspace) == (workspace.name, true))
+
+        async let second: Void = chat.send("Fix invoice rounding")
+        try await answerNextPermission(chat)
+        await second
+        #expect(model.conversations[workspace.id]?.map(\.title) == ["Fix invoice rounding"])
+        await model.stopAllAgents()
+    }
+
+    /// GHL-06's rule alone: the issue in place of the text, never for a command, nothing for no words.
+    @Test func titleRuleWithAnIssue() {
+        let marker = PromptAttachment.marker
+        #expect(AppModel.title(from: "\(marker) fix this", issueTitle: "#12 Crash on save", commands: []) == "#12 Crash on save")
+        #expect(AppModel.title(from: "Fix invoice rounding", issueTitle: nil, commands: []) == "Fix invoice rounding")
+        #expect(AppModel.title(from: marker, issueTitle: nil, commands: []) == nil)
+        #expect(AppModel.title(from: "  ", commands: nil) == nil)
+        #expect(AppModel.title(from: "/compact", issueTitle: "#12 Crash on save", commands: nil) == nil)
     }
 }

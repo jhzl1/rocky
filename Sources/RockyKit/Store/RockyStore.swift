@@ -223,6 +223,15 @@ public final class RockyStore: Sendable {
         try db.write { try workspace.insert($0) }
     }
 
+    /// WSC-03: a new workspace and its first conversation, together once its worktree exists: neither is stored
+    /// without the other.
+    public func add(_ workspace: Workspace, conversation: ChatSessionRecord) throws {
+        try db.write { db in
+            try workspace.insert(db)
+            try conversation.insert(db)
+        }
+    }
+
     public func workspaces(repoId: String) throws -> [Workspace] {
         try db.read { try Workspace.filter(Column("repoId") == repoId).order(Column("createdAt"), Column("name")).fetchAll($0) }
     }
