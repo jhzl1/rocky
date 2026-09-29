@@ -30,11 +30,14 @@ public enum LinkAttachments {
         case issue(Int)
         case pullRequest(Int)
         case branch
+        /// `RVW-01`: a pull request's review comments, sent to the agent as a file.
+        case reviewComments(Int)
     }
 
     public static let issuePrefix = "[GITHUB]-"
     public static let pullRequestPrefix = "[GITHUB]-PR-"
     public static let branchPrefix = "[BRANCH]-"
+    public static let reviewCommentsSuffix = "-comments"
 
     /// `[GITHUB]-154.md` is issue 154, `[GITHUB]-PR-131.md` pull request 131, `[BRANCH]-….md` a branch; any other
     /// name is no link. Only the last path component counts.
@@ -42,6 +45,11 @@ public enum LinkAttachments {
         let name = (path as NSString).lastPathComponent
         guard name.hasSuffix(".md") else { return nil }
         let stem = name.dropLast(".md".count)
+        // `RVW-01`'s `[GITHUB]-PR-131-comments.md`, before a pull request's own file, whose digits it would fail.
+        if stem.hasPrefix(pullRequestPrefix), stem.hasSuffix(reviewCommentsSuffix),
+           let number = number(stem.dropFirst(pullRequestPrefix.count).dropLast(reviewCommentsSuffix.count)) {
+            return .reviewComments(number)
+        }
         if stem.hasPrefix(pullRequestPrefix), let number = number(stem.dropFirst(pullRequestPrefix.count)) {
             return .pullRequest(number)
         }
@@ -67,6 +75,11 @@ public enum LinkAttachments {
     /// `GHL-05`'s pull request: `[GITHUB]-PR-<n>.md`, `GHL-04`'s format with its branch and whether it is a draft.
     public static func pullRequest(_ pullRequest: GitHubIssue) -> (fileName: String, markdown: String) {
         ("\(pullRequestPrefix)\(pullRequest.number).md", document(pullRequest))
+    }
+
+    /// `RVW-01`'s review comments: `[GITHUB]-PR-<n>-comments.md`, holding `AgentPrompts.reviewComments`' text as it is.
+    public static func reviewComments(number: Int, markdown: String) -> (fileName: String, markdown: String) {
+        ("\(pullRequestPrefix)\(number)\(reviewCommentsSuffix).md", markdown)
     }
 
     /// `GHL-05`'s branch: `[BRANCH]-<name>.md`, "/" as "-", with its upstream and `commits`, the last ones `base` lacks

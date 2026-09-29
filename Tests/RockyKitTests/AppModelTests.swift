@@ -1344,7 +1344,8 @@ struct AppModelTests {
     }
 
     /// AGT-05: "Add all to chat" sends every pending comment in REV-01's order (threads with their replies, the
-    /// conversation, then review bodies) as one prompt, and marks each added; a row's "Add to chat" sends only it.
+    /// conversation, then review bodies), and marks each added; a row's "Add to chat" sends only it. RVW-01, RVW-02:
+    /// they go as one attached file holding that text, with a short message.
     @Test func addAllSendsEveryPendingCommentInOrder() async throws {
         let (model, workspace, _) = try await githubWorkspace(Self.answeringComments())
         model.pullRequests.setCommentsVisible(true, workspaceId: workspace.id)
@@ -1355,7 +1356,10 @@ struct AppModelTests {
         try await answerNextPermission(chat)
         await sendingAll
 
-        #expect(chat.items.last(where: { $0.kind == .user })?.text == """
+        let all = try #require(chat.items.last(where: { $0.kind == .user }))
+        #expect(all.text == "Address the 4 review comments on pull request #128 in the attached file, and say what you changed for each number.")
+        #expect(all.attachments.map { ($0 as NSString).lastPathComponent } == ["[GITHUB]-PR-128-comments.md"])
+        #expect(try String(contentsOfFile: try #require(all.attachments.first), encoding: .utf8) == """
             Review comments on pull request #128:
 
             1. ana on src/ocr/retry.ts, line 42
@@ -1380,7 +1384,12 @@ struct AppModelTests {
         try await answerNextPermission(chat)
         await sendingOne
 
-        #expect(chat.items.last(where: { $0.kind == .user })?.text == """
+        let one = try #require(chat.items.last(where: { $0.kind == .user }))
+        #expect(one.text == "Address the review comment on pull request #128 in the attached file, and say what you changed.")
+        // Each send has its own folder, so the second file does not overwrite the first.
+        #expect(one.attachments.count == 1)
+        #expect(one.attachments.first != all.attachments.first)
+        #expect(try String(contentsOfFile: try #require(one.attachments.first), encoding: .utf8) == """
             Review comments on pull request #128:
 
             1. ana (conversation)
@@ -1789,6 +1798,49 @@ struct AppModelTests {
         model.showAdjacentChangedFile(workspaceId: workspace.id, step: -1)
         #expect(model.selectedChangedFile(workspaceId: workspace.id) == "a.md")
         #expect(model.diffTabs[workspace.id] == ["a.md", "b.md"])
+    }
+
+    /// ALL-01, ALL-02, ALL-05, ALL-06, ALL-09: the All changes tab opens once and is selected; another tab takes the
+    /// selection while it stays open; its diff is computed with the right panel closed; its folds outlive the tab; and
+    /// each ⌥⌘↓ / ⌥⌘↑ is a new step for its view.
+    @Test func allChangesTabOpensFoldsAndKeepsItsDiffComputed() async throws {
+        let (model, workspace) = try await watchedWorkspace(watchers: FakeWatchers())
+        try await write("one\n", to: "a.md", in: workspace)
+        try await write("two\n", to: "b.md", in: workspace)
+        #expect(model.visibleRightPanelTab == nil)
+
+        model.openAllChanges(workspaceId: workspace.id)
+        try await waitUntil { model.changes[workspace.id]?.files.map(\.path) == ["a.md", "b.md"] }
+        #expect(model.allChangesTabs == [workspace.id])
+        #expect(model.selectedAllChanges == [workspace.id])
+
+        model.openDiff(workspaceId: workspace.id, path: "a.md")
+        #expect(model.selectedAllChanges.isEmpty)
+        #expect(model.allChangesTabs == [workspace.id])
+        model.openAllChanges(workspaceId: workspace.id)
+        #expect(model.selectedDiffTabs[workspace.id] == nil)
+        #expect(model.selectedAllChanges == [workspace.id])
+        #expect(model.diffTabs[workspace.id] == ["a.md"])
+
+        model.toggleAllChangesFold(workspaceId: workspace.id, path: "a.md")
+        #expect(model.allChangesState(workspaceId: workspace.id).folded == ["a.md"])
+        model.setAllChangesFolded(workspaceId: workspace.id, true)
+        #expect(model.allChangesState(workspaceId: workspace.id).folded == ["a.md", "b.md"])
+        model.setAllChangesFolded(workspaceId: workspace.id, false)
+        #expect(model.allChangesState(workspaceId: workspace.id).folded.isEmpty)
+        model.toggleAllChangesFold(workspaceId: workspace.id, path: "b.md")
+
+        model.closeAllChanges(workspaceId: workspace.id)
+        #expect(model.allChangesTabs.isEmpty)
+        #expect(model.selectedAllChanges.isEmpty)
+        model.openAllChanges(workspaceId: workspace.id)
+        #expect(model.allChangesState(workspaceId: workspace.id).folded == ["b.md"])
+
+        model.stepAllChangesFile(workspaceId: workspace.id, step: 1)
+        model.stepAllChangesFile(workspaceId: workspace.id, step: -1)
+        #expect(model.allChangesSteps[workspace.id] == AllChangesStep(step: -1, serial: 2))
+        model.setAllChangesCurrent(workspaceId: workspace.id, path: "b.md")
+        #expect(model.allChangesState(workspaceId: workspace.id).current == "b.md")
     }
 
     /// DIFF-05: a badge of a changed worktree file opens its diff tab on the diff and asks for its first hunk, each

@@ -627,21 +627,12 @@ struct UnifiedDiffView: View {
             return
         }
         guard !isCollapsed else { return }
-        let wantsLines = DiffLayout.needsNewLines(file)
-        let url = URL(fileURLWithPath: workspace.path).appendingPathComponent(file.path)
-        let reading = await Task.blocking { () -> (lines: [String]?, columns: Int) in
-            let lines = wantsLines ? DiffLayout.readLines(of: url) : nil
-            return (lines, DiffMetrics.maxColumns(file: file, lines: lines))
-        }.value
+        let reading = await DiffFileLoader.lines(of: file, worktree: workspace.path)
         guard !Task.isCancelled else { return }
-        newLines = reading.lines
-        maxColumns = reading.columns
+        newLines = reading.newLines
+        maxColumns = reading.maxColumns
         isLoaded = true
-        guard let language = SyntaxHighlighter.language(forPath: file.path) else {
-            tokens = DiffTokens()
-            return
-        }
-        let found = await SyntaxHighlighter.shared.diffTokens(file: file, newLines: reading.lines, language: language)
+        let found = await DiffFileLoader.tokens(of: file, newLines: reading.newLines)
         guard !Task.isCancelled else { return }
         tokens = found
     }

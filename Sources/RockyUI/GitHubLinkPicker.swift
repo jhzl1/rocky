@@ -526,7 +526,7 @@ extension LinkAttachments.Kind {
     /// A pull request's or a branch's file: its pick switched the worktree, so a message has one at most (`GHL-04`).
     var switchesWorktree: Bool {
         switch self {
-        case .issue: false
+        case .issue, .reviewComments: false
         case .pullRequest, .branch: true
         }
     }
@@ -544,13 +544,19 @@ enum LinkBadgeTitles {
     }
 
     static func cached(_ path: String) -> String? {
-        titles[path]
+        titles[path] ?? fromName(path)
+    }
+
+    /// `RVW-01`'s "Review comments on #131", from the name alone, so the transcript and ↑'s history draw it too.
+    private static func fromName(_ path: String) -> String? {
+        guard case .reviewComments(let number) = LinkAttachments.kind(ofPath: path) else { return nil }
+        return "Review comments on #\(number)"
     }
 
     /// nil for a file that is no link, or whose file is gone.
     static func title(for path: String) async -> String? {
         guard LinkAttachments.kind(ofPath: path) != nil else { return nil }
-        if let known = titles[path] { return known }
+        if let known = cached(path) { return known }
         let url = URL(fileURLWithPath: path)
         let title = await Task.blocking { LinkAttachments.title(ofFileAt: url) }.value
         if let title { titles[path] = title }
@@ -596,6 +602,12 @@ struct LinkMark: View {
         case .issue: GitHubMark(size: size)
         case .pullRequest: GitGlyph(kind: .pullRequest, size: size, color: Theme.textPrimary)
         case .branch: GitGlyph(kind: .branch, size: size, color: Theme.textPrimary)
+        case .reviewComments:
+            Image(systemName: "text.bubble")
+                .font(.rocky(size - 1))
+                .foregroundStyle(Theme.textPrimary)
+                .frame(width: Zoom.shared(size), height: Zoom.shared(size))
+                .accessibilityHidden(true)
         }
     }
 }

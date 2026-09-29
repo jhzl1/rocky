@@ -203,4 +203,16 @@ struct LinkAttachmentsTests {
         #expect(try Data(contentsOf: one) == Data("a".utf8))
         #expect(try Data(contentsOf: two) == Data("b".utf8))
     }
+
+    /// RVW-01: the review comments' file, its name from the pull request's number, told apart from the pull
+    /// request's own file and from an issue's.
+    @Test func reviewCommentsHaveTheirOwnFile() {
+        let document = LinkAttachments.reviewComments(number: 131, markdown: "Review comments on pull request #131:")
+        #expect(document.fileName == "[GITHUB]-PR-131-comments.md")
+        #expect(document.markdown == "Review comments on pull request #131:")
+        #expect(LinkAttachments.kind(ofPath: "/tmp/Pasted/A/[GITHUB]-PR-131-comments.md") == .reviewComments(131))
+        #expect(LinkAttachments.kind(ofPath: "[GITHUB]-PR-131.md") == .pullRequest(131))
+        #expect(LinkAttachments.kind(ofPath: "[GITHUB]-131.md") == .issue(131))
+        #expect(LinkAttachments.kind(ofPath: "[GITHUB]-PR--comments.md") == nil)
+    }
 }

@@ -1,0 +1,613 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rocky · All changes spec</title>
+<!--
+==========================================================================================================
+HOW TO READ THIS FILE (for the agent that implements it)
+==========================================================================================================
+Visual, behavioral and technical source of truth for M3.1. dev-1 writes the plan from these requirement ids
+(docs/superpowers/plans/2026-09-29-m3.1-all-changes.md).
+
+- What changes: an "All changes" tab in the center shows every changed file's diff, one after another, like VS
+  Code's Open Changes, so the user no longer opens file after file. It is read and fold only.
+- User request (2026-09-29, relayed by dev-1): "aquí tengo que irme archivo por archivo para ver qué cambió".
+  Decisions: a center tab like a file's diff tab, opened from the Changes tab; only what changed, as DIFF-02 shows
+  it, with the unchanged runs folded; read and fold only, and a file's name opens its own diff tab; before M5.
+- The tab row, the Changes tab and the diff rows are M3's (CHG-02, CHG-03, DIFF-01…03), simplified. Only the
+  button, the tab, its toolbar, the file headers and the folding are specified here.
+- Requirement ids: ALL (All changes), RVW (review comments sent to the chat as a file), QUE (queued messages' actions), KIT, OUT. Pins: button "Requirement pins". When the mock and a requirement's
+  text disagree, the text wins.
+==========================================================================================================
+-->
+<style>
+:root {
+  --page: #131519; --bg: #23272E; --sidebar: #1E2127; --panel: #1A1D22; --composer-border: rgba(255,255,255,0.10);
+  --hairline: rgba(255,255,255,0.08); --hairline-soft: rgba(255,255,255,0.06);
+  --text: #E6E8EB; --text-2: #A3A9B1; --text-3: #858C95; --sep: #5C636C;
+  --fill-hover: rgba(255,255,255,0.04); --fill-selected: rgba(255,255,255,0.08); --fill-control: rgba(255,255,255,0.05);
+  --fill-icon-hover: rgba(255,255,255,0.06); --fill-button: rgba(255,255,255,0.08);
+  --accent: #78BDF5; --attention: #E8A94B; --danger: #F0876A; --success: #7CC08A;
+  --add-line: rgba(124,192,138,0.12); --add-gutter: rgba(124,192,138,0.20); --del-line: rgba(240,135,106,0.12); --del-gutter: rgba(240,135,106,0.20);
+  --titlebar: 38px; --r-row: 7px; --r-btn: 6px;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --dur-fast: 120ms; --dur-base: 150ms; --dur-enter: 220ms; --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--page); color: var(--text); font: 13px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; -webkit-font-smoothing: antialiased; display: flex; overflow: hidden; }
+button { font: inherit; color: inherit; background: none; border: 0; margin: 0; padding: 0; text-align: left; cursor: pointer; }
+button:disabled { cursor: default; opacity: 0.45; }
+svg { display: block; flex-shrink: 0; }
+code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 4px; }
+.grow { flex-grow: 1; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.stage { flex: 1 0 auto; overflow: auto; padding: 20px 24px 48px; }
+.doc-title { width: 1120px; margin: 0 0 4px; font-size: 18px; font-weight: 600; }
+.doc-sub { width: 1120px; margin: 0 0 14px; color: var(--text-2); font-size: 12.5px; line-height: 1.5; }
+.demo { width: 1120px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
+.demo-label { font-size: 10.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.07em; margin-right: 4px; }
+.demo button { height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.14); color: var(--text-2); font-size: 12px; }
+.demo button:hover { color: var(--text); border-color: rgba(255,255,255,0.3); }
+.demo button[aria-pressed="true"] { background: rgba(120,189,245,0.14); border-color: rgba(120,189,245,0.55); color: var(--text); }
+
+.window { position: relative; width: 1120px; height: 700px; display: flex; background: var(--bg); border-radius: 10px; overflow: hidden; box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 24px 60px rgba(0,0,0,0.45); }
+.lights { display: inline-flex; gap: 8px; padding: 13px 16px; } .light { width: 12px; height: 12px; border-radius: 50%; }
+.light.close { background: #FF5F57; } .light.min { background: #FEBC2E; } .light.zoom { background: #28C840; }
+.sidebar { width: 200px; flex-shrink: 0; background: var(--sidebar); border-right: 1px solid var(--hairline); }
+.sb-row { margin: 8px; height: 28px; display: flex; align-items: center; padding: 0 10px; border-radius: var(--r-row); background: var(--fill-selected); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.main { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; }
+.topbar { height: var(--titlebar); flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 0 16px; color: var(--text-2); }
+.tabs { height: 34px; flex-shrink: 0; display: flex; align-items: stretch; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--hairline); }
+.tab-wrap { position: relative; display: flex; align-items: center; }
+.tab-wrap.selected::before { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--text); }
+.tab { height: 100%; display: flex; align-items: center; gap: 7px; padding: 0 10px; font-size: 12.5px; color: var(--text-2); }
+.tab-wrap.selected .tab, .tab:hover { color: var(--text); }
+.tab .n { font: 11px var(--mono); color: var(--text-3); }
+.tab .ico { display: flex; color: var(--text-2); }
+.agent { width: 14px; height: 14px; border-radius: 4px; font-size: 9px; font-weight: 700; display: flex; align-items: center; justify-content: center; color: #1E2127; background: #D97757; }
+.chatph { flex-grow: 1; display: flex; align-items: center; justify-content: center; color: var(--text-3); }
+.chat { flex-grow: 1; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 14px; align-items: center; }
+.chat .col { width: 100%; max-width: 560px; display: flex; flex-direction: column; gap: 14px; }
+.msg-user { align-self: flex-end; max-width: 440px; padding: 10px 14px; border-radius: 12px; background: rgba(255,255,255,0.06); font-size: 14px; line-height: 1.5; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; animation: enter var(--dur-enter) var(--ease-out) both; }
+.msg-agent { font-size: 14px; line-height: 1.6; color: #D5D8DC; }
+@keyframes enter { from { opacity: 0; transform: translateY(6px); } }
+.fchip { height: 22px; display: inline-flex; align-items: center; border-radius: 6px; background: rgba(255,255,255,0.04); box-shadow: inset 0 0 0 1px var(--hairline); font-size: 12px; overflow: hidden; }
+.fchip .seg { width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; border-right: 1px solid var(--hairline); color: var(--text); }
+.fchip .nm { padding: 0 8px; white-space: nowrap; }
+.working { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--text-2); }
+.q-item { align-self: flex-end; max-width: 440px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.q-item .q-body { padding: 10px 14px; border-radius: 12px; border: 1px dashed rgba(255,255,255,0.18); background: rgba(255,255,255,0.03); color: var(--text-2); font-size: 14px; line-height: 1.5; }
+.q-line { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-3); }
+.q-line .dot { color: var(--text-3); }
+.q-line .qs { display: inline-flex; align-items: center; gap: 4px; }
+.q-line button { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; margin: 0 -6px; border-radius: 5px; color: var(--text-3); transition: background var(--dur-fast), color var(--dur-fast); }
+.q-line button:hover:not(:disabled) { background: var(--fill-hover); color: var(--text); }
+.q-line button:disabled { opacity: 0.5; }
+
+/* ALL-03: the toolbar */
+.acbar { height: 34px; flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 0 10px 0 14px; border-bottom: 1px solid var(--hairline); font-size: 12px; color: var(--text-2); }
+.text-btn { height: 24px; display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; border-radius: var(--r-btn); font-size: 12px; color: var(--text-2); transition: background var(--dur-fast), color var(--dur-fast); }
+.text-btn:hover:not(:disabled) { background: var(--fill-icon-hover); color: var(--text); }
+.stat { font: 11px var(--mono); font-variant-numeric: tabular-nums; } .stat .a { color: var(--success); } .stat .d { color: var(--danger); }
+
+/* ALL-03 / ALL-04: the list */
+.aclist { flex-grow: 1; min-height: 0; overflow: auto; position: relative; }
+.sec { height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 14px; font-size: 10.5px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+.fhead { position: sticky; top: 0; left: 0; z-index: 3; height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 12px 0 8px; background: var(--bg); border-top: 1px solid var(--hairline); border-bottom: 1px solid var(--hairline); }
+.fhead.cur { box-shadow: inset 3px 0 0 var(--accent); }
+.fhead .chev { width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; border-radius: 4px; color: var(--text-3); transition: transform var(--dur-base) var(--ease-out); }
+.fhead .chev:hover { background: var(--fill-icon-hover); color: var(--text); }
+.fhead .chev.folded { transform: rotate(-90deg); }
+.fhead .chev.none { visibility: hidden; }
+.fhead .st { width: 12px; font: 600 11px var(--mono); }
+.st-A { color: var(--success); } .st-M { color: var(--attention); } .st-D { color: var(--danger); } .st-R { color: var(--text-2); }
+.fhead .fname { display: inline-flex; align-items: center; gap: 6px; min-width: 0; font-size: 12.5px; border-radius: 4px; }
+.fhead .fname span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fhead .fname .dir { color: var(--text-3); }
+.fhead .fname:hover .nm { text-decoration: underline; text-underline-offset: 2px; }
+.fhead .note { font-size: 11px; color: var(--text-3); white-space: nowrap; }
+.fhead .fill { flex-grow: 1; height: 100%; cursor: pointer; }
+.ficon { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; }
+.ln { height: 20px; display: flex; font: 12px/20px var(--mono); white-space: pre; }
+.ln .no { width: 48px; flex-shrink: 0; padding-right: 8px; text-align: right; color: var(--text-3); font-variant-numeric: tabular-nums; position: sticky; left: 0; background: var(--bg); z-index: 1; }
+.ln .mk { width: 16px; flex-shrink: 0; text-align: center; color: var(--text-3); position: sticky; left: 48px; background: var(--bg); z-index: 1; }
+.ln .cd { padding-right: 24px; color: #C9CDD2; }
+.ln.add { background: var(--add-line); } .ln.add .no { color: var(--success); background: linear-gradient(var(--add-gutter), var(--add-gutter)), var(--bg); } .ln.add .mk { color: var(--success); background: linear-gradient(var(--add-line), var(--add-line)), var(--bg); }
+.ln.del { background: var(--del-line); } .ln.del .no { color: var(--danger); background: linear-gradient(var(--del-gutter), var(--del-gutter)), var(--bg); } .ln.del .mk { color: var(--danger); background: linear-gradient(var(--del-line), var(--del-line)), var(--bg); }
+.gap { height: 26px; display: flex; align-items: center; gap: 8px; padding-left: 20px; width: 100%; font-size: 12px; color: var(--text-3); background: rgba(255,255,255,0.02); }
+.gap:hover { background: var(--fill-hover); color: var(--text); }
+.caption { height: 26px; display: flex; align-items: center; gap: 10px; padding-left: 20px; font-size: 12px; color: var(--text-2); }
+.caption button { color: var(--accent); }
+.fbody { padding-bottom: 8px; min-width: max-content; }
+.empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: var(--text-2); font-size: 13px; }
+.empty small { color: var(--text-3); font-size: 12px; }
+
+/* M2.7 right panel + M3 Changes tab, simplified */
+.rpanel { width: 320px; flex-shrink: 0; display: flex; flex-direction: column; border-left: 1px solid var(--hairline); background: var(--bg); }
+.rhead { height: var(--titlebar); flex-shrink: 0; display: flex; align-items: center; padding: 0 18px; color: var(--text-3); font-size: 12.5px; }
+.ptabs { height: 34px; flex-shrink: 0; display: flex; align-items: stretch; padding: 0 8px; border-bottom: 1px solid var(--hairline); }
+.ptab { position: relative; display: inline-flex; align-items: center; gap: 5px; padding: 0 10px; font-size: 12.5px; color: var(--text-2); }
+.ptab.sel { color: var(--text); } .ptab.sel::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--text); }
+.ptab .n { font: 11px var(--mono); color: var(--text-3); }
+.chrow { height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 18px; font-size: 12px; color: var(--text-2); }
+.crow { height: 28px; margin: 0 6px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-radius: var(--r-row); font-size: 13px; }
+.crow:hover { background: var(--fill-hover); }
+.crow .dir { font-size: 11px; color: var(--text-3); }
+.csec { height: 26px; display: flex; align-items: center; padding: 0 18px; font-size: 10.5px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+
+.toast { position: absolute; left: 50%; bottom: 24px; z-index: 80; transform: translateX(-50%); padding: 8px 12px; border-radius: 8px; background: var(--panel); box-shadow: 0 0 0 1px rgba(255,255,255,0.1), 0 8px 24px rgba(0,0,0,0.45); font-size: 12px; color: var(--text-2); opacity: 0; pointer-events: none; transition: opacity var(--dur-base); }
+.toast.show { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .fhead .chev { transition: none; } }
+
+.spec-on .window [data-req] { outline: 1px dashed rgba(120,189,245,0.6); outline-offset: -1px; }
+.spec-on .window [data-req]::after { content: attr(data-req); position: absolute; z-index: 55; margin: 1px; padding: 2px 4px; border-radius: 3px; background: var(--accent); color: #0E1116; font: 600 9px/1 var(--mono); pointer-events: none; }
+
+.spec { flex: 0 1 480px; min-width: 340px; overflow-y: auto; overflow-x: hidden; background: #16181C; border-left: 1px solid var(--hairline); padding: 22px 24px 80px; font-size: 12.5px; line-height: 1.55; color: var(--text-2); }
+.spec h1 { margin: 0 0 6px; font-size: 16px; color: var(--text); }
+.spec h2 { margin: 30px 0 8px; font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); }
+.spec p { margin: 6px 0; } .spec strong { color: var(--text); font-weight: 600; } .spec code { overflow-wrap: anywhere; }
+.spec pre { margin: 6px 0; padding: 8px 10px; border-radius: 6px; background: rgba(0,0,0,0.28); font: 11px/1.55 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+.req { margin: 0 -12px 6px; padding: 12px 12px 10px; border: 1px solid transparent; border-radius: 8px; transition: background 0.3s, border-color 0.3s; scroll-margin-top: 12px; }
+.req.flash { background: rgba(120,189,245,0.08); border-color: rgba(120,189,245,0.4); }
+.req > header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.req .id { font: 600 10.5px var(--mono); color: var(--accent); background: none; padding: 0; }
+.req h3 { flex-grow: 1; margin: 0; font-size: 13px; font-weight: 600; color: var(--text); }
+.scope { font-size: 10px; padding: 1px 6px; border-radius: 4px; border: 1px solid; white-space: nowrap; }
+.scope.in { color: var(--success); border-color: rgba(124,192,138,0.4); } .scope.out { color: var(--attention); border-color: rgba(232,169,75,0.5); }
+.scope.tech { color: var(--accent); border-color: rgba(120,189,245,0.45); }
+.req dl { display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 5px 10px; margin: 8px 0 0; }
+.req dt { padding-top: 1px; font-size: 11px; color: var(--text-3); } .req dd { margin: 0; }
+.req ol, .req ul { margin: 2px 0 0; padding-left: 18px; } .req li { margin: 2px 0; }
+.spec table { width: 100%; border-collapse: collapse; margin: 6px 0; font-size: 11.5px; }
+.spec th { text-align: left; font-weight: 600; color: var(--text-3); padding: 4px 6px 4px 0; border-bottom: 1px solid var(--hairline); }
+.spec td { padding: 4px 6px 4px 0; border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: top; }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <h1 class="doc-title">Rocky · All changes (M3.1)</h1>
+  <p class="doc-sub"><strong>All changes</strong> in the Changes tab opens one center tab with every changed file's diff, Uncommitted then Committed, each file under a sticky header that folds. It reads only: a file's name opens its own diff tab for comments, edits and discards. Try it: fold a file, "Collapse all", "Next file (⌥⌘↓)", then scroll down and "The agent adds a file above" to see the scroll stay put.</p>
+  <div class="demo" aria-label="Demo controls">
+    <span class="demo-label">Demo controls, not part of Rocky</span>
+    <button type="button" id="demoNext">Next file (⌥⌘↓)</button>
+    <button type="button" id="demoPrev">Previous file (⌥⌘↑)</button>
+    <button type="button" id="demoAdd">The agent adds a file above</button>
+    <button type="button" id="demoEmpty" aria-pressed="false">No changes</button>
+    <button type="button" id="demoComments">Add all to chat (RVW)</button>
+    <button type="button" id="demoQueue">Queue a message (QUE)</button>
+    <button type="button" id="demoPins" aria-pressed="false">Requirement pins</button>
+  </div>
+
+  <div class="window" id="win">
+    <nav class="sidebar"><span class="lights"><span class="light close"></span><span class="light min"></span><span class="light zoom"></span></span><div class="sb-row">OpenAPI export for providers</div></nav>
+    <main class="main">
+      <header class="topbar"><span>acme-platform</span><span style="color:var(--sep)">/</span><span style="font:12px var(--mono);color:var(--text)">jhzl/openapi-export</span></header>
+      <div class="tabs" id="tabs"></div>
+      <div id="center" style="flex-grow:1;min-height:0;display:flex;flex-direction:column"></div>
+    </main>
+    <aside class="rpanel">
+      <div class="rhead">No pull request</div>
+      <div class="ptabs"><span class="ptab">All files</span><span class="ptab sel">Changes <span class="n" id="chgCount"></span></span><span class="ptab">Checks</span></div>
+      <div id="changes"></div>
+    </aside>
+  </div>
+</div>
+
+<aside class="spec" id="spec">
+  <h1>Requirements</h1>
+  <p>Plan (dev-1): <code>docs/superpowers/plans/2026-09-29-m3.1-all-changes.md</code>. Builds on M3 (<code>2026-09-23-m3-review-edit-pr.html</code>): CHG-02/03, DIFF-01…04, GIT-01, KBD-02. Before M5. Labels: <span class="scope tech">Technical</span> for data and process facts; <span class="scope in">In scope</span> for behavior and UI.</p>
+  <p>Also in M3.1 (2026-09-29): M2.7's review comments go to the chat as an attached file with a short message (RVW), and each queued message shows its status and actions in a line under it (QUE).</p>
+  <p><strong>User request and decisions (2026-09-29, relayed by dev-1):</strong> "aquí tengo que irme archivo por archivo para ver qué cambió" · a center tab like a file's diff tab, opened from the Changes tab · only what changed, as DIFF-02 shows it, unchanged runs folded · read and fold only; a file's name opens its own diff tab; no comments, discard or editing in it · before M5.</p>
+
+  <h2>The tab</h2>
+  <section class="req" id="REQ-ALL-01">
+    <header><code class="id">ALL-01</code><h3>Opening it</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Button</dt><dd>In the Changes tab's 30 pt row (CHG-02), right before "⋯": <strong>All changes</strong>, a text button (<code>RockyTextButtonStyle</code>, 24 pt, 12 <code>textSecondary</code>) with <code>rectangle.stack</code> 12. In the row, not in "⋯", so the way to read everything at once is seen, not hunted for. Tooltip "Every changed file in one tab". With no changes it is disabled, tooltip "No changes yet".</dd>
+      <dt>Does</dt><dd>Opens the workspace's All changes tab at the end of the tab row and selects it; if it is already open, selects it. One per workspace. It is a permanent tab, never a preview (M3's preview tabs are for files).</dd>
+      <dt>Done when</dt><dd>With 5 changed files, one click shows them all in the center, and a second click only selects that tab.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-ALL-02">
+    <header><code class="id">ALL-02</code><h3>The tab itself</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Title</dt><dd><code>rectangle.stack</code> 12 in <code>textSecondary</code>, "All changes", then the number of changed files (11 mono <code>textTertiary</code>, as the Changes tab's count, CHG-01; hidden at 0). A tab of TAB-01's kind: the underline when selected, × on hover or when selected. Tooltip "All changed files: Uncommitted, then Committed".</dd>
+      <dt>Lives</dt><dd>As a diff tab does (DIFF-01): it stays open until closed, and switching tabs or workspaces keeps its scroll position and fold state (ALL-05).</dd>
+    </dl>
+  </section>
+
+  <h2>What it shows</h2>
+  <section class="req" id="REQ-ALL-03">
+    <header><code class="id">ALL-03</code><h3>Layout and file headers</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Toolbar</dt><dd>34 pt with a <code>hairline</code> under it, in line with the Changes tab's row: "5 files" (12 <code>textSecondary</code>), the total <code>DiffStatLabel</code>, a spacer, then <strong>Collapse all</strong> (text button, <code>arrow.down.right.and.arrow.up.left</code> 11), which reads <strong>Expand all</strong> once every file is folded.</dd>
+      <dt>Order</dt><dd><code>WorkspaceChanges.listOrder</code>: the "Uncommitted · 2" and "Committed · 3" captions (CHG-03's: 10.5 uppercase <code>textTertiary</code>, 28 pt), each followed by its files, in the Changes tab's order. A section with no files is left out.</dd>
+      <dt>Header</dt><dd>Per file, 34 pt, <code>background</code> fill with a <code>hairline</code> above and below: a 18 pt fold chevron (<code>chevron.down</code> 9, <code>textTertiary</code>, turned −90° when folded, 150 ms), the status letter (CHG-03), the file's icon (FIL-09, 14), the directory (<code>textTertiary</code>) and the name (<code>textPrimary</code>) at 12.5, a note in 11 <code>textTertiary</code> ("New file", "Renamed from src/old/api.ts"), a spacer, and <code>DiffStatLabel</code>.</dd>
+      <dt>Clicks</dt><dd>The name opens that file's own diff tab (DIFF-01), as its Changes row does, or selects it if open; hover underlines it, tooltip "Open in its own tab". The chevron and the rest of the header fold and unfold the file.</dd>
+      <dt>Sticky</dt><dd>Yes: a file's header stays at the top of the tab while its rows scroll under it, and the next file's header pushes it up, so the file on screen is always named. SwiftUI: one <code>Section</code> per file in a <code>LazyVStack(pinnedViews: .sectionHeaders)</code>.</dd>
+      <dt>Done when</dt><dd>Scrolling through a long file keeps its header at the top; clicking its name opens the file's diff tab; clicking beside the name folds it.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-ALL-04">
+    <header><code class="id">ALL-04</code><h3>The rows</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Rows</dt><dd>DIFF-02's, unchanged: 20 pt rows, 12 mono, one 48 pt number column, the + / − marker column, syntax colors (DIFF-04), no <code>@@</code> rows, three context lines, and "⋯ N unchanged lines" (26 pt) between, before and after hunks, expanding on click. The existing <code>DiffLineRow</code>, <code>DiffGapRow</code> and <code>DiffCaptionRow</code>, whose fixed heights keep the lazy stack's scroll bar steady.</dd>
+      <dt>Sideways</dt><dd>Long lines do not wrap. The whole list scrolls sideways together, as one diff tab does: the number and marker columns and the file headers stay at the left edge (<code>Sticky</code>, <code>DiffScrollOffset</code>) while the code moves. Its width is the widest line among unfolded files.</dd>
+      <dt>Between</dt><dd>8 pt of space after each file's last row, before the next header.</dd>
+      <dt>Read only</dt><dd>No comment "+" on hover (CMT-01), no Discard, no Edit, no Diff | Edit control: those are in each file's own diff tab (OUT-11). Text stays selectable for copying.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-ALL-05">
+    <header><code class="id">ALL-05</code><h3>Folding</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Start</dt><dd>Every file unfolded, except those DIFF-03 already keeps short (ALL-07). Unfolding is instant: rows appear and disappear without a height animation (fixed heights, no jump); only the chevron turns.</dd>
+      <dt>All</dt><dd>Collapse all folds every file; Expand all unfolds every one, but a large file stays at its "Show" caption (ALL-07).</dd>
+      <dt>Kept</dt><dd>Per workspace, in memory, by path: which files are folded and which unchanged runs are expanded. They survive switching tabs and workspaces and closing and reopening the tab, and go when Rocky quits (like ROW-04's unread marks). A file that leaves the list and comes back returns unfolded; a file whose hunks move loses its expanded runs, as a diff tab does.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-ALL-06">
+    <header><code class="id">ALL-06</code><h3>Keyboard</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Files</dt><dd>With the All changes tab selected, ⌥⌘↓ / ⌥⌘↑ (KBD-02's next / previous file) scroll to the next / previous file's header, which becomes the current file: its header shows a 3 pt <code>accent</code> bar at its left edge. They do not open diff tabs there; elsewhere they keep walking the Changes list as today. The current file starts as the one whose header is at the top.</dd>
+      <dt>Others</dt><dd>Return opens the current file's own diff tab. No new chords: folding stays on the header. No find: a diff tab in Diff mode has none today (the system find bar is the Edit mode's editor's, <code>CodeEditor</code>), so there is nothing to match; find across the tab is OUT-11.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-ALL-07">
+    <header><code class="id">ALL-07</code><h3>Special files</h3><span class="scope in">In scope</span></header>
+    <p>DIFF-03's cases, in one caption row (26 pt, 12 <code>textSecondary</code>) under the header instead of rows:</p>
+    <table>
+      <tr><th>Case</th><th>Under the header</th><th>Chevron</th></tr>
+      <tr><td>Large (over 1,500 lines or 1 MB, <code>isLarge</code>)</td><td>"Large diff · 3,214 lines" and <b>Show</b>, which loads its rows in place</td><td>yes, once shown</td></tr>
+      <tr><td>Binary (<code>isBinary</code>)</td><td>"Binary file · 24 KB → 31 KB"</td><td>none</td></tr>
+      <tr><td>Mode only (<code>modeChange</code>, no hunks)</td><td>"File mode changed 644 → 755"</td><td>none</td></tr>
+      <tr><td>Pure rename (<code>oldPath</code>, no hunks)</td><td>"Renamed, no content changes"; the header's note "Renamed from …"</td><td>none</td></tr>
+      <tr><td>New / deleted</td><td>all rows added / removed; the note "New file" / "Deleted"</td><td>yes</td></tr>
+    </table>
+    <p>A mode change with content changes shows its rows, and the note "Mode 644 → 755".</p>
+  </section>
+
+  <section class="req" id="REQ-ALL-08">
+    <header><code class="id">ALL-08</code><h3>Empty</h3><span class="scope in">In scope</span></header>
+    <p>No changed files: the toolbar reads "No files", its button is disabled, and the list shows CHG-03's empty state centred: "No changes yet" (13 <code>textSecondary</code>) and "Changes the agent makes in this workspace show up here." (12 <code>textTertiary</code>). An open tab whose last change goes (a commit that is then merged, a discard) shows it too; it does not close itself.</p>
+  </section>
+
+  <section class="req" id="REQ-ALL-09">
+    <header><code class="id">ALL-09</code><h3>Live updates and the scroll position</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Diff</dt><dd>GIT-01 computes the full diff only while the Changes tab is visible; now also while the workspace's All changes tab is the selected tab (and the window can be seen). It follows the agent's edits live, with GIT-01's 500 ms debounce.</dd>
+      <dt>Anchor</dt><dd>What is on screen stays on screen. The anchor is the first row at the top of the list: its file's path and its line (new number, or old one for a removed line). When an update adds, removes or resizes files or hunks above it, the scroll position moves by the same amount, so the anchor row keeps its place. If the anchor's line is gone, the nearest row of the same file; if the file is gone, the next file's header. Updates below the anchor move nothing. SwiftUI: <code>.scrollPosition(id:anchor: .top)</code> on the rows' stable ids (KIT-21).</dd>
+      <dt>No motion</dt><dd>Files that arrive or change do not animate and there is no "new" badge: the agent's edits keep coming, and a list that jumps or flashes on each one cannot be read.</dd>
+      <dt>Done when</dt><dd>Scrolled into the third file, a new file added above it by the agent appears when you scroll up, while the line you were reading does not move.</dd>
+    </dl>
+  </section>
+
+  <h2>Review comments to the chat</h2>
+  <section class="req" id="REQ-RVW-01">
+    <header><code class="id">RVW-01</code><h3>Comments go as an attached file</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Why</dt><dd>User, 2026-09-29 (relayed by dev-1): "mira también cómo se agregan los comentarios de copilot en el chat". Today M2.7 AGT-05 sends the whole numbered text as the message, a long bubble in the transcript. Decisions: the bubble shows a short message and a file chip, the agent reads the file, which holds today's full text; it goes inside M3.1.</dd>
+      <dt>File</dt><dd><code>[GITHUB]-PR-131-comments.md</code>, written by <code>LinkAttachments</code> into the Pasted folder like GHL-04's links (<code>~/Library/Caches/Rocky/Pasted/<em>UUID</em>/</code>, so two sends never overwrite each other). Its content is exactly today's text, <code>AgentPrompts.reviewComments(number:comments:)</code>, unchanged: "Review comments on pull request #131:", the numbered items with "&gt; " quotes and "&gt; login: text" replies, and the closing "Address each comment and say what you changed for each number."</dd>
+      <dt>Chip</dt><dd>GHL-04's chip (<code>FileBadge</code>) with <code>text.bubble</code> in its left segment and the file name as its label. Tooltip "Review comments on #131": the count is not in the name, so the transcript and the ↑ history (M3 CMT-05) can draw the same tooltip from the path alone. <code>LinkAttachments.kind(ofPath:)</code> gains <code>.reviewComments(number)</code>, checked before <code>.pullRequest</code> (a stem that starts with <code>[GITHUB]-PR-</code> and ends with <code>-comments</code>; today such a name would fall through to no mark).</dd>
+      <dt>Transcript</dt><dd>The user bubble shows the short message (RVW-02) with the chip above it, as any attachment; a click on the chip opens the file's tab.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-RVW-02">
+    <header><code class="id">RVW-02</code><h3>The short message</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Text</dt><dd>With several comments: "Address the 4 review comments on pull request #131 in the attached file, and say what you changed for each number." With one: "Address the review comment on pull request #131 in the attached file, and say what you changed." The number comes from the comments sent, not from the whole list.</dd>
+      <dt>Same way</dt><dd>"Add all to chat" and a row's "Add to chat" send the same way, a file and the short message; only the count differs. Both still mark the comments added (REV-01's check), and a busy agent queues the message as any other (M2.5 queue).</dd>
+      <dt>Naming</dt><dd>GHL-06 does not apply: it reads the heading of an issue's file (<code>[GITHUB]-N.md</code>), and this file is not one. A workspace whose first message this is keeps today's title rule, which reads the short message.</dd>
+      <dt>Kit</dt><dd><code>AppModel.sendComments(workspaceId:ids:)</code> writes the file with <code>LinkAttachments</code> and calls <code>sendAgentAction(workspaceId:text:attachments:)</code> with the short message and that file, as AGT-03 sends its CI logs. <code>AgentPrompts.reviewCommentsMessage(number:count:)</code> builds the short message. Tests: both texts; the file's name for a PR number; <code>kind(ofPath:)</code> on the comments file, on a PR link and on an issue link.</dd>
+      <dt>Done when</dt><dd>"Add all to chat" with 4 pending comments shows a two-line bubble with the chip; the agent opens the file and answers item by item.</dd>
+    </dl>
+  </section>
+
+  <h2>Queued messages</h2>
+  <section class="req" id="REQ-QUE-01">
+    <header><code class="id">QUE-01</code><h3>Status and actions under each queued message</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Why</dt><dd>User, 2026-09-29 (relayed by dev-1): "siento que la ubicación de los botones de enviar y editar no es la mejor"; of three options, "Debajo, siempre visibles". It replaces the queue's hover actions at the bubble's left and the group's single caption (<code>QueueCaption</code>) from M2.5 and M2.8. The queue itself is unchanged: at the end of the transcript, after "Working".</dd>
+      <dt>Line</dt><dd>Under each queued bubble, 4 pt below it, right-aligned with the bubble's right edge, always visible (not on hover). 11.5 <code>textTertiary</code>. First the status, then, each after a "·" (<code>textTertiary</code>, 6 pt on each side), the actions.</dd>
+      <dt>Status</dt><dd>"◷ Queued" (<code>clock</code> 10), or "On hold until your next message" when the queue is held, or "Goes when the agent is ready" while the agent starts or the workspace is being made (M2.9 WSC-03).</dd>
+      <dt>Actions</dt><dd><b>↑ Send now</b> · <b>✎ Edit</b> · <b>✕</b>. Text buttons with their symbol (<code>arrow.up</code>, <code>pencil</code>, 10), 11.5 <code>textTertiary</code>; on hover <code>textPrimary</code> on a <code>fillHover</code> pill (radius 5, padding 2 6), <code>.clickable()</code>. ✕ has no title: tooltip "Delete this queued message", or "Remove this queued comment" for a line comment (M3 CMT-05). Edit is disabled at 50 % while the message box has content, with today's tooltip "Send or clear the message box first".</dd>
+      <dt>Access</dt><dd>VoiceOver reads the status, then each action by its name ("Send now", "Edit", "Delete this queued message").</dd>
+      <dt>Code</dt><dd><code>QueuedMessagesView.swift</code> and <code>ChatView</code> (built by dev-1, 2026-09-29).</dd>
+      <dt>Done when</dt><dd>Two messages sent during a turn each show "◷ Queued · ↑ Send now · ✎ Edit · ✕" under them without hovering; with text in the message box, Edit is dimmed.</dd>
+    </dl>
+  </section>
+
+  <h2>RockyKit</h2>
+  <section class="req" id="REQ-KIT-21">
+    <header><code class="id">KIT-21</code><h3>AllChangesLayout</h3><span class="scope tech">Technical</span></header>
+<pre>struct AllChangesState { var folded: Set&lt;String&gt;; var expandedGaps: [String: Set&lt;DiffGap&gt;]; var shownLarge: Set&lt;String&gt; }
+struct AllChangesSection {               // one pinned Section per file (ALL-03)
+  let path: String
+  let kindCaption: (kind, count)?        // "Uncommitted · 2" / "Committed · 3", on a kind's first file
+  let header: AllChangesHeader           // the FileDiff and whether it is folded
+  let rows: [AllChangesRow]              // line, gap, caption, spacer; ids stable across updates, from path + line
+}
+enum AllChangesLayout {
+  static func sections(changes: WorkspaceChanges, state: AllChangesState, newLines: [String: [String]]) -> [AllChangesSection]
+  static func anchor(after update: [AllChangesSection], was: AllChangesRow.ID, previousPaths: [String]) -> AllChangesRow.ID
+}</pre>
+    <p>Sections instead of one flat list of rows (dev-1's plan, 2026-09-29): a pinned <code>Section</code> needs its header apart from its rows. <code>anchor</code> takes the previous order of paths to locate "the next file's header" when the anchor's file is gone.</p>
+    <p>Pure, on top of <code>DiffLayout</code>. Tests: Uncommitted then Committed with their counts; an empty section left out; a folded file gives only its header; a large file gives its caption until shown; binary, mode-only and pure-rename captions; ids stay the same when a file is added above; <code>anchor</code> falls back to the same file's nearest line, then to the next file's header in the previous order. <code>AppModel</code>: the workspace's <code>AllChangesState</code> in memory, and GIT-01's "Changes tab visible" condition widened.</p>
+  </section>
+
+  <h2>Out of scope</h2>
+  <section class="req" id="REQ-OUT-11">
+    <header><code class="id">OUT-11</code><h3>Not in M3.1</h3><span class="scope out">Later</span></header>
+    <p>Line comments in the All changes tab (CMT-01…06 stay in each file's diff tab) · Discard, per file or per hunk · editing in it · a side-by-side view · staging or partial commits · filtering the list (by folder or status) · keyboard folding · find (⌘F) across the tab, which Rocky's diff tabs lack too · keeping the fold state across relaunches · following a Changes row click into the All changes tab (a row still opens that file's diff tab).</p>
+  </section>
+</aside>
+
+<script>
+/* Demo behavior. Files and hunks are canned; the requirements on the right are what matters. */
+(() => {
+  'use strict';
+  const $ = (s) => document.querySelector(s);
+  const win = $('#win');
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const svg = (s, body, w = 1.5) => `<svg width="${s}" height="${s}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+  const I = {
+    stack: svg(12, '<rect x="2" y="5.5" width="12" height="8" rx="1.5"/><path d="M4 3.5h8M5.5 1.8h5"/>', 1.4),
+    chev: svg(9, '<path d="M3.5 6l4.5 4.5L12.5 6"/>', 2.2),
+    clock: svg(10, '<circle cx="8" cy="8" r="6"/><path d="M8 4.8V8l2.2 1.4"/>', 1.6),
+    up: svg(10, '<path d="M8 13V3.5M3.75 7.5L8 3.25l4.25 4.25"/>', 2),
+    pencil: svg(10, '<path d="M10.5 2.5l3 3L6 13H3v-3z"/>', 1.6),
+    x: svg(9, '<path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/>', 1.8),
+    bubble: svg(12, '<path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z M5 6h6M5 8h4"/>', 1.3),
+    collapse: svg(11, '<path d="M9.5 6.5L14 2M9.5 6.5V3M9.5 6.5H13M6.5 9.5L2 14M6.5 9.5V13M6.5 9.5H3"/>', 1.5),
+    more: svg(12, '<circle cx="3.5" cy="8" r=".9" fill="currentColor"/><circle cx="8" cy="8" r=".9" fill="currentColor"/><circle cx="12.5" cy="8" r=".9" fill="currentColor"/>', 1),
+  };
+  const ICON_COLOR = { ts: '#3178C6', json: '#E8C547', md: '#5A9FD4', png: '#7CC08A', sh: '#8AA1B4', yaml: '#CB6B6B' };
+  function fileIcon(path) {
+    const ext = path.split('.').pop();
+    const color = ICON_COLOR[ext] || '#8A919A';
+    return `<span class="ficon" style="background:${color}"></span>`;
+  }
+  const L = (t, no, code) => ({ t, no, code });   // t: ' ' context, '+' added, '-' removed
+  const FILES = [
+    { path: 'src/openapi.ts', st: 'M', sec: 'u', add: 20, del: 7, hunks: [
+      { gap: 0, lines: [L('-', 1, 'import { routes } from "./routes";'), L('+', 1, 'import { routes, type Route } from "./routes";'), L(' ', 2, 'import { writeFileSync } from "node:fs";'), L('+', 3, 'import { schemaFor } from "./schemas";'), L(' ', 4, ''), L('-', 4, '// Builds the OpenAPI document.'), L('+', 5, '// Builds the OpenAPI 3.1 document from the router.'), L(' ', 6, 'export function buildDocument() {')] },
+      { gap: 14, lines: [L(' ', 21, '  }'), L('-', 19, '  return { openapi: "3.0.0", info: { title: "Providers" }, paths };'), L('+', 22, '  return { openapi: "3.1.0", info: { title: "Providers", version: "1.0.0" }, paths };'), L(' ', 23, '}'), L('+', 24, ''), L('+', 25, 'export function operation(route: Route) {'), L('+', 26, '  return { operationId: route.name, responses: { "200": { description: "OK" } } };'), L('+', 27, '}')] },
+    ], after: 9 },
+    { path: 'test/openapi.test.ts', st: 'A', sec: 'u', add: 10, del: 0, note: 'New file', hunks: [
+      { gap: 0, lines: [L('+', 1, 'import { describe, it, expect } from "vitest";'), L('+', 2, 'import { buildDocument } from "../src/openapi";'), L('+', 3, ''), L('+', 4, 'describe("buildDocument", () => {'), L('+', 5, '  it("emits OpenAPI 3.1", () => {'), L('+', 6, '    expect(buildDocument().openapi).toBe("3.1.0");'), L('+', 7, '  });'), L('+', 8, '  it("has paths", () => expect(Object.keys(buildDocument().paths).length).toBeGreaterThan(0));'), L('+', 9, '});')] },
+    ], after: 0 },
+    { path: 'src/routes/providers.ts', st: 'M', sec: 'c', add: 2, del: 1, hunks: [
+      { gap: 11, lines: [L(' ', 12, 'export const providers = ['), L('-', 13, '  { name: "list", method: "GET", path: "/providers" },'), L('+', 13, '  { name: "listProviders", method: "GET", path: "/providers" },'), L('+', 14, '  { name: "getProvider", method: "GET", path: "/providers/{id}" },'), L(' ', 15, '];')] },
+    ], after: 3 },
+    { path: 'pnpm-lock.yaml', st: 'M', sec: 'c', add: 2988, del: 226, large: 3214, hunks: [] },
+    { path: 'assets/logo.png', st: 'M', sec: 'c', add: 0, del: 0, binary: '24 KB → 31 KB', hunks: [] },
+    { path: 'scripts/release.sh', st: 'M', sec: 'c', add: 0, del: 0, mode: '644 → 755', hunks: [] },
+    { path: 'docs/old-api.md', st: 'D', sec: 'c', add: 0, del: 4, note: 'Deleted', hunks: [
+      { gap: 0, lines: [L('-', 1, '# Old API'), L('-', 2, ''), L('-', 3, 'The providers API returned XML.'), L('-', 4, 'Use /v1/providers.xml for the list.')] },
+    ], after: 0 },
+  ];
+  const state = { folded: new Set(), gaps: new Set(), shown: new Set(), cur: null, empty: false, tab: 'all', sent: [], queue: [], draft: false };
+
+  const statHTML = (a, d) => `<span class="stat"><span class="a">+${a.toLocaleString()}</span> <span class="d">−${d.toLocaleString()}</span></span>`;
+  const splitPath = (p) => { const i = p.lastIndexOf('/'); return { dir: i < 0 ? '' : p.slice(0, i + 1), name: p.slice(i + 1) }; };
+  const foldable = (f) => f.hunks.length > 0 || (f.large && state.shown.has(f.path));
+  const visible = () => (state.empty ? [] : FILES);
+
+  function renderTabs() {
+    const n = visible().length;
+    const chatSel = state.tab === 'chat' ? ' selected' : '';
+    const allSel = state.tab === 'all' ? ' selected' : '';
+    $('#tabs').innerHTML = `<div class="tab-wrap${chatSel}"><button class="tab" data-action="tab" data-tab="chat"><span class="agent">C</span><span>OpenAPI export</span></button></div>` +
+      `<div class="tab-wrap${allSel}" data-req="ALL-02"><button class="tab" data-action="tab" data-tab="all" title="All changed files: Uncommitted, then Committed"><span class="ico">${I.stack}</span><span>All changes</span>${n ? `<span class="n">${n}</span>` : ''}</button></div>`;
+  }
+  function renderChanges() {   // M3's Changes tab, with ALL-01's button
+    const files = visible();
+    let adds = 0; let dels = 0;
+    for (const f of files) { adds += f.add; dels += f.del; }
+    const sum = statHTML(adds, dels);
+    $('#chgCount').textContent = files.length ? String(files.length) : '';
+    let html = `<div class="chrow"><span>${files.length ? `${files.length} files` : 'No changes yet'}</span>${files.length ? sum : ''}<span class="grow"></span><button class="text-btn" data-action="open-all" data-req="ALL-01"${files.length ? ' title="Every changed file in one tab"' : ' disabled title="No changes yet"'}>${I.stack}All changes</button><button class="text-btn" aria-label="More">${I.more}</button></div>`;
+    for (const sec of ['u', 'c']) {
+      const list = files.filter((f) => f.sec === sec);
+      if (!list.length) continue;
+      html += `<div class="csec">${sec === 'u' ? 'Uncommitted' : 'Committed'} · ${list.length}</div>`;
+      for (const f of list) {
+        const parts = splitPath(f.path);
+        html += `<div class="crow"><span class="st st-${f.st}" style="font:600 11px var(--mono)">${f.st}</span>${fileIcon(f.path)}<span>${esc(parts.name)}</span><span class="dir">${esc(parts.dir)}</span><span class="grow"></span>${statHTML(f.add, f.del)}</div>`;
+      }
+    }
+    $('#changes').innerHTML = html;
+  }
+  function lineHTML(l) {
+    const cls = l.t === '+' ? ' add' : l.t === '-' ? ' del' : '';
+    const mark = l.t === ' ' ? '' : l.t === '-' ? '−' : '+';
+    return `<div class="ln${cls}"><span class="no">${l.no}</span><span class="mk">${mark}</span><span class="cd">${esc(l.code)}</span></div>`;
+  }
+  function gapHTML(f, key, count, firstNo) {
+    if (state.gaps.has(key)) {
+      let rows = '';
+      for (let k = 0; k < count; k++) rows += lineHTML(L(' ', firstNo + k, '  // unchanged'));
+      return rows;
+    }
+    return `<button class="gap" data-action="gap" data-gap="${esc(key)}" data-req="ALL-04">${I.chev}<span>${count} unchanged lines</span></button>`;
+  }
+  function bodyHTML(f) {
+    if (f.binary) return `<div class="caption" data-req="ALL-07">Binary file · ${esc(f.binary)}</div>`;
+    if (f.mode) return `<div class="caption" data-req="ALL-07">File mode changed ${esc(f.mode)}</div>`;
+    if (f.large && !state.shown.has(f.path)) return `<div class="caption" data-req="ALL-07">Large diff · ${f.large.toLocaleString()} lines<button data-action="show" data-path="${esc(f.path)}">Show</button></div>`;
+    if (f.large) {   // Show: the rows load in place (a few here)
+      let rows = '';
+      for (let k = 1; k <= 12; k++) rows += lineHTML(L(k % 3 ? '+' : '-', k, `  /${k}: resolution: {integrity: sha512-…}`));
+      return rows;
+    }
+    let html = '';
+    f.hunks.forEach((h, i) => {
+      if (h.gap) {
+        const key = `${f.path}#${i}`;
+        const first = h.lines[0];
+        html += gapHTML(f, key, h.gap, Math.max(1, first.no - h.gap));
+      }
+      for (const l of h.lines) html += lineHTML(l);
+    });
+    if (f.after) {
+      const lastHunk = f.hunks[f.hunks.length - 1];
+      const lastLine = lastHunk.lines[lastHunk.lines.length - 1];
+      html += gapHTML(f, `${f.path}#end`, f.after, lastLine.no + 1);
+    }
+    return html;
+  }
+  function headHTML(f) {
+    const folded = state.folded.has(f.path);
+    const parts = splitPath(f.path);
+    const chev = foldable(f) ? `<button class="chev${folded ? ' folded' : ''}" data-action="fold" data-path="${esc(f.path)}" aria-label="${folded ? 'Unfold' : 'Fold'}" aria-expanded="${!folded}">${I.chev}</button>` : '<span class="chev none"></span>';
+    const note = f.note ? `<span class="note">${esc(f.note)}</span>` : '';
+    return `<div class="fhead${state.cur === f.path ? ' cur' : ''}" data-file="${esc(f.path)}" data-req="ALL-03">${chev}<span class="st st-${f.st}">${f.st}</span><button class="fname" data-action="open-file" data-path="${esc(f.path)}" title="Open in its own tab">${fileIcon(f.path)}<span class="dir">${esc(parts.dir)}</span><span class="nm">${esc(parts.name)}</span></button>${note}<span class="fill" data-action="fold" data-path="${esc(f.path)}"></span>${statHTML(f.add, f.del)}</div>`;
+  }
+  function renderCenter() {
+    const files = visible();
+    let adds = 0; let dels = 0;
+    for (const f of files) { adds += f.add; dels += f.del; }
+    const allFolded = files.filter(foldable).every((f) => state.folded.has(f.path));
+    const bar = `<div class="acbar" data-req="ALL-03"><span>${files.length ? `${files.length} files` : 'No files'}</span>${files.length ? statHTML(adds, dels) : ''}<span class="grow"></span><button class="text-btn" data-action="${allFolded ? 'expand-all' : 'collapse-all'}"${files.length ? '' : ' disabled'}>${I.collapse}${allFolded ? 'Expand all' : 'Collapse all'}</button></div>`;
+    let list = '';
+    if (!files.length) list = '<div class="empty" data-req="ALL-08"><span>No changes yet</span><small>Changes the agent makes in this workspace show up here.</small></div>';
+    for (const sec of ['u', 'c']) {
+      const group = files.filter((f) => f.sec === sec);
+      if (!group.length) continue;
+      list += `<div class="sec">${sec === 'u' ? 'Uncommitted' : 'Committed'} · ${group.length}</div>`;
+      for (const f of group) {
+        const body = state.folded.has(f.path) ? '' : `<div class="fbody">${bodyHTML(f)}</div>`;
+        list += `<section class="afile" data-path="${esc(f.path)}">${headHTML(f)}${body}</section>`;
+      }
+    }
+    const old = $('#aclist');
+    const top = old ? old.scrollTop : 0;
+    $('#center').innerHTML = bar + `<div class="aclist" id="aclist">${list}</div>`;
+    $('#aclist').scrollTop = top;
+  }
+  // RVW-01/02: the bubble is a short message and the comments file's chip
+  function renderChat() {
+    let items = '<div class="msg-agent">Done: buildDocument() emits OpenAPI 3.1 and a test validates it.</div>';
+    for (const m of state.sent) {
+      const chip = `<span class="fchip" data-req="RVW-01" title="Review comments on #131"><span class="seg">${I.bubble}</span><span class="nm">[GITHUB]-PR-131-comments.md</span></span>`;
+      items += `<div class="msg-user" data-req="RVW-02">${chip}<span>${esc(m)}</span></div>`;
+    }
+    if (state.queue.length) items += '<div class="working">Working</div>';
+    state.queue.forEach((text, i) => { items += queuedHTML(text, i); });
+    $('#center').innerHTML = `<div class="chat"><div class="col">${items}</div></div>`;
+  }
+  // QUE-01: the status and the actions in a line under each queued bubble, always visible
+  function queuedHTML(text, i) {
+    const edit = state.draft ? ' disabled title="Send or clear the message box first"' : ' title="Edit in the message box"';
+    const status = `<span class="qs">${I.clock}Queued</span>`;
+    const actions = `<button data-action="q-send" data-i="${i}" title="Send now">${I.up}Send now</button><span class="dot">·</span><button data-action="q-edit" data-i="${i}"${edit}>${I.pencil}Edit</button><span class="dot">·</span><button data-action="q-delete" data-i="${i}" title="Delete this queued message" aria-label="Delete this queued message">${I.x}</button>`;
+    return `<div class="q-item" data-req="QUE-01"><div class="q-body">${esc(text)}</div><div class="q-line">${status}<span class="dot">·</span>${actions}</div></div>`;
+  }
+  function renderAll() { renderTabs(); renderChanges(); if (state.tab === 'all') renderCenter(); else renderChat(); }
+
+  // ALL-09: keep the first row on screen where it was, across an update above it
+  function firstVisible() {
+    const list = $('#aclist');
+    const top = list.getBoundingClientRect().top;
+    const rows = list.querySelectorAll('.ln, .gap, .caption, .fhead, .sec');
+    for (const r of rows) { const b = r.getBoundingClientRect(); if (b.bottom > top + 1 && !r.classList.contains('fhead')) return { el: r, offset: b.top - top, file: r.closest('.afile')?.dataset.path, index: [...r.parentElement.children].indexOf(r) }; }
+    return null;
+  }
+  function withAnchor(update) {
+    showAll();
+    const a = firstVisible();
+    update();
+    if (!a || !a.file) return;
+    const list = $('#aclist');
+    const section = list.querySelector(`.afile[data-path="${CSS.escape(a.file)}"] .fbody`);
+    const row = section ? section.children[a.index] : null;
+    if (!row) return;
+    const top = list.getBoundingClientRect().top;
+    list.scrollTop += row.getBoundingClientRect().top - top - a.offset;
+  }
+  // ALL-06: ⌥⌘↓ / ⌥⌘↑ go to the next / previous file's header
+  function showAll() { if (state.tab !== 'all') { state.tab = 'all'; renderAll(); } }
+  function goFile(step) {
+    showAll();
+    const files = visible(); if (!files.length) return;
+    const list = $('#aclist');
+    const heads = [...list.querySelectorAll('.afile')];
+    let i = state.cur ? files.findIndex((f) => f.path === state.cur) : -1;
+    if (i < 0) {   // the current file starts as the one at the top
+      const top = list.getBoundingClientRect().top;
+      i = Math.max(0, heads.findIndex((h) => h.getBoundingClientRect().bottom > top + 40));
+      if (step > 0) i -= 1;
+    }
+    const next = Math.max(0, Math.min(files.length - 1, i + step));
+    state.cur = files[next].path;
+    renderCenter();
+    const target = $('#aclist').querySelector(`.afile[data-path="${CSS.escape(state.cur)}"]`);
+    const listTop = $('#aclist').getBoundingClientRect().top;
+    $('#aclist').scrollTop += target.getBoundingClientRect().top - listTop;
+  }
+
+  win.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-action]'); if (!b || b.disabled) return;
+    const path = b.dataset.path;
+    switch (b.dataset.action) {
+      case 'fold': if (state.folded.has(path)) state.folded.delete(path); else state.folded.add(path); state.cur = path; renderCenter(); break;
+      case 'gap': state.gaps.add(b.dataset.gap); renderCenter(); break;
+      case 'show': state.shown.add(path); renderCenter(); break;
+      case 'collapse-all': for (const f of visible()) if (foldable(f)) state.folded.add(f.path); renderCenter(); break;
+      case 'expand-all': state.folded.clear(); renderCenter(); break;
+      case 'open-file': toast(`Opens ${path}'s own diff tab (DIFF-01).`); break;
+      case 'open-all': state.tab = 'all'; renderAll(); toast('Selects the All changes tab, already open.'); break;
+      case 'tab': state.tab = b.dataset.tab; renderAll(); break;
+      case 'q-send': state.queue.splice(Number(b.dataset.i), 1); toast('Sends it now: the running turn is cancelled first, as today.'); renderAll(); break;
+      case 'q-edit': state.queue.splice(Number(b.dataset.i), 1); toast('Moves it back into the message box.'); renderAll(); break;
+      case 'q-delete': state.queue.splice(Number(b.dataset.i), 1); renderAll(); break;
+      default: break;
+    }
+  });
+  let added = 0;
+  $('#demoAdd').addEventListener('click', () => {
+    added += 1;
+    const name = `src/schemas/provider${added}.ts`;
+    const lines = [];
+    for (let k = 1; k <= 6; k++) lines.push(L('+', k, k === 1 ? 'import { z } from "zod";' : `export const field${k} = z.string();`));
+    withAnchor(() => { FILES.unshift({ path: name, st: 'A', sec: 'u', add: 6, del: 0, note: 'New file', hunks: [{ gap: 0, lines }], after: 0 }); renderAll(); });
+    toast(`The agent added ${name} above; the line you were reading stayed put.`);
+  });
+  $('#demoComments').addEventListener('click', () => {
+    state.sent.push('Address the 4 review comments on pull request #131 in the attached file, and say what you changed for each number.');
+    state.tab = 'chat'; renderAll();
+  });
+  $('#demoQueue').addEventListener('click', () => {
+    const texts = ['Also add a test for the 404 path.', 'Then update the README.'];
+    const next = texts[state.queue.length % texts.length];
+    state.queue.push(next);
+    state.tab = 'chat'; renderAll();
+  });
+  $('#demoNext').addEventListener('click', () => goFile(1));
+  $('#demoPrev').addEventListener('click', () => goFile(-1));
+  $('#demoEmpty').addEventListener('click', (e) => { state.empty = !state.empty; e.currentTarget.setAttribute('aria-pressed', String(state.empty)); renderAll(); });
+  let toastTimer = null;
+  function toast(msg) { let t = win.querySelector('.toast'); if (!t) { t = document.createElement('div'); t.className = 'toast'; win.appendChild(t); } t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2800); }
+  $('#demoPins').addEventListener('click', (e) => { e.currentTarget.setAttribute('aria-pressed', String(document.body.classList.toggle('spec-on'))); });
+  document.addEventListener('click', (e) => {
+    if (!document.body.classList.contains('spec-on')) return;
+    const el = e.target.closest('[data-req]'); if (!el) return;
+    const s = document.getElementById('REQ-' + el.dataset.req); if (!s) return;
+    s.scrollIntoView({ behavior: 'smooth', block: 'start' }); s.classList.add('flash'); setTimeout(() => s.classList.remove('flash'), 1400);
+  }, true);
+
+  renderAll();
+})();
+</script>
+</body>
+</html>

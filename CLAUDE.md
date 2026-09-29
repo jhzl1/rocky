@@ -77,8 +77,8 @@ open build/Rocky.app
 - **Window metrics**: `WindowMetrics.titleBarHeight` (38) and `bottomBarHeight` (36), shared by the sidebar footer
   and the terminal panel bar so their lines align.
 - **Chat**: a plain `VStack` of `.equatable()` rows, never a `LazyVStack`, whose estimated heights made the scroll
-  bar grow and shrink. Queued messages sit at the end of the transcript, after "Working", as one group with one
-  caption.
+  bar grow and shrink. Queued messages sit at the end of the transcript, after "Working", each with its status and
+  actions always visible under it ("Queued · Send now · Edit · ×").
 - **Live feedback**: `CircularProgress` (Core Animation), `ShimmerText` for live labels, elapsed times in the
   monospaced font. Honor Reduce Motion. Animations pause only while the window cannot be seen
   (`NSWindow.occlusionState`: minimized, hidden, covered, another Space), never just because another app is active,

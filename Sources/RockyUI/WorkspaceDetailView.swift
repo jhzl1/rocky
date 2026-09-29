@@ -213,6 +213,7 @@ struct WorkspaceDetailView: View {
     /// shows. A diff tab without its editor (Diff mode) leaves it with the window.
     private func giveKeyboardBack(in window: NSWindow) {
         let showsConversation = model.selectedFiles[workspace.id] == nil && model.selectedDiffTabs[workspace.id] == nil
+            && !model.selectedAllChanges.contains(workspace.id)
         if showsConversation, let conversationId = model.selectedConversationIds[workspace.id],
            let composer = ConversationComposers.controller(conversationId: conversationId) {
             composer.focus()
@@ -241,9 +242,10 @@ struct WorkspaceDetailView: View {
     private var chatArea: some View {
         let file = model.selectedFiles[workspace.id]
         let diff = model.selectedDiffTabs[workspace.id]
+        let allChanges = model.selectedAllChanges.contains(workspace.id)
         // WSC-06: the card takes the conversation's place; the conversation stays underneath, with its draft and queue.
         let failure: String? = if case .failed(let message)? = model.creations[workspace.id] { message } else { nil }
-        let showsChat = file == nil && diff == nil && failure == nil
+        let showsChat = file == nil && diff == nil && !allChanges && failure == nil
         // WSC-07: while its archive script runs, the conversation keeps its transcript and its message box is off.
         let closedReason = model.removalHint(workspaceId: workspace.id)
         return ZStack {
@@ -269,7 +271,7 @@ struct WorkspaceDetailView: View {
                 ProgressLabel(text: "Opening the conversation…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            if let failure, file == nil, diff == nil {
+            if let failure, file == nil, diff == nil, !allChanges {
                 CreationFailureCard(
                     name: workspace.name,
                     message: failure,
@@ -278,7 +280,11 @@ struct WorkspaceDetailView: View {
                     onRetry: { [model, workspace] in Task { await model.retryCreation(workspaceId: workspace.id) } }
                 )
             }
-            if let diff {
+            if allChanges {
+                // ALL-02: its folds are the model's, and its top row comes back from `allChangesAnchors`.
+                AllChangesView(model: model, workspace: workspace)
+                    .background(Color.rockyBackground)
+            } else if let diff {
                 // A new view per file, so one tab's expanded runs and scroll position never carry over to another. A
                 // preview from the tree leaves the keyboard in the tree, so its arrows keep browsing (FIL-05).
                 DiffTabView(model: model, workspace: workspace, path: diff, takesFocus: model.previewTabs[workspace.id] != diff)
@@ -366,6 +372,7 @@ struct ConversationTabs: View {
         let selectedFile = model.selectedFiles[workspace.id]
         let diffs = model.diffTabs[workspace.id] ?? []
         let selectedDiff = model.selectedDiffTabs[workspace.id]
+        let showsAllChanges = model.selectedAllChanges.contains(workspace.id)
         let preview = model.previewTabs[workspace.id]
         let changes = model.changes[workspace.id]
         // WSC-03: one conversation, in memory, until the worktree exists and the workspace is saved with it.
@@ -377,7 +384,7 @@ struct ConversationTabs: View {
                         let agent = AgentKind(rawValue: record.agent) ?? .claude
                         WorkspaceTab(
                             title: record.title ?? "New conversation",
-                            isSelected: record.id == selectedId && selectedFile == nil && selectedDiff == nil,
+                            isSelected: record.id == selectedId && selectedFile == nil && selectedDiff == nil && !showsAllChanges,
                             canClose: creatingHint == nil,
                             onSelect: { Task { await model.showConversation(workspace: workspace, conversationId: record.id) } },
                             onClose: { Task { await model.closeConversation(workspace: workspace, conversationId: record.id) } }
@@ -430,6 +437,22 @@ struct ConversationTabs: View {
                         }
                         .help(path)
                     }
+                    // ALL-02: after the diff tabs, with the number of changed files.
+                    if model.allChangesTabs.contains(workspace.id) {
+                        let count = changes?.files.count ?? 0
+                        WorkspaceTab(
+                            title: "All changes",
+                            isSelected: showsAllChanges,
+                            detail: count > 0 ? "\(count)" : nil,
+                            onSelect: { model.openAllChanges(workspaceId: workspace.id) },
+                            onClose: { model.closeAllChanges(workspaceId: workspace.id) }
+                        ) {
+                            Image(systemName: "rectangle.stack")
+                                .font(.rocky(12))
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+                        .help("All changed files: Uncommitted, then Committed")
+                    }
                 }
             }
             .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
@@ -479,6 +502,8 @@ struct WorkspaceTab<Icon: View>: View {
     let isSelected: Bool
     var isDirty = false
     var isPreview = false
+    /// ALL-02's file count after the title, 11 mono `textTertiary`.
+    var detail: String?
     /// False for the one conversation of a workspace being made (WSC-03): it has no ×.
     var canClose = true
     let onSelect: () -> Void
@@ -506,6 +531,11 @@ struct WorkspaceTab<Icon: View>: View {
                         .italic(isPreview)
                         .lineLimit(1)
                         .truncationMode(.tail)
+                    if let detail {
+                        Text(verbatim: detail)
+                            .font(.rocky(11, design: .monospaced))
+                            .foregroundStyle(Theme.textTertiary)
+                    }
                 }
                 .padding(.leading, 10)
             }

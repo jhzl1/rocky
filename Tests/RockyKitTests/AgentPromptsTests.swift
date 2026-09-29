@@ -81,6 +81,14 @@ struct AgentPromptsTests {
             """)
     }
 
+    /// RVW-02: the message that goes with the comments' file, by how many were sent.
+    @Test func reviewCommentsMessageCountsTheCommentsSent() {
+        #expect(AgentPrompts.reviewCommentsMessage(number: 131, count: 4)
+            == "Address the 4 review comments on pull request #131 in the attached file, and say what you changed for each number.")
+        #expect(AgentPrompts.reviewCommentsMessage(number: 131, count: 1)
+            == "Address the review comment on pull request #131 in the attached file, and say what you changed.")
+    }
+
     @Test func reviewCommentsQuoteEveryLineAndNameAFileWithoutALine() {
         let comments = [
             PendingComment(id: "PRRT_2", kind: .thread, author: "ana", body: "Rename this file.\r\nIt holds the client.\r\n", path: "src/ocr/client.ts"),

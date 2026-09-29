@@ -116,6 +116,12 @@ public enum ModelPick: Sendable, Equatable {
     case openedConversation
 }
 
+/// ALL-06: one press of ⌥⌘↓ (1) or ⌥⌘↑ (-1) in an All changes tab; the view acts on each new serial once.
+public struct AllChangesStep: Equatable, Sendable {
+    public let step: Int
+    public let serial: Int
+}
+
 /// Decision 12 of M2.9: a request for a workspace's panel to select one tab and unfold, from a task that starts with
 /// `reveal: always`, a running item chosen again, or a toast's Show. `focus` gives that terminal the keyboard
 /// (`presentation.focus`). The panel acts on each new serial once.
@@ -421,6 +427,21 @@ public final class AppModel {
     public private(set) var selectedDiffTabs: [String: String] = [:] {
         didSet { refreshShownChangesIfStale() }
     }
+    /// ALL-01, ALL-02: the workspaces whose All changes tab is open, drawn after their diff tabs. One per workspace, kept
+    /// only while Rocky runs.
+    public private(set) var allChangesTabs: Set<String> = []
+    /// The workspaces showing their All changes tab instead of their conversation: at most one of this, `selectedFiles`
+    /// and `selectedDiffTabs` holds a workspace. While it holds the selected one, its full diff is computed (ALL-09).
+    public private(set) var selectedAllChanges: Set<String> = [] {
+        didSet { refreshShownChangesIfStale() }
+    }
+    /// ALL-05, ALL-06: each workspace's folds, expanded runs, large files shown and current file. In memory only.
+    public private(set) var allChangesStates: [String: AllChangesState] = [:]
+    /// ALL-06: the last ⌥⌘↓ / ⌥⌘↑ in each workspace's All changes tab, for its view, which knows what is on screen.
+    public private(set) var allChangesSteps: [String: AllChangesStep] = [:]
+    /// ALL-02: the row each All changes tab had at its top when another tab took its place, so it comes back there.
+    /// Written as the view goes, not while it scrolls.
+    @ObservationIgnored public private(set) var allChangesAnchors: [String: String] = [:]
     /// Each diff tab's mode (`DIFF-01`'s Diff | Edit), by workspace and path; a tab without one shows its diff.
     public private(set) var diffTabModes: [String: [String: DiffTabMode]] = [:]
     /// DIFF-05 and CMT-06: the diff tab each workspace was last asked to scroll, to its first hunk (a badge) or to a
@@ -1433,6 +1454,11 @@ public final class AppModel {
         rightPanelTabs[id] = nil
         diffTabs[id] = nil
         selectedDiffTabs[id] = nil
+        allChangesTabs.remove(id)
+        selectedAllChanges.remove(id)
+        allChangesStates[id] = nil
+        allChangesSteps[id] = nil
+        allChangesAnchors[id] = nil
         diffTabModes[id] = nil
         diffScrollRequests[id] = nil
         forgetWatchedState(workspaceId: id)
@@ -1716,12 +1742,14 @@ public final class AppModel {
         if !files.contains(path) { files.append(path) }
         openFiles[workspaceId] = files
         selectedDiffTabs[workspaceId] = nil
+        selectedAllChanges.remove(workspaceId)
         selectedFiles[workspaceId] = path
     }
 
     public func showFile(workspaceId: String, path: String) {
         guard openFiles[workspaceId]?.contains(path) == true else { return }
         selectedDiffTabs[workspaceId] = nil
+        selectedAllChanges.remove(workspaceId)
         selectedFiles[workspaceId] = path
     }
 
@@ -1729,6 +1757,7 @@ public final class AppModel {
     private func showConversationTab(workspaceId: String) {
         selectedFiles[workspaceId] = nil
         selectedDiffTabs[workspaceId] = nil
+        selectedAllChanges.remove(workspaceId)
     }
 
     /// Closes a file tab; if it was on screen, the selected conversation comes back. Its editor goes with it, unsaved
@@ -3016,7 +3045,14 @@ public final class AppModel {
         guard !comments.isEmpty else { return }
         pullRequests.markCommentsAdded(comments.map(\.id), workspaceId: workspaceId)
         let prompt = AgentPrompts.reviewComments(number: pr.number, comments: comments)
-        await sendAgentAction(workspaceId: workspaceId, text: prompt, attachments: [])
+        // RVW-01, RVW-02: the comments go as a file with a short message, so the bubble stays short. A file that
+        // cannot be written sends the text itself, as before, rather than nothing.
+        guard let file = try? await writeLinkAttachment(LinkAttachments.reviewComments(number: pr.number, markdown: prompt)) else {
+            await sendAgentAction(workspaceId: workspaceId, text: prompt, attachments: [])
+            return
+        }
+        let message = AgentPrompts.reviewCommentsMessage(number: pr.number, count: comments.count)
+        await sendAgentAction(workspaceId: workspaceId, text: message, attachments: [file])
     }
 
     /// `REV-01`'s Hide: the comment leaves the list for this pull request, also after a relaunch.
@@ -3232,12 +3268,13 @@ public final class AppModel {
 
     /// Whether the workspace's full diff is computed on each change: it is selected and shows it, in its Changes tab, in
     /// its All files tab (FIL-02's letters, FIL-05's "Becoming changed"), in a diff tab on screen, so an open diff
-    /// follows the agent with the panel on Checks or closed, or in Quick Open (FIL-08's letters and changed files).
+    /// follows the agent with the panel on Checks or closed, in its All changes tab on screen (ALL-09), or in Quick Open
+    /// (FIL-08's letters and changed files).
     private func showsChanges(workspaceId: String) -> Bool {
         // WSC-03: its tabs show a spinner until the worktree exists.
         guard workspaceId == selectedWorkspaceId, creations[workspaceId] == nil else { return false }
         return visibleRightPanelTab == .changes || visibleRightPanelTab == .files || selectedDiffTabs[workspaceId] != nil
-            || quickOpenWorkspaceId == workspaceId
+            || selectedAllChanges.contains(workspaceId) || quickOpenWorkspaceId == workspaceId
     }
 
     /// GIT-01's "on a change": the sidebar's stats for every workspace, and the full diff for the one on screen. Called
@@ -3310,7 +3347,13 @@ public final class AppModel {
         guard self.workspace(id: workspaceId) != nil, removals[workspaceId] != .removing else { return }
         switch reading {
         case .changes(let found):
-            if showsChanges(workspaceId: workspaceId) { changes[workspaceId] = found }
+            if showsChanges(workspaceId: workspaceId) {
+                changes[workspaceId] = found
+                if let state = allChangesStates[workspaceId] {
+                    let reconciled = state.reconciled(with: found)
+                    if reconciled != state { allChangesStates[workspaceId] = reconciled }
+                }
+            }
             diffStats[workspaceId] = found.stat
             staleChanges.remove(workspaceId)
             if changesFailures[workspaceId]?.action == .diff { changesFailures[workspaceId] = nil }
@@ -3410,6 +3453,76 @@ public final class AppModel {
         let current = selectedChangedFile(workspaceId: workspaceId)
         guard let next = changes[workspaceId]?.file(after: current, step: step) else { return }
         openDiff(workspaceId: workspaceId, path: next.path)
+    }
+
+    // MARK: All changes (ALL-01…ALL-09, M3.1)
+
+    /// ALL-01: opens the workspace's All changes tab after its other tabs and selects it; an open one is only selected.
+    public func openAllChanges(workspaceId: String) {
+        guard workspace(id: workspaceId) != nil else { return }
+        allChangesTabs.insert(workspaceId)
+        selectedFiles[workspaceId] = nil
+        selectedDiffTabs[workspaceId] = nil
+        selectedAllChanges.insert(workspaceId)
+    }
+
+    /// Closes the tab; the selected conversation comes back if it was on screen. Its folds stay for the next open (ALL-05).
+    public func closeAllChanges(workspaceId: String) {
+        allChangesTabs.remove(workspaceId)
+        selectedAllChanges.remove(workspaceId)
+        allChangesSteps[workspaceId] = nil
+    }
+
+    public func rememberAllChangesAnchor(workspaceId: String, id: String?) {
+        allChangesAnchors[workspaceId] = id
+    }
+
+    public func allChangesState(workspaceId: String) -> AllChangesState {
+        allChangesStates[workspaceId] ?? AllChangesState()
+    }
+
+    /// ALL-03: a click on a header's chevron or beside its name.
+    public func toggleAllChangesFold(workspaceId: String, path: String) {
+        var state = allChangesState(workspaceId: workspaceId)
+        if state.folded.remove(path) == nil { state.folded.insert(path) }
+        allChangesStates[workspaceId] = state
+    }
+
+    /// ALL-05's Collapse all and Expand all. Expand all leaves a large file at its caption, as it was never shown.
+    public func setAllChangesFolded(workspaceId: String, _ folded: Bool) {
+        var state = allChangesState(workspaceId: workspaceId)
+        state.folded = folded ? Set(changes[workspaceId]?.files.map(\.path) ?? []) : []
+        allChangesStates[workspaceId] = state
+    }
+
+    /// ALL-04: a collapsed run's click.
+    public func expandAllChangesGap(workspaceId: String, path: String, gap: DiffGap) {
+        guard let file = changes[workspaceId]?.file(at: path) else { return }
+        var state = allChangesState(workspaceId: workspaceId)
+        state.expand(gap, of: file)
+        allChangesStates[workspaceId] = state
+    }
+
+    /// ALL-07's Show on a large file.
+    public func showAllChangesLarge(workspaceId: String, path: String) {
+        var state = allChangesState(workspaceId: workspaceId)
+        state.shownLarge.insert(path)
+        allChangesStates[workspaceId] = state
+    }
+
+    /// ALL-06: the file whose header shows the accent bar; nil once the user scrolls on their own.
+    public func setAllChangesCurrent(workspaceId: String, path: String?) {
+        guard allChangesState(workspaceId: workspaceId).current != path else { return }
+        var state = allChangesState(workspaceId: workspaceId)
+        state.current = path
+        allChangesStates[workspaceId] = state
+    }
+
+    /// ALL-06's ⌥⌘↓ (`step` 1) and ⌥⌘↑ (-1) while the tab is on screen: its view takes the next or previous file from
+    /// the current one, or from the one at its top, and scrolls there.
+    public func stepAllChangesFile(workspaceId: String, step: Int) {
+        let serial = (allChangesSteps[workspaceId]?.serial ?? 0) + 1
+        allChangesSteps[workspaceId] = AllChangesStep(step: step, serial: serial)
     }
 
     /// GIT-05: the files' uncommitted changes go, tracked ones back to HEAD and untracked ones to the Trash; committed
@@ -3539,6 +3652,7 @@ public final class AppModel {
         diffTabs[workspaceId] = tabs
         if let mode { diffTabModes[workspaceId, default: [:]][path] = mode }
         selectedFiles[workspaceId] = nil
+        selectedAllChanges.remove(workspaceId)
         selectedDiffTabs[workspaceId] = path
         recordRecentFile(path, workspaceId: workspaceId)
     }
@@ -3546,6 +3660,7 @@ public final class AppModel {
     public func showDiff(workspaceId: String, path: String) {
         guard diffTabs[workspaceId]?.contains(path) == true else { return }
         selectedFiles[workspaceId] = nil
+        selectedAllChanges.remove(workspaceId)
         selectedDiffTabs[workspaceId] = path
     }
 

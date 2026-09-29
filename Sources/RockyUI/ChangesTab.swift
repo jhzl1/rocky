@@ -28,7 +28,8 @@ struct ChangesTab: View {
                     workspaceId: workspace.id,
                     changes: changes,
                     refresh: { Task { await model.refreshChanges(workspaceId: workspace.id) } },
-                    discardAll: { askToDiscard(changes.uncommitted) }
+                    discardAll: { askToDiscard(changes.uncommitted) },
+                    openAll: { model.openAllChanges(workspaceId: workspace.id) }
                 )
             }
             // ERR-02: where the action was, under the tab's row.
@@ -136,6 +137,8 @@ private struct ChangesHeadRow: View {
     let changes: WorkspaceChanges
     let refresh: () -> Void
     let discardAll: () -> Void
+    /// ALL-01: in the row, not in "⋯", so reading everything at once is seen rather than looked for.
+    let openAll: () -> Void
 
     var body: some View {
         let count = changes.files.count
@@ -146,6 +149,13 @@ private struct ChangesHeadRow: View {
                 .foregroundStyle(Theme.textSecondary)
             DiffStatLabel(stat: changes.stat)
             Spacer(minLength: 0)
+            Button("All changes", systemImage: "rectangle.stack", action: openAll)
+                .font(.rocky(12))
+                .foregroundStyle(Theme.textSecondary)
+                .buttonStyle(RockyTextButtonStyle(height: 24))
+                .clickable()
+                .disabled(count == 0)
+                .help(count == 0 ? "No changes yet" : "Every changed file in one tab")
             MenuButton(id: "changes-more-\(workspaceId)", placement: .belowTrailing, width: 260) { isOpen in
                 SidebarMenuIcon(systemImage: "ellipsis", label: "More", isOpen: isOpen)
             } content: {
@@ -169,7 +179,7 @@ private struct ChangesHeadRow: View {
 
 /// CHG-03's section header: "UNCOMMITTED · 3", 10.5 uppercase `textTertiary`, 28 points. The Uncommitted one ends with
 /// GIT-04's "Commit…": a filled button, 22 high, 11.5 medium, not uppercase.
-private struct ChangesSectionHeader: View {
+struct ChangesSectionHeader: View {
     let title: String
     let count: Int
     var commit: (() -> Void)?
@@ -295,7 +305,7 @@ private struct ChangedFileRow: View {
 }
 
 /// CHG-03's empty state.
-private struct ChangesEmptyState: View {
+struct ChangesEmptyState: View {
     var body: some View {
         VStack(spacing: 6) {
             Text("No changes yet")

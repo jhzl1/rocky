@@ -61,6 +61,13 @@ enum AgentPrompts {
         return sections.joined(separator: "\n\n")
     }
 
+    /// `RVW-02`: the message that goes with the comments' file, by how many comments were sent.
+    static func reviewCommentsMessage(number: Int, count: Int) -> String {
+        count == 1
+            ? "Address the review comment on pull request #\(number) in the attached file, and say what you changed."
+            : "Address the \(count) review comments on pull request #\(number) in the attached file, and say what you changed for each number."
+    }
+
     /// `GST-02`'s first step: uncommitted changes go to the agent before the base comes in.
     static func commitThenBringInBase(base: String) -> String {
         "Commit your changes, then bring in origin/\(base) and push."

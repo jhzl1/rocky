@@ -102,8 +102,8 @@ struct ChatView: View {
                             WorkingRow(startedAt: chat.turnStartedAt)
                                 .modifier(Entrance(isNew: true) {})
                         }
-                        // Where they will be sent: after the turn in progress, as one group with one caption (user
-                        // decisions, 2026-09-23).
+                        // Where they will be sent: after the turn in progress (user decision, 2026-09-23), each with
+                        // its status and actions under it (2026-09-29).
                         if !chat.queue.isEmpty {
                             VStack(alignment: .trailing, spacing: 8) {
                                 ForEach(chat.queue) { message in
@@ -111,6 +111,7 @@ struct ChatView: View {
                                         message: message,
                                         isAgentWorking: chat.state == .running,
                                         isWaitingForAgent: chat.isWaitingForWorkspace,
+                                        isHeld: chat.isQueueHeld,
                                         canEdit: !composerText.hasContent && !composerText.hasLineChip,
                                         onSendNow: { Task { await chat.sendQueuedNow(id: message.id) } },
                                         onEdit: { edit(message) },
@@ -118,7 +119,6 @@ struct ChatView: View {
                                     )
                                     .modifier(Entrance(isNew: true) {})
                                 }
-                                QueueCaption(count: chat.queue.count, isHeld: chat.isQueueHeld)
                             }
                             .frame(maxWidth: .infinity, alignment: .trailing)
                         }

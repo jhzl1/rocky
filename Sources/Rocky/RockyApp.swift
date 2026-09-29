@@ -434,7 +434,12 @@ private struct ChangedFileCommands: View {
 
     private func step(_ step: Int) {
         guard let workspaceId = model.selectedWorkspaceId else { return }
-        model.showAdjacentChangedFile(workspaceId: workspaceId, step: step)
+        // ALL-06: in the All changes tab they move between its files instead of opening diff tabs.
+        if model.selectedAllChanges.contains(workspaceId) {
+            model.stepAllChangesFile(workspaceId: workspaceId, step: step)
+        } else {
+            model.showAdjacentChangedFile(workspaceId: workspaceId, step: step)
+        }
     }
 }
 

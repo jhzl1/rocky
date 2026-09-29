@@ -690,14 +690,13 @@ mueven el cursor como siempre. Un comentario en líneas vuelve con su etiqueta a
 
 Si el agente está trabajando, Return no interrumpe: el mensaje entra en una cola y sale cuando termina el turno.
 
-- Los mensajes en cola aparecen al final de la conversación, más tenues y con borde punteado, con la leyenda
-  "Queued" o "3 queued".
-- Al pasar el mouse sobre uno aparecen:
+- Los mensajes en cola aparecen al final de la conversación, más tenues y con borde punteado.
+- Debajo de cada uno, siempre visible, hay una línea con su estado y sus acciones: "Queued · Send now · Edit · ×".
   - "Send now": detiene el turno en curso y envía ese mensaje primero.
   - "Edit": lo devuelve al cuadro para editarlo. Solo funciona con el cuadro vacío.
-  - "Delete": lo borra.
-- Un comentario en líneas en cola muestra su etiqueta y ofrece "Send now", "Edit" y "Remove" (sección 15).
-- Si detienes el turno, o el agente falla, la cola queda en espera. La leyenda dice "On hold until your next message".
+  - "×": lo borra.
+- Un comentario en líneas en cola muestra su etiqueta y ofrece "Send now", "Edit" y "×" para quitarlo (sección 15).
+- Si detienes el turno, o el agente falla, la cola queda en espera. El estado dice "On hold until your next message".
   Sale cuando envías otro mensaje o pulsas "Send now".
 - La cola vive en memoria: si cierras Rocky, se pierde.
 
@@ -996,6 +995,10 @@ La pestaña "Checks" muestra, en este orden:
    revisiones que piden cambios. Al pasar el mouse sobre uno: "Hide" (lo oculta para ese PR, también tras relanzar)
    y "Add to chat" (se lo envía al agente). "Add all to chat" los envía todos, numerados. Un comentario enviado queda
    marcado con un check. Rocky solo lee estos comentarios mientras la pestaña Checks se ve.
+   Los comentarios le llegan al agente como un archivo adjunto, `[GITHUB]-PR-131-comments.md`, con el texto completo.
+   En el chat, tu mensaje queda corto: el chip del archivo y "Address the 4 review comments on pull request #131 in
+   the attached file, and say what you changed for each number." (con uno solo, "Address the review comment…"). El
+   tooltip del chip es "Review comments on #131", y un clic lo abre en su pestaña.
 
 Al pie del panel ves la cuenta y la hora del último refresco, por ejemplo "jhzl1 · Updated 12s ago".
 
@@ -1301,6 +1304,33 @@ XML, YAML, TOML, shell (`.sh`, `.zsh`, `.zshrc`…), Markdown y SQL. Cualquier o
 | Solo cambió el modo | "File mode changed 644 → 755". |
 
 ---
+
+### Todos los cambios en una pestaña
+
+"All changes", en la fila de arriba de la pestaña Changes (antes de "⋯"), abre una pestaña con todos los archivos
+cambiados, uno debajo del otro, como "Open Changes" de VS Code. Si ya está abierta, la selecciona. Hay una por
+workspace, después de las pestañas de diff, con el número de archivos al lado del título.
+
+- **El orden:** primero los archivos sin commit ("Uncommitted · 2"), después los que solo cambiaron en commits
+  ("Committed · 3"), como en la pestaña Changes.
+- **Cada archivo** tiene un encabezado con la flecha para plegarlo, la letra de estado, el ícono, la carpeta y el
+  nombre, una nota ("New file", "Deleted", "Renamed from …") y `+a −d`. El encabezado se queda arriba mientras bajas por
+  sus líneas, hasta que lo empuja el siguiente.
+- **Clic en el nombre:** abre la pestaña de diff de ese archivo, donde puedes editar, comentar o descartar. **Clic en el
+  resto del encabezado:** lo pliega o lo despliega.
+- **Las líneas** son las del diff unificado: solo lo que cambió, con "⋯ N unchanged lines" plegado. Es de solo
+  lectura: no tiene "+" para comentar, ni Discard, ni Edit. Las líneas largas no se cortan; toda la lista se mueve de
+  lado junta.
+- **"Collapse all"**, arriba, pliega todos los archivos; con todos plegados dice "Expand all". Un diff grande se queda
+  en "Large diff · N lines" hasta que pulses Show. Un archivo binario, un cambio solo de permisos o un renombre sin
+  cambios muestran una línea en lugar del diff.
+- **Teclado:** con esta pestaña a la vista, ⌥⌘↓ y ⌥⌘↑ bajan y suben al siguiente archivo, que queda marcado con una
+  barra de color a la izquierda. Return abre su pestaña de diff. No hay búsqueda (⌘F), igual que en una pestaña de
+  diff en modo Diff.
+- **Mientras el agente trabaja,** la lista se actualiza sola, y lo que estás leyendo no se mueve aunque aparezcan
+  archivos arriba.
+- Lo plegado, las líneas desplegadas y la posición se conservan al cambiar de pestaña o de workspace, y al cerrar y
+  reabrir la pestaña, hasta que cierras Rocky.
 
 ## 15. Comentarios en líneas
 
