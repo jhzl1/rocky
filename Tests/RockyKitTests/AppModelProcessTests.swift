@@ -63,14 +63,14 @@ struct AppModelProcessTests {
         model.setScripts(repoId: repoId, setup: #"printf '%s' "$PORT" > setup-port.txt"#, run: "", archive: "", runMode: .concurrent)
         await model.createWorkspace(repoId: repoId)
         let workspace = try #require(model.workspaces[repoId]?.first)
-        let setup = try #require(model.existingProcesses(for: workspace.id)?.setup)
 
-        #expect(await setup.waitForExit() == .exited(0))
+        // Its tab closes once it succeeds (user decision, 2026-09-29), which can be before this line reads it.
+        try await waitUntil {
+            FileManager.default.fileExists(atPath: workspace.path + "/setup-port.txt") && model.existingProcesses(for: workspace.id)?.setup == nil
+        }
         #expect(try String(contentsOfFile: workspace.path + "/setup-port.txt", encoding: .utf8) == "41000")
         #expect(workspace.port == 41000)
         #expect(workspace.baseRef == "main")
-        // Its tab closes once it succeeds (user decision, 2026-09-29).
-        try await waitUntil { model.existingProcesses(for: workspace.id)?.setup == nil }
     }
 
     /// ROW-03: a Setup that exits non-zero is the workspace's error state, and its tab stays for the error to be read.
@@ -94,9 +94,11 @@ struct AppModelProcessTests {
         model.setScripts(repoId: repoId, setup: "touch from-settings", run: "", archive: "", runMode: .concurrent)
         await model.createWorkspace(repoId: repoId)
         let workspace = try #require(model.workspaces[repoId]?.first)
-        let setup = try #require(model.existingProcesses(for: workspace.id)?.setup)
 
-        #expect(await setup.waitForExit() == .exited(0))
+        // A Setup that succeeds closes its tab, maybe before this line could read it.
+        try await waitUntil {
+            FileManager.default.fileExists(atPath: workspace.path + "/from-json") && model.existingProcesses(for: workspace.id)?.setup == nil
+        }
         #expect(FileManager.default.fileExists(atPath: workspace.path + "/from-json"))
         #expect(!FileManager.default.fileExists(atPath: workspace.path + "/from-settings"))
     }

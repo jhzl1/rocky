@@ -196,11 +196,15 @@ struct WorkspaceCreationTests {
         await model.bootstrap()
         let repo = try await repoWithHook(#"echo "$@" > hook-args.txt"#)
         let repoId = try await addRepo(model, repo)
-        model.setScripts(repoId: repoId, setup: "test -f hook-args.txt && touch after-hook", run: "", archive: "", runMode: .concurrent)
+        // The script waits for the test to read its tab, which closes once it succeeds.
+        let release = try Fixtures.temporaryDirectory("release").appendingPathComponent("go")
+        let script = "test -f hook-args.txt && touch after-hook\nwhile [ ! -e '\(release.path)' ]; do sleep 0.05; done"
+        model.setScripts(repoId: repoId, setup: script, run: "", archive: "", runMode: .concurrent)
         await model.createWorkspace(repoId: repoId)
         let workspace = try #require(model.workspaces[repoId]?.first)
         let setup = try #require(model.existingProcesses(for: workspace.id)?.setup)
 
+        try Data().write(to: release)
         #expect(await setup.waitForExit() == .exited(0))
         let head = try await GitFixture.gitOffMain(["rev-parse", "HEAD"], in: URL(fileURLWithPath: workspace.path))
         let arguments = try String(contentsOfFile: workspace.path + "/hook-args.txt", encoding: .utf8)
