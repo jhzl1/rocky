@@ -21,6 +21,12 @@ enum PastedAttachments {
         return []
     }
 
+    /// Whether ⌘V would attach something, from the clipboard's types alone, without reading its data.
+    static func canRead(from pasteboard: NSPasteboard) -> Bool {
+        pasteboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])
+            || NSImage.canInit(with: pasteboard)
+    }
+
     /// Writes the image as `image.png`, the name its badge shows (as Conductor's does), in a folder of its own under
     /// ~/Library/Caches/Rocky/Pasted so pastes never overwrite each other, as linked issues are (`PastedFiles`, M2.9
     /// Decision 4).

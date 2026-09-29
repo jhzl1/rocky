@@ -494,6 +494,19 @@ final class ComposerTextView: NSTextView {
         if files.isEmpty { pasteAsPlainText(sender) } else { insertFiles(files) }
     }
 
+    /// The text view enables Paste only for the types it reads as text, so with an image alone on the clipboard, as a
+    /// screenshot app leaves it, ⌘V did nothing: it took a clipboard manager's paste, which adds the file's path as
+    /// text, to attach it (user report, 2026-09-29). Paste is on whenever `paste(_:)` would attach something.
+    override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(paste(_:)), PastedAttachments.canRead(from: .general) { return true }
+        return super.validateMenuItem(menuItem)
+    }
+
+    override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(paste(_:)), PastedAttachments.canRead(from: .general) { return true }
+        return super.validateUserInterfaceItem(item)
+    }
+
     override var acceptableDragTypes: [NSPasteboard.PasteboardType] {
         [.fileURL, .string]
     }
