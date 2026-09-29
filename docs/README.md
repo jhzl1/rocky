@@ -1,6 +1,6 @@
 # Guía de uso de Rocky
 
-Última actualización: 2026-09-28
+Última actualización: 2026-09-29
 
 Rocky es una app de macOS para trabajar con agentes de código (Claude Code y OpenCode) en paralelo. Cada tarea vive
 en su propio workspace, con su propia copia del repositorio, así que varios agentes pueden trabajar a la vez sin
@@ -350,8 +350,8 @@ superior). "▶ Run" inicia el script, selecciona su pestaña y despliega el pan
 - "One at a time" (`nonconcurrent`): Run detiene primero los Run y las tareas de VS Code de los otros workspaces, de
   cualquier repositorio. Sirve para proyectos atados a un solo puerto, base de datos o stack de Docker.
 
-Si Setup falla, el workspace queda usable y su fila muestra el estado Error. La pestaña Setup muestra el código de
-salida.
+Cuando el Setup termina bien, su pestaña se cierra sola. Si falla, el workspace queda usable, su fila muestra el
+estado Error y la pestaña Setup se queda abierta con el código de salida.
 
 ### El hook `post-checkout` en el Setup
 
@@ -370,7 +370,8 @@ y corre el hook después, a la vista, como primer paso de la pestaña Setup:
 La pestaña Setup se selecciona y se despliega al empezar. Cada paso empieza con una línea gris, por ejemplo
 "▸ post-checkout hook · .husky/post-checkout" o "▸ Setup · pnpm db:migrate", y el hook termina con su línea
 "post-checkout exited with code 0". Si un paso sale con un código distinto de 0, el siguiente no corre: el punto de
-la pestaña se pone rojo y la fila muestra el estado Error.
+la pestaña se pone rojo, la fila muestra el estado Error y la pestaña se queda abierta. Si todos terminan bien, la
+pestaña se cierra sola.
 
 Si el Setup se queda colgado, cierra su pestaña con la "×": su proceso se detiene y ya puedes crear otro workspace.
 
@@ -800,8 +801,8 @@ El panel inferior del workspace tiene pestañas para los scripts (Setup, Run, Ar
 - **Abrir un terminal:** "+" en la barra del panel, "New terminal" si el panel está vacío, u Open → New Terminal. Se
   abre tu shell de inicio de sesión en la carpeta del worktree, con las variables de la sección 5.
 - **Nombres:** los terminales se llaman "Terminal 1", "Terminal 2"… según su posición. Una tarea lleva su nombre.
-- **Cerrar:** los terminales, las tareas y el Setup se cierran con la "×" de su pestaña, que detiene su proceso. Run y
-  Archive no se cierran.
+- **Cerrar:** los terminales, las tareas y el Setup se cierran con la "×" de su pestaña, que detiene su proceso. El
+  Setup también se cierra solo cuando termina bien. Run y Archive no se cierran.
 - **Plegar y desplegar:** ⌘J, o la flecha a la derecha de la barra. Plegar no detiene nada: terminales y scripts
   siguen corriendo. Rocky recuerda si el panel estaba plegado.
 - **⌃` (View ▸ Toggle Terminal)**, como en VS Code:

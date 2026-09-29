@@ -1208,7 +1208,8 @@ public final class AppModel {
     }
 
     /// WSC-02's step for the row's tooltip, from the Setup script's step line in the tab's output, and WSC-01's guard
-    /// released once the tab's process ends, however it ends.
+    /// released once the tab's process ends, however it ends. A Setup that succeeds closes its tab, since nothing in it
+    /// needs reading (user decision, 2026-09-29); a failed one keeps it, as ROW-03's "See the Setup tab" points there.
     private func watchSetup(_ session: PTYSession, steps: SetupSteps, workspaceId: String) {
         let viewer = UUID()
         if steps.steps.count > 1, let line = steps.scriptLine,
@@ -1218,9 +1219,10 @@ public final class AppModel {
             }
         }
         Task {
-            _ = await session.waitForExit()
+            let end = await session.waitForExit()
             session.detach(viewer)
             setupSteps[workspaceId] = nil
+            if end == .exited(0), let own = processes[workspaceId], own.setup?.id == session.id { own.setup = nil }
             releasePreparation(workspaceId: workspaceId)
         }
     }

@@ -509,7 +509,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
     <dl>
       <dt>Hook</dt><dd>The repository's own <code>post-checkout</code> hook runs first, visibly, where git would have run it: the path <code>git rev-parse --git-path hooks/post-checkout</code> gives in the worktree (it honors <code>core.hooksPath</code>: <code>.husky/post-checkout</code> in acme-platform), only when that file exists and is executable, as git requires. Arguments as git passes them for a new worktree: <code>0000000000000000000000000000000000000000 <em>HEAD</em> 1</code>. Directory: the worktree; environment: the workspace's (ENV-01). No hook: the step is skipped.</dd>
       <dt>Then</dt><dd>The Setup script (<code>rocky.json</code> or the repository settings), as today. Without either, there is no Setup tab.</dd>
-      <dt>Tab</dt><dd>One Setup tab, selected and unfolded when it starts, holding both steps in order. Each step opens with a line in <code>textTertiary</code>: "▸ post-checkout hook · .husky/post-checkout", "▸ Setup · pnpm db:migrate", and ends with its end line (TERM-03): "post-checkout exited with code 0". The tab's dot runs until the last step ends.</dd>
+      <dt>Tab</dt><dd>One Setup tab, selected and unfolded when it starts, holding both steps in order. Each step opens with a line in <code>textTertiary</code>: "▸ post-checkout hook · .husky/post-checkout", "▸ Setup · pnpm db:migrate", and ends with its end line (TERM-03): "post-checkout exited with code 0". The tab's dot runs until the last step ends. A Setup that succeeds then closes its tab by itself, and the panel falls back to its last tab, as when × closes one (user decision, 2026-09-29: "cuando el script de setup se acaba, entonces se cierre"). A failed Setup keeps its tab, since ROW-03's "Setup exited with N. See the Setup tab." points there.</dd>
       <dt>Failure</dt><dd>A step that exits non-zero stops the next one: the dot turns <code>danger</code>, the row shows ROW-03's Setup failure, and the workspace stays usable. The hook's exit decides this, as it decides <code>git checkout</code>'s own exit status.</dd>
       <dt>Risk</dt><dd>acme-platform's <code>link-worktree.sh</code> also creates symlinks that <code>WorktreeLinker</code> has made just before; the hook calls it as <code>… || true</code>, and the linker leaves existing files alone, so neither order breaks. A hook that expects git's environment variables beyond the three arguments is not covered: not known to exist here.</dd>
       <dt>Done when</dt><dd>A new acme-platform workspace opens at once; a moment later its Setup tab shows <code>pnpm install</code>'s progress under "▸ post-checkout hook", while the agent already answers.</dd>
@@ -931,6 +931,9 @@ func removeWorkspace(id:skipArchive:stashingChanges:) async   // the order of WS
       if (w.id === state.selected) renderTerm();
     }
     tab.st = 'done'; w.setup = 'done';
+    // WSC-05: a Setup that succeeds closes its tab; the panel falls back to its last tab
+    w.tabs.splice(w.tabs.indexOf(tab), 1);
+    w.sel = w.tabs.length ? w.tabs[w.tabs.length - 1].id : null;
     renderAll();
   }
   function removeWorkspace(w) {   // WSC-06: row, half-made folder, prune, the empty branch; no confirmation

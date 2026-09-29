@@ -69,9 +69,11 @@ struct AppModelProcessTests {
         #expect(try String(contentsOfFile: workspace.path + "/setup-port.txt", encoding: .utf8) == "41000")
         #expect(workspace.port == 41000)
         #expect(workspace.baseRef == "main")
+        // Its tab closes once it succeeds (user decision, 2026-09-29).
+        try await waitUntil { model.existingProcesses(for: workspace.id)?.setup == nil }
     }
 
-    /// ROW-03: a Setup that exits non-zero is the workspace's error state.
+    /// ROW-03: a Setup that exits non-zero is the workspace's error state, and its tab stays for the error to be read.
     @Test func failedSetupIsAnError() async throws {
         let model = try makeModel()
         let repoId = try await addRepo(model)
@@ -82,6 +84,8 @@ struct AppModelProcessTests {
 
         #expect(await setup.waitForExit() == .exited(3))
         #expect(model.status(workspaceId: workspace.id) == .failed("Setup exited with 3. See the Setup tab."))
+        try await waitUntil { model.preparingWorkspaceId == nil }
+        #expect(model.existingProcesses(for: workspace.id)?.setup?.id == setup.id)
     }
 
     @Test func rockyJSONInTheWorkspaceWinsOverRepoSettings() async throws {
