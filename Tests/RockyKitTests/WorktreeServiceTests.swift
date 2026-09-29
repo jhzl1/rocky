@@ -77,12 +77,12 @@ struct WorktreeServiceTests {
     /// User report, 2026-09-23: a fixed `ssh -o BatchMode=yes` overrode the repository's `core.sshCommand`. The ssh
     /// command of a run that reaches the remote is the one git would pick, in batch mode.
     @Test func batchSSHCommandKeepsTheCommandGitWouldRun() {
-        let celes = "ssh -o IdentitiesOnly=yes -o IdentityFile=/Users/me/.ssh/id_rsa_celes"
+        let acme = "ssh -o IdentitiesOnly=yes -o IdentityFile=/Users/me/.ssh/id_rsa_work"
         #expect(WorktreeService.batchSSHCommand(inherited: nil, configured: nil) == "ssh -o BatchMode=yes")
-        #expect(WorktreeService.batchSSHCommand(inherited: nil, configured: celes) == celes + " -o BatchMode=yes")
-        #expect(WorktreeService.batchSSHCommand(inherited: "", configured: " \(celes)\n") == celes + " -o BatchMode=yes")
+        #expect(WorktreeService.batchSSHCommand(inherited: nil, configured: acme) == acme + " -o BatchMode=yes")
+        #expect(WorktreeService.batchSSHCommand(inherited: "", configured: " \(acme)\n") == acme + " -o BatchMode=yes")
         // git's own order: GIT_SSH_COMMAND from the login shell wins over core.sshCommand.
-        #expect(WorktreeService.batchSSHCommand(inherited: "ssh -i /k", configured: celes) == "ssh -i /k -o BatchMode=yes")
+        #expect(WorktreeService.batchSSHCommand(inherited: "ssh -i /k", configured: acme) == "ssh -i /k -o BatchMode=yes")
     }
 
     @Test func onlyRunsThatReachTheRemoteGetAnSSHCommand() throws {
@@ -96,10 +96,10 @@ struct WorktreeServiceTests {
         #expect(WorktreeService.configuredSSHCommand(in: repo, environment: local) == nil)
         #expect(WorktreeService.remoteEnvironment(local, in: repo)["GIT_SSH_COMMAND"] == "ssh -o BatchMode=yes")
 
-        try GitFixture.git(["config", "core.sshCommand", "ssh -o IdentityFile=/Users/me/.ssh/id_rsa_celes"], in: repo)
-        #expect(WorktreeService.configuredSSHCommand(in: repo, environment: local) == "ssh -o IdentityFile=/Users/me/.ssh/id_rsa_celes")
+        try GitFixture.git(["config", "core.sshCommand", "ssh -o IdentityFile=/Users/me/.ssh/id_rsa_work"], in: repo)
+        #expect(WorktreeService.configuredSSHCommand(in: repo, environment: local) == "ssh -o IdentityFile=/Users/me/.ssh/id_rsa_work")
         let remote = WorktreeService.remoteEnvironment(local, in: repo)
-        #expect(remote["GIT_SSH_COMMAND"] == "ssh -o IdentityFile=/Users/me/.ssh/id_rsa_celes -o BatchMode=yes")
+        #expect(remote["GIT_SSH_COMMAND"] == "ssh -o IdentityFile=/Users/me/.ssh/id_rsa_work -o BatchMode=yes")
         #expect(remote["GIT_TERMINAL_PROMPT"] == "0")
     }
 
@@ -108,7 +108,7 @@ struct WorktreeServiceTests {
         let parent = try Fixtures.temporaryDirectory("git")
         let repo = try GitFixture.clonedRepo(in: parent)
         let (script, record) = try Self.recordingSSH(in: parent)
-        try GitFixture.git(["remote", "set-url", "origin", "ssh://git@example.invalid/celes-app/celes-platform.git"], in: repo)
+        try GitFixture.git(["remote", "set-url", "origin", "ssh://git@example.invalid/acme-org/acme-platform.git"], in: repo)
         try GitFixture.git(["config", "core.sshCommand", "\(script.path) -o IdentitiesOnly=yes"], in: repo)
         var environment = GitFixture.environment
         environment["GIT_SSH_COMMAND"] = nil
@@ -132,7 +132,7 @@ struct WorktreeServiceTests {
 
     // MARK: Creating a workspace (WSC-04…WSC-06, KIT-18)
 
-    /// A repository whose `.husky/post-checkout`, through `core.hooksPath` as celes-platform's, and whose default
+    /// A repository whose `.husky/post-checkout`, through `core.hooksPath` as acme-platform's, and whose default
     /// `.git/hooks/post-checkout` each write their arguments to a file in the folder they run in.
     static func repoWithHooks() throws -> URL {
         let repo = try GitFixture.localRepo(in: try Fixtures.temporaryDirectory("git"))

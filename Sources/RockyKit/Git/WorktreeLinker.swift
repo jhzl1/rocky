@@ -16,7 +16,7 @@ public struct WorktreeLinkResult: Sendable, Equatable {
 /// Symlinks the main clone's untracked environment files into a new worktree, which git leaves without them: secrets,
 /// direnv and Wrangler files, Claude Code's local settings, plus the repo's extra entries (`Repo.linkedPaths` and the
 /// `links` of rocky.json), where `!<pattern>` turns one of those defaults off (`LinkedPaths`). Replaces the per-repo
-/// `setup-worktree.sh` scripts that did this from a post-checkout hook.
+/// `link-worktree.sh` scripts that did this from a post-checkout hook.
 ///
 /// Symlinks, not copies: each file keeps a single owner in the main clone, so rotating a secret there reaches every
 /// worktree. Each link is absolute. A destination that exists in any form, even a dangling symlink, is left alone,

@@ -158,7 +158,7 @@ public enum GitHubLinkSearch {
         }
     }
 
-    /// The number a text asks for directly: "4573" or "#4573", spaces around allowed. nil for anything else, and for
+    /// The number a text asks for directly: "212" or "#212", spaces around allowed. nil for anything else, and for
     /// a number GraphQL's 32-bit `Int` cannot carry.
     public static func number(in text: String) -> Int? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)

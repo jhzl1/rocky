@@ -40,7 +40,7 @@ is macOS 15. The full list, with the decisions behind it, is in
 - No `swift build` and no `swift test` before Task 12, not even to check a single task.
 - Commits: Conventional Commits, lowercase imperative, no `Co-Authored-By` or any AI attribution line. Never `--no-verify`.
 - Shell: this machine blocks `cat`, `ls`, `grep`, `find`, `sed` in agent shells; use `bat`, `eza`, `rg`, `fd`, `sd`.
-- Manual tests use personal repos only (for example `~/Documents/dev/personal/rocky` itself). Never add, open or modify any repo under `~/Documents/dev/celes`.
+- Manual tests use personal repos only (for example `~/Documents/dev/personal/rocky` itself). Never add, open or modify any repo under `~/Documents/dev/acme`.
 
 ## Review Focus
 
@@ -468,21 +468,21 @@ struct EnvironmentTests {
     }
 
     @Test func workspaceEnvironmentNeverInheritsClaudeConfigDir() {
-        let login = ["PATH": "/usr/bin", "CLAUDE_CONFIG_DIR": "/Users/me/.claude-celes", "SHLVL": "2"]
+        let login = ["PATH": "/usr/bin", "CLAUDE_CONFIG_DIR": "/Users/me/.claude-work", "SHLVL": "2"]
         #expect(WorkspaceEnvironment.make(login: login, claudeConfigDir: nil) == ["PATH": "/usr/bin"])
-        #expect(WorkspaceEnvironment.make(login: login, claudeConfigDir: "/Users/me/.claude-rentek")
-            == ["PATH": "/usr/bin", "CLAUDE_CONFIG_DIR": "/Users/me/.claude-rentek"])
+        #expect(WorkspaceEnvironment.make(login: login, claudeConfigDir: "/Users/me/.claude-client")
+            == ["PATH": "/usr/bin", "CLAUDE_CONFIG_DIR": "/Users/me/.claude-client"])
     }
 
     @Test func detectsClaudeInstancesWithSettings() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("home-\(UUID().uuidString)")
-        for name in [".claude", ".claude-celes", ".claude-empty", ".config"] {
+        for name in [".claude", ".claude-work", ".claude-empty", ".config"] {
             try FileManager.default.createDirectory(at: home.appendingPathComponent(name), withIntermediateDirectories: true)
         }
-        for name in [".claude", ".claude-celes"] {
+        for name in [".claude", ".claude-work"] {
             FileManager.default.createFile(atPath: home.appendingPathComponent("\(name)/settings.json").path, contents: Data("{}".utf8))
         }
-        #expect(ClaudeInstances.detect(home: home) == [home.appendingPathComponent(".claude").path, home.appendingPathComponent(".claude-celes").path])
+        #expect(ClaudeInstances.detect(home: home) == [home.appendingPathComponent(".claude").path, home.appendingPathComponent(".claude-work").path])
     }
 
     @Test func processRunnerReturnsTrimmedStdoutAndThrowsOnFailure() throws {
@@ -1444,7 +1444,7 @@ struct RockyStoreTests {
         let store = try RockyStore.inMemory()
         var repo = Repo(name: "app", path: "/dev/app", createdAt: day)
         try store.add(repo)
-        repo.claudeConfigDir = "/Users/me/.claude-celes"
+        repo.claudeConfigDir = "/Users/me/.claude-work"
         try store.update(repo)
         #expect(try store.repos() == [repo])
     }
@@ -1526,7 +1526,7 @@ public struct Repo: Codable, Sendable, Equatable, Identifiable, FetchableRecord,
     public var id: String
     public var name: String
     public var path: String
-    /// Claude Code instance for this repo's agents (for example `~/.claude-celes`); nil uses Claude's default.
+    /// Claude Code instance for this repo's agents (for example `~/.claude-work`); nil uses Claude's default.
     public var claudeConfigDir: String?
     public var createdAt: Date
 
@@ -2493,12 +2493,12 @@ struct AppModelTests {
         let repo = try GitFixture.localRepo(in: try Fixtures.temporaryDirectory("repos"))
         await model.addRepo(at: repo)
         let repoId = try #require(model.repos.first?.id)
-        model.setClaudeConfigDir(repoId: repoId, "/Users/me/.claude-celes")
+        model.setClaudeConfigDir(repoId: repoId, "/Users/me/.claude-work")
         await model.createWorkspace(repoId: repoId)
         let workspace = try #require(model.workspaces[repoId]?.first)
 
         let chat = try #require(await model.openChat(workspace: workspace, agent: .claude))
-        #expect(launches.last?["CLAUDE_CONFIG_DIR"] == "/Users/me/.claude-celes")
+        #expect(launches.last?["CLAUDE_CONFIG_DIR"] == "/Users/me/.claude-work")
         #expect(chat.state == .ready)
         async let sending: Void = chat.send("hi")
         try await answerNextPermission(chat)
@@ -2518,7 +2518,7 @@ struct AppModelTests {
     @Test func repoWithoutClaudeInstanceNeverInheritsOne() async throws {
         let launches = LaunchBox()
         let model = try makeModel(capture: {
-            GitFixture.environment.merging(["CLAUDE_CONFIG_DIR": "/Users/me/.claude-celes"]) { _, new in new }
+            GitFixture.environment.merging(["CLAUDE_CONFIG_DIR": "/Users/me/.claude-work"]) { _, new in new }
         }, launches: launches)
         await model.bootstrap()
         let repo = try GitFixture.localRepo(in: try Fixtures.temporaryDirectory("repos"))
@@ -3458,13 +3458,13 @@ Expected: the script prints `.../build/Rocky.app`; a "Rocky" window opens with t
 
 - [ ] **Step 4: Run the manual checklist with real agents**
 
-The user runs this step. Use a personal repo only: `~/Documents/dev/personal/rocky` itself. Never a repo under `~/Documents/dev/celes`.
+The user runs this step. Use a personal repo only: `~/Documents/dev/personal/rocky` itself. Never a repo under `~/Documents/dev/acme`.
 
 1. `open build/Rocky.app`, press `+`, choose `~/Documents/dev/personal/rocky`. Expected: a "rocky" section appears in the sidebar.
 2. From the "rocky" section menu choose "New Workspace". Expected: a city-named workspace appears and is selected; `eza ~/Documents/dev/personal/rocky-worktrees` lists it; `git -C ~/Documents/dev/personal/rocky branch --list 'rocky/*'` shows its branch.
 3. Pick "OpenCode", press "Start OpenCode", send `Run printenv HOME and reply with only its output`. Expected: a permission sheet (or none if OpenCode auto-allows), then the agent's reply with your home path.
 4. Switch to "Claude Code", press Start. Expected on first use: "Installing the Claude adapter (one time)…", then a ready chat. Send the same prompt and allow the permission. Expected: reply with your home path.
-5. In the repo menu choose "Settings…", pick `~/.claude-rentek` (or any instance listed), Save; select the workspace, switch agent away and back, Start Claude again, send `Run printenv CLAUDE_CONFIG_DIR and reply with only its output`. Expected: the chosen instance path.
+5. In the repo menu choose "Settings…", pick `~/.claude-client` (or any instance listed), Save; select the workspace, switch agent away and back, Start Claude again, send `Run printenv CLAUDE_CONFIG_DIR and reply with only its output`. Expected: the chosen instance path.
 6. Quit Rocky with ⌘Q while Claude is idle, then run `pgrep -fl "claude-agent-acp|opencode acp"`. Expected: no output (Review Focus 1).
 7. Reopen Rocky, select the workspace, pick Claude, Start. Expected: the earlier transcript is shown and the agent continues the same conversation (ask `What did I ask you before?`).
 8. Right-click the workspace → "Remove Workspace…" → "Remove Worktree". Expected: the folder is gone and the `rocky/<name>` branch still exists. Then delete the branch yourself if you do not need it: `git -C ~/Documents/dev/personal/rocky branch -D rocky/<name>`.

@@ -4,7 +4,7 @@
 Personal-use, macOS-only clone of Conductor (parallel coding agents, each in its own git worktree).
 Same features as Conductor, with two changes:
 1. Much lower energy use while agents run.
-2. GitHub account bound per repo (today `gh` has one active account system-wide, so celes repos run as `jhzl1`).
+2. GitHub account bound per repo (today `gh` has one active account system-wide, so acme repos run as `jhzl1`).
 Per-repo env var override is included; low priority.
 
 ## Evidence (2026-09-22, read-only)
@@ -16,10 +16,10 @@ Per-repo env var override is included; low priority.
   - 144,939 processes started (~24/s). `tasks_started` is cumulative; energy/cpu_time are per-interval.
 - Live 15 s sample of Conductor direct children: 12 `zsh` / `zsh -l`, 3 `gh api graphql`, 2 `git`, 1 `claude`.
 - `bin/git-busy-check.sh` spawns bash + ~5 `git rev-parse` per call.
-- Conductor DB (`conductor.db`): repos celes-platform, veritas; 13 workspaces; 35 diff comments;
+- Conductor DB (`conductor.db`): repos acme-platform, ledger; 13 workspaces; 35 diff comments;
   no setup/run/archive scripts or env vars configured.
-- Existing GitHub setup: `gh` keyring accounts `jhzl1` (active), `ocampos-biai`; SSH aliases
-  `github.com-personal`, `github-celes`; `includeIf` identity in `~/.gitconfig`.
+- Existing GitHub setup: `gh` keyring accounts `jhzl1` (active), `work-user`; SSH aliases
+  `github.com-personal`, `github-work`; `includeIf` identity in `~/.gitconfig`.
 
 ## Decisions
 - Stack: SwiftUI native. Personal use: no notarization, no auto-update.
@@ -54,7 +54,7 @@ tab is shown, so its settings are ready without a click. Hidden tabs start nothi
 ## Section 2 — GitHub account per repo
 1. Accounts come from `gh`: `gh auth token --user <login>` once per account at launch, kept in memory.
    Account = `ghLogin`, `gitName`, `gitEmail`, optional `sshKey`, `claudeConfigDir`.
-2. Repo → account inferred from the remote (SSH alias `github-celes` → celes account), overridable in repo settings.
+2. Repo → account inferred from the remote (SSH alias `github-work` → acme account), overridable in repo settings.
 3. Injected into every workspace process (agent, terminal, scripts): `GH_TOKEN`,
    `GIT_AUTHOR_NAME/EMAIL`, `GIT_COMMITTER_NAME/EMAIL`, `CLAUDE_CONFIG_DIR=<repo's Claude instance dir>`,
    and `GIT_SSH_COMMAND="ssh -F /dev/null -i <key> -o IdentitiesOnly=yes"` for SSH remotes.

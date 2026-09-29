@@ -29,7 +29,7 @@ struct AgentModelCatalogTests {
         #expect(reread.models(agent: .opencode, claudeInstance: nil) == option.choices)
         #expect(reread.models(agent: .opencode, claudeInstance: nil)?.first?.detail == "Anthropic")
         // OpenCode has one list whatever the repository's Claude instance.
-        #expect(reread.models(agent: .opencode, claudeInstance: "/Users/me/.claude-celes") == option.choices)
+        #expect(reread.models(agent: .opencode, claudeInstance: "/Users/me/.claude-work") == option.choices)
         #expect(reread.models(agent: .claude, claudeInstance: nil) == nil)
     }
 
@@ -39,14 +39,14 @@ struct AgentModelCatalogTests {
         let personal = modelOption([("opus", "Opus 5.5", nil), ("sonnet", "Sonnet 5", nil)])
         let work = modelOption([("sonnet", "Sonnet 5", nil)])
         catalog.record(personal, agent: .claude, claudeInstance: nil)
-        catalog.record(work, agent: .claude, claudeInstance: "/Users/me/.claude-celes")
+        catalog.record(work, agent: .claude, claudeInstance: "/Users/me/.claude-work")
 
         let reread = AgentModelCatalog(file: file)
         #expect(reread.models(agent: .claude, claudeInstance: nil) == personal.choices)
         // An empty setting is the default instance, as for a repository without one.
         #expect(reread.models(agent: .claude, claudeInstance: "") == personal.choices)
-        #expect(reread.models(agent: .claude, claudeInstance: "/Users/me/.claude-celes") == work.choices)
-        #expect(reread.models(agent: .claude, claudeInstance: "/Users/me/.claude-rentek") == nil)
+        #expect(reread.models(agent: .claude, claudeInstance: "/Users/me/.claude-work") == work.choices)
+        #expect(reread.models(agent: .claude, claudeInstance: "/Users/me/.claude-client") == nil)
     }
 
     @Test func anUnchangedListLeavesTheFileUntouched() throws {

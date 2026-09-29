@@ -111,7 +111,7 @@ extension PullRequestDeployment {
         url?.host?.lowercased().hasSuffix(".vercel.app") == true
     }
 
-    /// The `.vercel.app` URL's slug ("celes-web-git-invoice"), else the environment ("Preview").
+    /// The `.vercel.app` URL's slug ("acme-web-git-invoice"), else the environment ("Preview").
     public var displayName: String {
         if let host = url?.host?.lowercased(), host.hasSuffix(".vercel.app") {
             let slug = host.dropLast(".vercel.app".count)

@@ -20,10 +20,10 @@ struct VSCodeTasksTests {
         let file = try sample
         #expect(file.tasks.count == 10)
         #expect(file.tasks.filter { $0.label.hasPrefix("_") }.count == 6)
-        #expect(VSCodeTasks.listed(file).map(\.label) == ["Setup: Local DB", "Run: API + Web", "Run: API", "Run: Web"])
+        #expect(VSCodeTasks.listed(file).map(\.label) == ["Setup: Local database", "Run: API + Web", "Run: API", "Run: Web"])
         let web = try #require(file.task("Run: API + Web"))
         #expect(web.kind == .shell)
-        #expect(web.command == "pnpm ${input:runMode}")
+        #expect(web.command == "pnpm ${input:stackMode}")
         #expect(web.cwd == "${workspaceFolder}/apps/web")
         #expect(web.dependsOn == ["_Dev: Cleanup", "_API: Run (mode)"])
         #expect(web.dependsOrder == .sequence)
@@ -44,17 +44,17 @@ struct VSCodeTasksTests {
         #expect(file.task("_API: Run (mode)")?.endsPattern == "Application startup complete")
         #expect(file.task("_API: Start Redis")?.args == ["--daemonize", "yes", "--port", "6390"])
 
-        #expect(file.inputs.map(\.id) == ["runMode", "apiEnv", "webMode"])
-        let mode = try #require(file.input("runMode"))
+        #expect(file.inputs.map(\.id) == ["stackMode", "environment", "webMode"])
+        let mode = try #require(file.input("stackMode"))
         #expect(mode.description == "Select environment and mode")
         #expect(mode.defaultValue == "dev-local")
         #expect(mode.kind == .pickString(options: [
-            TaskInput.Option(label: "DEV — Local", value: "dev-local"),
-            TaskInput.Option(label: "QA — Local", value: "qa-local"),
+            TaskInput.Option(label: "Development — Local", value: "dev-local"),
+            TaskInput.Option(label: "Staging — Local", value: "staging-local"),
         ]))
-        #expect(file.input("apiEnv")?.kind == .pickString(options: [
+        #expect(file.input("environment")?.kind == .pickString(options: [
             TaskInput.Option(label: "dev", value: "dev"),
-            TaskInput.Option(label: "qa", value: "qa"),
+            TaskInput.Option(label: "staging", value: "staging"),
         ]))
     }
 
@@ -117,7 +117,7 @@ struct VSCodeTasksTests {
         #expect(task.env == ["A": "1", "B": "mac"])
     }
 
-    /// The shapes VS Code allows besides celes-platform's: a lone `dependsOn`, `problemMatcher` as a name or an object,
+    /// The shapes VS Code allows besides acme-platform's: a lone `dependsOn`, `problemMatcher` as a name or an object,
     /// a pattern as `{regexp}`, an argument as `{value}`, a default build group, string options, a promptString.
     @Test func theOtherShapesVSCodeAllows() throws {
         let parsed = try file("""
@@ -211,21 +211,21 @@ struct VSCodeTasksTests {
         #expect(TaskError.missingDependency(task: "Run: X", dependency: "_Y").description == "“Run: X” depends on “_Y”, which tasks.json doesn't have")
         #expect(throws: TaskError.unsupportedType(task: "npm", type: "npm")) { try VSCodeTasks.plan("uses-npm", in: parsed) }
         #expect(throws: TaskError.invalidPattern(task: "bad-pattern", name: "endsPattern")) { try VSCodeTasks.plan("bad-pattern", in: parsed) }
-        #expect(TaskError.invalidPattern(task: "_API Core: Run (mode)", name: "endsPattern").description == "“_API Core: Run (mode)” has an invalid endsPattern")
+        #expect(TaskError.invalidPattern(task: "_API: Run (mode)", name: "endsPattern").description == "“_API: Run (mode)” has an invalid endsPattern")
         #expect(throws: TaskError.noSuchTask("gone")) { try VSCodeTasks.plan("gone", in: parsed) }
     }
 
     /// TSK-04: every input of the chain once, dependencies first; "Run: API + Web" and its dependency
-    /// "_API: Run (mode)" both read `runMode`, which is asked once.
+    /// "_API: Run (mode)" both read `stackMode`, which is asked once.
     @Test func oneAnswerPerInputAcrossAChain() throws {
         let file = try sample
         let web = try VSCodeTasks.plan("Run: API + Web", in: file)
         #expect(web.order.map(\.label) == [
             "_Dev: Cleanup", "_API: Ensure venv", "_API: Ensure hooks", "_API: Run (mode)", "Run: API + Web",
         ])
-        #expect(VSCodeTasks.inputsNeeded(for: web).map(\.id) == ["runMode"])
+        #expect(VSCodeTasks.inputsNeeded(for: web).map(\.id) == ["stackMode"])
         let api = try VSCodeTasks.plan("Run: API", in: file)
-        #expect(VSCodeTasks.inputsNeeded(for: api).map(\.id) == ["apiEnv"])
+        #expect(VSCodeTasks.inputsNeeded(for: api).map(\.id) == ["environment"])
         let chained = try VSCodeTasks.plan("root", in: try self.file("""
         { "version": "2.0.0", "tasks": [
           { "label": "root", "type": "shell", "command": "${input:b} ${input:a}", "dependsOn": "dep" },
@@ -263,31 +263,31 @@ struct VSCodeTasksTests {
     @Test func runsDefaultFallsBackInTSK02sOrder() throws {
         let file = try file("""
         { "version": "2.0.0", "tasks": [
-          { "label": "Run: Web Client", "type": "shell", "command": "w" },
+          { "label": "Run: Web", "type": "shell", "command": "w" },
           { "label": "Build", "type": "shell", "command": "b", "group": { "kind": "build", "isDefault": true } }
         ] }
         """)
         let withScript = RunMenuState(tasks: .loaded(file), runScript: "pnpm dev", hasReadRunScript: true)
         let withoutScript = RunMenuState(tasks: .loaded(file), hasReadRunScript: true)
-        #expect(withScript.defaultItem(last: .task("Run: Web Client")) == .task("Run: Web Client"))
+        #expect(withScript.defaultItem(last: .task("Run: Web")) == .task("Run: Web"))
         #expect(withScript.defaultItem(last: .task("Gone")) == .runScript)
         #expect(withScript.defaultItem(last: nil) == .runScript)
         #expect(withoutScript.defaultItem(last: .runScript) == .task("Build"))
         #expect(withoutScript.defaultItem(last: nil) == .task("Build"))
         #expect(RunMenuState(tasks: .loaded(TaskFile(tasks: [])), hasReadRunScript: true).defaultItem(last: nil) == nil)
-        #expect(RunMenuState(tasks: .invalid("Line 3: …"), hasReadRunScript: true).defaultItem(last: .task("Run: Web Client")) == nil)
+        #expect(RunMenuState(tasks: .invalid("Line 3: …"), hasReadRunScript: true).defaultItem(last: .task("Run: Web")) == nil)
         // rocky.json that does not parse is still a Run script: clicking it says why.
         #expect(RunMenuState(tasks: .loaded(file), hasReadRunScript: true, runScriptFailure: "rocky.json is not valid").defaultItem(last: nil) == .runScript)
         // Before the first read, the last item and a Run script are taken on trust.
-        #expect(RunMenuState(tasks: .unread).defaultItem(last: .task("Run: Web Client")) == .task("Run: Web Client"))
+        #expect(RunMenuState(tasks: .unread).defaultItem(last: .task("Run: Web")) == .task("Run: Web"))
         #expect(RunMenuState(tasks: .unread).defaultItem(last: nil) == .runScript)
     }
 
     /// `@AppStorage("lastRunItemByRepo")`: repository id → task label or "run-script".
     @Test func lastRunItemsRoundTrip() {
-        let items: [String: RunItem] = ["repo-a": .runScript, "repo-b": .task("Run: Web Client")]
+        let items: [String: RunItem] = ["repo-a": .runScript, "repo-b": .task("Run: Web")]
         let json = RunItem.encodeAll(items)
-        #expect(json == #"{"repo-a":"run-script","repo-b":"Run: Web Client"}"#)
+        #expect(json == #"{"repo-a":"run-script","repo-b":"Run: Web"}"#)
         #expect(RunItem.decodeAll(json) == items)
         #expect(RunItem.decodeAll("") == [:])
         #expect(RunItem.decodeAll("not json") == [:])

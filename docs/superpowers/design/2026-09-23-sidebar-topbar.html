@@ -653,7 +653,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
   <section class="req" id="REQ-SB-04">
     <header><code class="id">SB-04</code><h3>Folding repositories</h3><span class="scope in">In scope</span></header>
     <dl>
-      <dt>Behavior</dt><dd>Clicking the repository name folds or unfolds it. Folded: a 10 pt chevron after the name points right, and the header shows the aggregate glyph at 12 pt before the "+" (the most urgent state of its workspaces, ROW-03 order; nothing when all are idle). Expanded: the chevron appears only on hover, pointing down. Try it: doculift starts folded and shows an error, because one of its setups failed, which outranks the agent working next to it.</dd>
+      <dt>Behavior</dt><dd>Clicking the repository name folds or unfolds it. Folded: a 10 pt chevron after the name points right, and the header shows the aggregate glyph at 12 pt before the "+" (the most urgent state of its workspaces, ROW-03 order; nothing when all are idle). Expanded: the chevron appears only on hover, pointing down. Try it: docs-portal starts folded and shows an error, because one of its setups failed, which outranks the agent working next to it.</dd>
       <dt>Motion</dt><dd>Chevron rotates 90° in 150 ms; rows come and go with an opacity transition, 150 ms ease-out.</dd>
       <dt>SwiftUI</dt><dd>Persist folded ids in <code>@AppStorage("foldedRepoIds")</code>. Today sections are <code>.collapsible(false)</code> because the system chevron moved the menu button; the custom header removes that problem.</dd>
     </dl>
@@ -855,7 +855,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
     </table>
     <dl>
       <dt>SwiftUI</dt><dd>These words live in RockyUI (for example <code>PTYState.tooltipText</code> and <code>endLine</code> in an extension next to <code>WorkspacePanelView</code>); <code>PTYState.description</code> stays as it is for logs. The end line is drawn under the terminal output (a one-line view below <code>TerminalHostView</code>, 12 mono, padding as the terminal), not written into the PTY.</dd>
-      <dt>Changes</dt><dd>Today the dot is green or gray only, so a failed Setup looks like a finished one; now it matches the sidebar's error state (ROW-03). Try it: unfold doculift and select "rome".</dd>
+      <dt>Changes</dt><dd>Today the dot is green or gray only, so a failed Setup looks like a finished one; now it matches the sidebar's error state (ROW-03). Try it: unfold docs-portal and select "rome".</dd>
     </dl>
   </section>
 
@@ -889,7 +889,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
         <ul>
           <li>Top bar Run (TB-04): starts the Run script, selects the Run tab, unfolds the panel. Stop: the Run dot turns gray and its terminal ends with "Process stopped".</li>
           <li>Open ▸ New Terminal (TB-03) and the bar's "+": a new "Terminal N", selected, panel unfolded.</li>
-          <li>A failed Setup: the row shows the error glyph (ROW-03) and the Setup tab a <code>danger</code> dot. Try it: unfold doculift and select "rome".</li>
+          <li>A failed Setup: the row shows the error glyph (ROW-03) and the Setup tab a <code>danger</code> dot. Try it: unfold docs-portal and select "rome".</li>
         </ul>
       </dd>
     </dl>
@@ -1080,10 +1080,10 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
   // ---------- data ----------
   const PALETTE = ['#4C7BD9', '#8E6BE0', '#3A9C8C', '#C9784A', '#C2577A', '#6E8C3A'];   // SB-03: index from FNV-1a in Rocky
   const repos = [
-    { id: 'celes', name: 'celes-platform', color: 0, folded: false },
-    { id: 'veritas', name: 'veritas', color: 1, folded: false },
+    { id: 'acme', name: 'acme-platform', color: 0, folded: false },
+    { id: 'ledger', name: 'ledger', color: 1, folded: false },
     { id: 'rocky', name: 'rocky', color: 3, folded: false },
-    { id: 'doculift', name: 'doculift', color: 2, folded: true },
+    { id: 'docs-portal', name: 'docs-portal', color: 2, folded: true },
   ];
   const item = (kind, text, extra = {}) => ({ id: uid(), kind, text, ...extra });
   const footer = (agent, duration, time) => item('footer', '', { agent, duration, time });
@@ -1109,7 +1109,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
     ].join('\n'),
   };
   const workspaces = [
-    { id: 'w1', repo: 'celes', name: 'tokyo', branch: 'jhzl/openapi-export', port: 41000, diff: [388, 862], files: ['src/openapi.ts'],
+    { id: 'w1', repo: 'acme', name: 'tokyo', branch: 'jhzl/openapi-export', port: 41000, diff: [388, 862], files: ['src/openapi.ts'],
       sessions: [
         session('setup', 'exited', [P('$ pnpm install'), 'Lockfile is up to date, resolution step is skipped', 'Packages: +812', '<span class="ok">Done in 6.4s</span>'], { code: 0 }),
         session('terminal', 'running', [P('me@mac tokyo % ') + 'git status -sb', '## jhzl/openapi-export', ' M src/openapi.ts', '?? test/openapi.test.ts', P('me@mac tokyo % ')]),
@@ -1127,20 +1127,20 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
           footer('opencode', '9s', '3:41 PM'),
         ]),
       ] },
-    { id: 'w2', repo: 'celes', name: 'lima', branch: 'jhzl/invoice-rounding', port: 41010, diff: [12, 3], needsYou: true, files: [], sessions: [],
+    { id: 'w2', repo: 'acme', name: 'lima', branch: 'jhzl/invoice-rounding', port: 41010, diff: [12, 3], needsYou: true, files: [], sessions: [],
       convs: [conv('c3', 'claude', 'Fix invoice rounding', [
         item('user', 'Round invoice totals half-up to two decimals.'),
         item('tool', '', { icon: 'edit', label: 'Edit', file: 'src/billing/round.ts', live: false }),
         item('agent', 'The change is in. I need permission to run `pnpm test billing` to check it.'),
       ])] },
-    { id: 'w3', repo: 'celes', name: 'oslo', branch: 'jhzl/oslo', port: 41020, files: [], sessions: [], convs: [conv('c8', 'claude', null, [])] },
-    { id: 'w4', repo: 'veritas', name: 'quito', branch: 'jhzl/list-prs', port: 41030, diff: [2300, 1900], files: [], sessions: [],
+    { id: 'w3', repo: 'acme', name: 'oslo', branch: 'jhzl/oslo', port: 41020, files: [], sessions: [], convs: [conv('c8', 'claude', null, [])] },
+    { id: 'w4', repo: 'ledger', name: 'quito', branch: 'jhzl/list-prs', port: 41030, diff: [2300, 1900], files: [], sessions: [],
       convs: [conv('c4', 'claude', 'List repo PRs by author', [
         item('user', 'List the open pull requests in this repo grouped by author.'),
         item('agent', 'Done: `prs:list` prints them grouped by author, newest first.'),
         footer('claude', '41s', '2:15 PM'),
       ])] },
-    { id: 'w5', repo: 'veritas', name: 'bergen', branch: 'jhzl/acp-handshake', port: 41040, diff: [41, 17], unread: true, files: [], sessions: [],
+    { id: 'w5', repo: 'ledger', name: 'bergen', branch: 'jhzl/acp-handshake', port: 41040, diff: [41, 17], unread: true, files: [], sessions: [],
       convs: [conv('c5', 'claude', 'Refactor ACP handshake', [
         item('user', 'Retry the ACP handshake once when the adapter exits during initialize.'),
         item('agent', 'The handshake now retries once and reports the second failure with the adapter\'s stderr.'),
@@ -1150,15 +1150,15 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
       convs: [conv('c6', 'claude', 'Collapse the empty terminal panel', [
         item('user', 'Hide the terminal panel while nothing runs in it.'),
       ])] },
-    { id: 'w7', repo: 'doculift', name: 'paris', branch: 'jhzl/ocr-retry', port: 41060, diff: [120, 8], files: [], sessions: [], turn: { convId: 'c7', startedAt: now - 42000 },
+    { id: 'w7', repo: 'docs-portal', name: 'paris', branch: 'jhzl/ocr-retry', port: 41060, diff: [120, 8], files: [], sessions: [], turn: { convId: 'c7', startedAt: now - 42000 },
       convs: [conv('c7', 'claude', 'Retry OCR on timeouts', [
         item('user', 'Retry OCR when the provider times out, up to three times.'),
         item('tool', '', { icon: 'terminal', label: 'Run', detail: 'pnpm test ocr', live: true }),
       ])] },
-    { id: 'w8', repo: 'doculift', name: 'rome', branch: 'jhzl/rome', port: 41070, files: [],
+    { id: 'w8', repo: 'docs-portal', name: 'rome', branch: 'jhzl/rome', port: 41070, files: [],
       sessions: [session('setup', 'exited', [P('$ pnpm install --frozen-lockfile'), '<span class="err">ERR_PNPM_NO_LOCKFILE  Cannot install with "frozen-lockfile" because pnpm-lock.yaml is absent</span>'], { code: 1 })],
       convs: [conv('c9', 'claude', null, [])] },
-    { id: 'w9', repo: 'doculift', name: 'cairo', branch: 'jhzl/scanned-invoices', port: 41080, diff: [5, 1], files: [], sessions: [],
+    { id: 'w9', repo: 'docs-portal', name: 'cairo', branch: 'jhzl/scanned-invoices', port: 41080, diff: [5, 1], files: [], sessions: [],
       convs: [conv('c10', 'claude', 'Parse scanned invoices', [
         item('user', 'Parse the scanned invoices in fixtures/ and extract their totals.'),
         item('agent', 'Totals match for every fixture.'),

@@ -36,7 +36,7 @@ public enum LinkAttachments {
     public static let pullRequestPrefix = "[GITHUB]-PR-"
     public static let branchPrefix = "[BRANCH]-"
 
-    /// `[GITHUB]-3655.md` is issue 3655, `[GITHUB]-PR-4536.md` pull request 4536, `[BRANCH]-….md` a branch; any other
+    /// `[GITHUB]-154.md` is issue 154, `[GITHUB]-PR-131.md` pull request 131, `[BRANCH]-….md` a branch; any other
     /// name is no link. Only the last path component counts.
     public static func kind(ofPath path: String) -> Kind? {
         let name = (path as NSString).lastPathComponent
@@ -132,7 +132,7 @@ public enum LinkAttachments {
 
     // MARK: Reading them back
 
-    /// `GHL-06`: the number and title of a document's first line, "# #3655 Look and feel 3/6: Components"; nil for text
+    /// `GHL-06`: the number and title of a document's first line, "# #154 Refresh the button styles"; nil for text
     /// that does not start with one.
     public static func heading(of markdown: String) -> (number: Int, title: String)? {
         guard let line = firstLine(of: markdown), line.hasPrefix("# #") else { return nil }
@@ -143,15 +143,15 @@ public enum LinkAttachments {
         return title.isEmpty ? nil : (number, title)
     }
 
-    /// The badge's tooltip (Decision 4): a document's first line without its "# ", "#3655 Look and feel 3/6: Components"
-    /// or "feat/look-and-feel-3".
+    /// The badge's tooltip (Decision 4): a document's first line without its "# ", "#154 Refresh the button styles"
+    /// or "feat/button-styles".
     public static func title(of markdown: String) -> String? {
         guard let line = firstLine(of: markdown), line.hasPrefix("# ") else { return nil }
         let title = line.dropFirst(2).trimmingCharacters(in: .whitespaces)
         return title.isEmpty ? nil : title
     }
 
-    /// `GHL-06`: "#4573 Un filtro negativo…", the name the first issue among a message's `attachments` gives its
+    /// `GHL-06`: "#212 Search ignores filters…", the name the first issue among a message's `attachments` gives its
     /// workspace, read from that file's first line; nil without an issue, or when its file is gone or holds no heading.
     /// Blocking: call it off the main actor.
     public static func issueTitle(attachments: [String]) -> String? {

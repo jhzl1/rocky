@@ -246,7 +246,7 @@ struct LineChip: View {
 
 /// A file badge in the conversation. Hovering shows a preview (`FilePreviewPanel`); clicking opens the file in a tab
 /// of the workspace. With `onRemove`, hovering shows an X in place of the icon, and clicking it removes the file. A
-/// link's badge has its title as its tooltip (`GHL-04`): "#3655 Look and feel 3/6: Components".
+/// link's badge has its title as its tooltip (`GHL-04`): "#154 Refresh the button styles".
 struct FileBadge: View {
     let path: String
     var onRemove: (() -> Void)?

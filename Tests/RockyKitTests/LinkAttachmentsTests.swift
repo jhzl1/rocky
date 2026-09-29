@@ -10,9 +10,9 @@ struct LinkAttachmentsTests {
 
     private var issue: GitHubIssue {
         GitHubIssue(
-            number: 3655,
-            title: "Look and feel 3/6: Components",
-            url: URL(string: "https://github.com/owner/celes-platform/issues/3655")!,
+            number: 154,
+            title: "Refresh the button styles",
+            url: URL(string: "https://github.com/owner/acme-platform/issues/154")!,
             state: .open,
             author: "jhzl1",
             createdAt: date("2026-09-20T15:30:00Z"),
@@ -29,11 +29,11 @@ struct LinkAttachmentsTests {
     /// GHL-04's exact file: the heading GHL-06 reads, the facts, the description and every comment.
     @Test func anIssueIsGHL04sMarkdown() {
         let document = LinkAttachments.issue(issue)
-        #expect(document.fileName == "[GITHUB]-3655.md")
+        #expect(document.fileName == "[GITHUB]-154.md")
         #expect(document.markdown == """
-            # #3655 Look and feel 3/6: Components
+            # #154 Refresh the button styles
 
-            - URL: https://github.com/owner/celes-platform/issues/3655
+            - URL: https://github.com/owner/acme-platform/issues/154
             - State: open
             - Author: @jhzl1, opened 2026-09-20
             - Labels: ui, design
@@ -100,23 +100,23 @@ struct LinkAttachmentsTests {
     /// GHL-05: a pull request is GHL-04's format with its branch and, for a draft, "Draft: yes".
     @Test func aPullRequestAddsItsBranchAndDraft() {
         let pull = GitHubIssue(
-            number: 4536,
-            title: "Validate the PR comment flow",
-            url: URL(string: "https://github.com/owner/celes-platform/pull/4536")!,
+            number: 131,
+            title: "Retry failed webhooks",
+            url: URL(string: "https://github.com/owner/acme-platform/pull/131")!,
             state: .open,
             author: "jhzl1",
             createdAt: date("2026-09-22T10:00:00Z"),
             body: "Checks the flow.",
-            pullRequest: .init(headRefName: "fix/test-pr-validation", baseRefName: "development", isDraft: true, isCrossRepository: false)
+            pullRequest: .init(headRefName: "fix/webhook-retry", baseRefName: "development", isDraft: true, isCrossRepository: false)
         )
         let document = LinkAttachments.pullRequest(pull)
-        #expect(document.fileName == "[GITHUB]-PR-4536.md")
+        #expect(document.fileName == "[GITHUB]-PR-131.md")
         #expect(document.markdown == """
-            # #4536 Validate the PR comment flow
+            # #131 Retry failed webhooks
 
-            - URL: https://github.com/owner/celes-platform/pull/4536
+            - URL: https://github.com/owner/acme-platform/pull/131
             - State: open
-            - Branch: fix/test-pr-validation → development
+            - Branch: fix/webhook-retry → development
             - Draft: yes
             - Author: @jhzl1, opened 2026-09-22
 
@@ -130,17 +130,17 @@ struct LinkAttachmentsTests {
     /// GHL-05: a branch's file, "/" as "-" in its name, with its upstream and the commits the base lacks.
     @Test func aBranchListsItsCommitsTheBaseLacks() {
         let document = LinkAttachments.branch(
-            name: "feat/look-and-feel-3",
-            upstream: "origin/feat/look-and-feel-3",
+            name: "feat/button-styles",
+            upstream: "origin/feat/button-styles",
             base: "origin/development",
             commits: ["a1b2c3d Add the buttons", "e4f5a6b Add the inputs"],
             total: 23
         )
-        #expect(document.fileName == "[BRANCH]-feat-look-and-feel-3.md")
+        #expect(document.fileName == "[BRANCH]-feat-button-styles.md")
         #expect(document.markdown == """
-            # feat/look-and-feel-3
+            # feat/button-styles
 
-            - Upstream: origin/feat/look-and-feel-3
+            - Upstream: origin/feat/button-styles
             - Base: origin/development
 
             ## Commits not in origin/development (23)
@@ -159,21 +159,21 @@ struct LinkAttachmentsTests {
     /// KIT-14's `heading`: a document's number and title, and nothing for text without one.
     @Test func theHeadingIsTheNumberAndTheTitle() throws {
         let heading = try #require(LinkAttachments.heading(of: LinkAttachments.issue(issue).markdown))
-        #expect(heading.number == 3655)
-        #expect(heading.title == "Look and feel 3/6: Components")
-        #expect(LinkAttachments.heading(of: "Look and feel") == nil)
-        #expect(LinkAttachments.heading(of: "# feat/look-and-feel-3\n") == nil)
+        #expect(heading.number == 154)
+        #expect(heading.title == "Refresh the button styles")
+        #expect(LinkAttachments.heading(of: "Refresh the button styles") == nil)
+        #expect(LinkAttachments.heading(of: "# feat/button-styles\n") == nil)
         #expect(LinkAttachments.heading(of: "") == nil)
-        #expect(LinkAttachments.title(of: "# feat/look-and-feel-3\n\n- Upstream: none") == "feat/look-and-feel-3")
+        #expect(LinkAttachments.title(of: "# feat/button-styles\n\n- Upstream: none") == "feat/button-styles")
         #expect(LinkAttachments.title(of: "No heading") == nil)
     }
 
     /// Decision 4: the badge's mark comes from the name's prefix alone.
     @Test func theKindComesFromTheFileName() {
-        #expect(LinkAttachments.kind(ofPath: "/tmp/Pasted/A/[GITHUB]-3655.md") == .issue(3655))
-        #expect(LinkAttachments.kind(ofPath: "[GITHUB]-PR-4536.md") == .pullRequest(4536))
-        #expect(LinkAttachments.kind(ofPath: "[BRANCH]-feat-look-and-feel-3.md") == .branch)
-        for name in ["[GITHUB]-.md", "[GITHUB]-PR-x.md", "[GITHUB]-3655.txt", "[BRANCH]-.md", "notes.md", "image.png"] {
+        #expect(LinkAttachments.kind(ofPath: "/tmp/Pasted/A/[GITHUB]-154.md") == .issue(154))
+        #expect(LinkAttachments.kind(ofPath: "[GITHUB]-PR-131.md") == .pullRequest(131))
+        #expect(LinkAttachments.kind(ofPath: "[BRANCH]-feat-button-styles.md") == .branch)
+        for name in ["[GITHUB]-.md", "[GITHUB]-PR-x.md", "[GITHUB]-154.txt", "[BRANCH]-.md", "notes.md", "image.png"] {
             #expect(LinkAttachments.kind(ofPath: name) == nil, "\(name)")
         }
     }
@@ -186,7 +186,7 @@ struct LinkAttachmentsTests {
         let first = try LinkAttachments.write(LinkAttachments.issue(issue), in: folder)
         let second = try LinkAttachments.write(("[GITHUB]-9.md", "# #9 Second\n"), in: folder)
 
-        #expect(LinkAttachments.issueTitle(attachments: [branch.path, first.path, second.path]) == "#3655 Look and feel 3/6: Components")
+        #expect(LinkAttachments.issueTitle(attachments: [branch.path, first.path, second.path]) == "#154 Refresh the button styles")
         #expect(LinkAttachments.issueTitle(attachments: [branch.path]) == nil)
         #expect(LinkAttachments.issueTitle(attachments: [folder.appendingPathComponent("[GITHUB]-1.md").path]) == nil)
         #expect(LinkAttachments.title(ofFileAt: branch) == "feat/x")

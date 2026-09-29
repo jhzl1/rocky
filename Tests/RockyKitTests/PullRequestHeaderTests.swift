@@ -15,8 +15,8 @@ struct PullRequestHeaderTests {
     ) -> PullRequestInfo {
         PullRequestInfo(
             id: "PR_1",
-            number: 4525,
-            url: URL(string: "https://github.com/jhzl1/rocky/pull/4525")!,
+            number: 128,
+            url: URL(string: "https://github.com/jhzl1/rocky/pull/128")!,
             isDraft: isDraft,
             isMerged: isMerged,
             baseRefName: "development",

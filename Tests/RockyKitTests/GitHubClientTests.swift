@@ -159,8 +159,8 @@ struct GitHubClientTests {
         #expect(snapshot.baseBehindBy == 2)
         let pr = try #require(snapshot.pullRequest)
         #expect(pr.id == "PR_kwDOpr4525")
-        #expect(pr.number == 4525)
-        #expect(pr.url == URL(string: "https://github.com/jhzl1/rocky/pull/4525"))
+        #expect(pr.number == 128)
+        #expect(pr.url == URL(string: "https://github.com/jhzl1/rocky/pull/128"))
         #expect(pr.title == "Retry OCR uploads")
         #expect(pr.body == "Retries failed uploads with backoff.")
         #expect(!pr.isDraft)
@@ -416,15 +416,15 @@ struct GitHubClientTests {
     @Test func openIssuesAreTheFirstPageUpdatedLast() async throws {
         let body = Data(#"""
             {"data":{"repository":{"issues":{"nodes":[
-            {"number":4573,"title":"Un filtro negativo de proveedor","state":"OPEN"},
-            {"number":3842,"title":"Compras: el borrador no se guarda","state":"OPEN"}]}}}}
+            {"number":212,"title":"Search ignores filters on archived items","state":"OPEN"},
+            {"number":187,"title":"Draft orders are lost when the form reloads","state":"OPEN"}]}}}}
             """#.utf8)
         StubURLProtocol.reset { _ in .init(body: body) }
         let issues = try await client().issues(repository: repository, query: nil)
 
         #expect(issues == [
-            IssueSummary(number: 4573, title: "Un filtro negativo de proveedor", state: .open),
-            IssueSummary(number: 3842, title: "Compras: el borrador no se guarda", state: .open),
+            IssueSummary(number: 212, title: "Search ignores filters on archived items", state: .open),
+            IssueSummary(number: 187, title: "Draft orders are lost when the form reloads", state: .open),
         ])
         let graphQL = try #require(StubURLProtocol.requests.first?.graphQL)
         #expect(graphQL.variables == ["owner": "jhzl1", "name": "rocky"])
@@ -438,62 +438,62 @@ struct GitHubClientTests {
 
     /// GHL-03: words search the repository's open issues; nothing is asked by number.
     @Test func wordsSearchTheOpenIssues() async throws {
-        let body = Data(#"{"data":{"search":{"nodes":[{"number":4573,"title":"Un filtro negativo","state":"OPEN"},{}]}}}"#.utf8)
+        let body = Data(#"{"data":{"search":{"nodes":[{"number":212,"title":"Search ignores filters","state":"OPEN"},{}]}}}"#.utf8)
         StubURLProtocol.reset { _ in .init(body: body) }
-        let issues = try await client().issues(repository: repository, query: " filtro ")
+        let issues = try await client().issues(repository: repository, query: " archived ")
 
-        #expect(issues == [IssueSummary(number: 4573, title: "Un filtro negativo", state: .open)])
+        #expect(issues == [IssueSummary(number: 212, title: "Search ignores filters", state: .open)])
         let graphQL = try #require(StubURLProtocol.requests.first?.graphQL)
-        #expect(graphQL.variables == ["search": "repo:jhzl1/rocky is:issue is:open filtro"])
+        #expect(graphQL.variables == ["search": "repo:jhzl1/rocky is:issue is:open archived"])
         #expect(graphQL.query.contains("search(type: ISSUE, first: 30, query: $search) { nodes { ... on Issue { number title state } } }"))
         #expect(!graphQL.query.contains("$number"))
     }
 
-    /// GHL-03: "#4573" also asks for issue 4573 directly, in the same request, and shows it first, closed or not.
+    /// GHL-03: "#212" also asks for issue 212 directly, in the same request, and shows it first, closed or not.
     @Test func aNumberAsksForThatIssueFirstInAnyState() async throws {
         let body = Data(#"""
-            {"data":{"search":{"nodes":[{"number":14573,"title":"Mentions 4573","state":"OPEN"},{"number":4573,"title":"Old","state":"CLOSED"}]},
-            "repository":{"issue":{"number":4573,"title":"Old","state":"CLOSED"}}}}
+            {"data":{"search":{"nodes":[{"number":1212,"title":"Mentions 212","state":"OPEN"},{"number":212,"title":"Old","state":"CLOSED"}]},
+            "repository":{"issue":{"number":212,"title":"Old","state":"CLOSED"}}}}
             """#.utf8)
         StubURLProtocol.reset { _ in .init(body: body) }
-        let issues = try await client().issues(repository: repository, query: "#4573")
+        let issues = try await client().issues(repository: repository, query: "#212")
 
-        #expect(issues.map(\.number) == [4573, 14573])
+        #expect(issues.map(\.number) == [212, 1212])
         #expect(issues.first?.state == .closed)
         let graphQL = try #require(StubURLProtocol.requests.first?.graphQL)
         #expect(StubURLProtocol.requests.count == 1)
-        #expect(graphQL.variables == ["search": "repo:jhzl1/rocky is:issue is:open 4573", "owner": "jhzl1", "name": "rocky", "number": 4573])
+        #expect(graphQL.variables == ["search": "repo:jhzl1/rocky is:issue is:open 212", "owner": "jhzl1", "name": "rocky", "number": 212])
         #expect(graphQL.query.contains("repository(owner: $owner, name: $name) { issue(number: $number) { number title state } }"))
     }
 
     /// A number the repository does not have leaves the search's results.
     @Test func aMissingNumberLeavesTheSearch() async throws {
         let body = Data(#"""
-            {"data":{"search":{"nodes":[{"number":14573,"title":"Mentions 4573","state":"OPEN"}]},"repository":{"issue":null}},
-            "errors":[{"type":"NOT_FOUND","path":["repository","issue"],"message":"Could not resolve to an Issue with the number of 4573."}]}
+            {"data":{"search":{"nodes":[{"number":1212,"title":"Mentions 212","state":"OPEN"}]},"repository":{"issue":null}},
+            "errors":[{"type":"NOT_FOUND","path":["repository","issue"],"message":"Could not resolve to an Issue with the number of 212."}]}
             """#.utf8)
         StubURLProtocol.reset { _ in .init(body: body) }
-        #expect(try await client().issues(repository: repository, query: "4573").map(\.number) == [14573])
+        #expect(try await client().issues(repository: repository, query: "212").map(\.number) == [1212])
     }
 
     /// GHL-03, GHL-05: the Pull requests tab, with each one's branches and whether it comes from a fork.
     @Test func openPullRequestsCarryTheirBranchesAndForks() async throws {
         let body = Data(#"""
             {"data":{"repository":{"pullRequests":{"nodes":[
-            {"number":4536,"title":"Validate the PR comment flow","state":"OPEN","isDraft":false,"headRefName":"fix/test-pr-validation",
+            {"number":131,"title":"Retry failed webhooks","state":"OPEN","isDraft":false,"headRefName":"fix/webhook-retry",
             "baseRefName":"development","isCrossRepository":false,"headRepository":{"nameWithOwner":"jhzl1/rocky"}},
-            {"number":4490,"title":"Spike","state":"OPEN","isDraft":true,"headRefName":"spike/task-runner","baseRefName":"development",
+            {"number":124,"title":"Spike","state":"OPEN","isDraft":true,"headRefName":"spike/task-runner","baseRefName":"development",
             "isCrossRepository":false,"headRepository":{"nameWithOwner":"jhzl1/rocky"}},
-            {"number":4402,"title":"Fix typo","state":"OPEN","isDraft":false,"headRefName":"patch-1","baseRefName":"development",
+            {"number":119,"title":"Fix typo","state":"OPEN","isDraft":false,"headRefName":"patch-1","baseRefName":"development",
             "isCrossRepository":true,"headRepository":null}]}}}}
             """#.utf8)
         StubURLProtocol.reset { _ in .init(body: body) }
         let pulls = try await client().pullRequests(repository: repository, query: nil)
 
         #expect(pulls == [
-            PullRequestSummary(number: 4536, title: "Validate the PR comment flow", state: .open, isDraft: false, headRefName: "fix/test-pr-validation", baseRefName: "development", isCrossRepository: false, headRepository: "jhzl1/rocky"),
-            PullRequestSummary(number: 4490, title: "Spike", state: .open, isDraft: true, headRefName: "spike/task-runner", baseRefName: "development", isCrossRepository: false, headRepository: "jhzl1/rocky"),
-            PullRequestSummary(number: 4402, title: "Fix typo", state: .open, isDraft: false, headRefName: "patch-1", baseRefName: "development", isCrossRepository: true, headRepository: nil),
+            PullRequestSummary(number: 131, title: "Retry failed webhooks", state: .open, isDraft: false, headRefName: "fix/webhook-retry", baseRefName: "development", isCrossRepository: false, headRepository: "jhzl1/rocky"),
+            PullRequestSummary(number: 124, title: "Spike", state: .open, isDraft: true, headRefName: "spike/task-runner", baseRefName: "development", isCrossRepository: false, headRepository: "jhzl1/rocky"),
+            PullRequestSummary(number: 119, title: "Fix typo", state: .open, isDraft: false, headRefName: "patch-1", baseRefName: "development", isCrossRepository: true, headRepository: nil),
         ])
         let graphQL = try #require(StubURLProtocol.requests.first?.graphQL)
         #expect(graphQL.query.contains("pullRequests(states: [OPEN], first: 30, orderBy: {field: UPDATED_AT, direction: DESC})"))
@@ -520,18 +520,18 @@ struct GitHubClientTests {
     /// GHL-04: an issue in full, its state's reason, labels, assignees, body and comments with their total.
     @Test func anIssueInFullHasItsLabelsAssigneesAndComments() async throws {
         let body = Data(#"""
-            {"data":{"repository":{"issue":{"number":3655,"title":"Look and feel 3/6: Components","url":"https://github.com/jhzl1/rocky/issues/3655",
+            {"data":{"repository":{"issue":{"number":154,"title":"Refresh the button styles","url":"https://github.com/jhzl1/rocky/issues/154",
             "state":"CLOSED","stateReason":"NOT_PLANNED","createdAt":"2026-09-20T10:00:00Z","body":"Components.","author":null,
             "labels":{"nodes":[{"name":"ui"},{"name":"design"}]},"assignees":{"nodes":[{"login":"jhzl1"}]},
             "comments":{"totalCount":143,"nodes":[{"author":{"login":"reviewer"},"createdAt":"2026-09-21T09:00:00Z","body":"Looks good."}]}}}}}
             """#.utf8)
         StubURLProtocol.reset { _ in .init(body: body) }
-        let issue = try await client().issue(repository: repository, number: 3655)
+        let issue = try await client().issue(repository: repository, number: 154)
 
         #expect(issue == GitHubIssue(
-            number: 3655,
-            title: "Look and feel 3/6: Components",
-            url: URL(string: "https://github.com/jhzl1/rocky/issues/3655")!,
+            number: 154,
+            title: "Refresh the button styles",
+            url: URL(string: "https://github.com/jhzl1/rocky/issues/154")!,
             state: .closed,
             stateReason: "not planned",
             author: "ghost",
@@ -543,7 +543,7 @@ struct GitHubClientTests {
             totalComments: 143
         ))
         let graphQL = try #require(StubURLProtocol.requests.first?.graphQL)
-        #expect(graphQL.variables == ["owner": "jhzl1", "name": "rocky", "number": 3655])
+        #expect(graphQL.variables == ["owner": "jhzl1", "name": "rocky", "number": 154])
         #expect(graphQL.query.contains("issue(number: $number)"))
         #expect(graphQL.query.contains("labels(first: 20) { nodes { name } }"))
         #expect(graphQL.query.contains("assignees(first: 10) { nodes { login } }"))
@@ -553,15 +553,15 @@ struct GitHubClientTests {
     /// GHL-05: a pull request in full carries its branches, draft and fork.
     @Test func aPullRequestInFullHasItsBranches() async throws {
         let body = Data(#"""
-            {"data":{"repository":{"pullRequest":{"number":4536,"title":"Validate the PR comment flow","url":"https://github.com/jhzl1/rocky/pull/4536",
-            "state":"OPEN","isDraft":true,"headRefName":"fix/test-pr-validation","baseRefName":"development","isCrossRepository":false,
+            {"data":{"repository":{"pullRequest":{"number":131,"title":"Retry failed webhooks","url":"https://github.com/jhzl1/rocky/pull/131",
+            "state":"OPEN","isDraft":true,"headRefName":"fix/webhook-retry","baseRefName":"development","isCrossRepository":false,
             "createdAt":"2026-09-22T10:00:00Z","body":"","author":{"login":"jhzl1"},"labels":{"nodes":[]},"assignees":{"nodes":[]},
             "comments":{"totalCount":0,"nodes":[]}}}}}
             """#.utf8)
         StubURLProtocol.reset { _ in .init(body: body) }
-        let pull = try await client().pullRequest(repository: repository, number: 4536)
+        let pull = try await client().pullRequest(repository: repository, number: 131)
 
-        #expect(pull.pullRequest == GitHubIssue.PullRequestDetails(headRefName: "fix/test-pr-validation", baseRefName: "development", isDraft: true, isCrossRepository: false))
+        #expect(pull.pullRequest == GitHubIssue.PullRequestDetails(headRefName: "fix/webhook-retry", baseRefName: "development", isDraft: true, isCrossRepository: false))
         #expect(pull.stateReason == nil)
         #expect(pull.comments.isEmpty)
         #expect(pull.totalComments == 0)
@@ -582,13 +582,13 @@ struct GitHubClientTests {
         await #expect(throws: GitHubError.notFound) { try await self.client().pullRequest(repository: self.repository, number: 9) }
     }
 
-    /// KIT-14: the search query from "#4573" and from words; the number read only from a number.
+    /// KIT-14: the search query from "#212" and from words; the number read only from a number.
     @Test func searchQueriesFromANumberAndFromWords() {
-        #expect(GitHubLinkSearch.query(repository: repository, kind: .issue, text: "#4573") == "repo:jhzl1/rocky is:issue is:open 4573")
-        #expect(GitHubLinkSearch.query(repository: repository, kind: .pullRequest, text: " filtro negativo ") == "repo:jhzl1/rocky is:pr is:open filtro negativo")
-        #expect(GitHubLinkSearch.number(in: "#4573") == 4573)
-        #expect(GitHubLinkSearch.number(in: " 4573 ") == 4573)
-        for text in ["", "#", "filtro", "#45a", "45 73", "-3", "0", "99999999999"] {
+        #expect(GitHubLinkSearch.query(repository: repository, kind: .issue, text: "#212") == "repo:jhzl1/rocky is:issue is:open 212")
+        #expect(GitHubLinkSearch.query(repository: repository, kind: .pullRequest, text: " archived items ") == "repo:jhzl1/rocky is:pr is:open archived items")
+        #expect(GitHubLinkSearch.number(in: "#212") == 212)
+        #expect(GitHubLinkSearch.number(in: " 212 ") == 212)
+        for text in ["", "#", "archived", "#21a", "2 12", "-3", "0", "99999999999"] {
             #expect(GitHubLinkSearch.number(in: text) == nil, "\(text)")
         }
     }

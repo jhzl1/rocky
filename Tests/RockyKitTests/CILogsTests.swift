@@ -29,7 +29,7 @@ struct CILogsTests {
         #expect(CILogs.fileName(checkName: "e2e / chromium") == "e2e-chromium.log")
         #expect(CILogs.fileName(checkName: "../../etc/passwd") == "etc-passwd.log")
         #expect(CILogs.fileName(checkName: ".hidden") == "hidden.log")
-        #expect(CILogs.fileName(checkName: "Vercel – celes-web") == "Vercel-celes-web.log")
+        #expect(CILogs.fileName(checkName: "Vercel – acme-web") == "Vercel-acme-web.log")
         #expect(CILogs.fileName(checkName: "") == "check.log")
         #expect(CILogs.fileName(checkName: "/ /") == "check.log")
     }

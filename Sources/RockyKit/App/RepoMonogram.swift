@@ -6,8 +6,8 @@ public enum RepoMonogram {
     public static let paletteCount = 6
 
     /// A new repository's color: at random among the palette colors the other repositories use least, so colors
-    /// repeat only once every one is taken. The user wanted random colors; a hash of the id put doculift, veritas and
-    /// celes-platform all on pink (2026-09-23). `pick` chooses among the candidates, at random unless a test says.
+    /// repeat only once every one is taken. The user wanted random colors; a hash of the id put docs-portal, ledger and
+    /// acme-platform all on pink (2026-09-23). `pick` chooses among the candidates, at random unless a test says.
     public static func pickColor(
         used: [Int],
         paletteCount: Int = paletteCount,

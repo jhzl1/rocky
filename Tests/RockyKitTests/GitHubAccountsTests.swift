@@ -7,7 +7,7 @@ final class FakeGH: @unchecked Sendable {
     static let twoAccounts = """
         {"hosts":{"github.com":[\
         {"state":"success","active":true,"host":"github.com","login":"jhzl1","tokenSource":"keyring","scopes":"repo, workflow","gitProtocol":"ssh"},\
-        {"state":"success","active":false,"host":"github.com","login":"ocampos-biai","tokenSource":"keyring","scopes":"repo, workflow","gitProtocol":"ssh"}\
+        {"state":"success","active":false,"host":"github.com","login":"work-user","tokenSource":"keyring","scopes":"repo, workflow","gitProtocol":"ssh"}\
         ]}}
         """
 
@@ -61,7 +61,7 @@ final class FakeGH: @unchecked Sendable {
 struct GitHubAccountsTests {
     @Test func parsesTheAccountsAndTheActiveOne() async throws {
         let accounts = GitHubAccounts(runGH: FakeGH().runGH)
-        #expect(try await accounts.logins() == ["jhzl1", "ocampos-biai"])
+        #expect(try await accounts.logins() == ["jhzl1", "work-user"])
         #expect(try await accounts.activeLogin() == "jhzl1")
     }
 
@@ -84,12 +84,12 @@ struct GitHubAccountsTests {
     }
 
     @Test func tokenIsFetchedOncePerLogin() async throws {
-        let gh = FakeGH(tokens: ["jhzl1": "gho_one", "ocampos-biai": "gho_two"])
+        let gh = FakeGH(tokens: ["jhzl1": "gho_one", "work-user": "gho_two"])
         let accounts = GitHubAccounts(runGH: gh.runGH)
         #expect(accounts.cachedToken(for: "jhzl1") == nil)
         #expect(try await accounts.token(for: "jhzl1") == "gho_one")
         #expect(try await accounts.token(for: "jhzl1") == "gho_one")
-        #expect(try await accounts.token(for: "ocampos-biai") == "gho_two")
+        #expect(try await accounts.token(for: "work-user") == "gho_two")
         #expect(accounts.cachedToken(for: "jhzl1") == "gho_one")
         #expect(gh.tokenCalls(for: "jhzl1") == 1)
         #expect(gh.calls.contains(["auth", "token", "--user", "jhzl1", "--hostname", "github.com"]))
@@ -117,43 +117,43 @@ struct GitHubAccountsTests {
     }
 
     @Test func defaultLoginMatchesTheOwnerElseTheActiveAccount() {
-        let logins = ["jhzl1", "ocampos-biai"]
-        #expect(GitHubAccounts.defaultLogin(owner: "ocampos-biai", logins: logins, active: "jhzl1") == "ocampos-biai")
-        #expect(GitHubAccounts.defaultLogin(owner: "OCampos-BIAI", logins: logins, active: "jhzl1") == "ocampos-biai")
-        #expect(GitHubAccounts.defaultLogin(owner: "celes-dev", logins: logins, active: "jhzl1") == "jhzl1")
-        #expect(GitHubAccounts.defaultLogin(owner: "celes-dev", logins: [], active: nil) == nil)
+        let logins = ["jhzl1", "work-user"]
+        #expect(GitHubAccounts.defaultLogin(owner: "work-user", logins: logins, active: "jhzl1") == "work-user")
+        #expect(GitHubAccounts.defaultLogin(owner: "Work-User", logins: logins, active: "jhzl1") == "work-user")
+        #expect(GitHubAccounts.defaultLogin(owner: "acme-dev", logins: logins, active: "jhzl1") == "jhzl1")
+        #expect(GitHubAccounts.defaultLogin(owner: "acme-dev", logins: [], active: nil) == nil)
     }
 
     /// ACC-01 for an organization's repository (user report, 2026-09-23): no login is the owner, so the first account
     /// that can read it, the active one first; an account without an answer is skipped; nobody can, the active one.
     @Test func defaultLoginOfAnOrganizationIsTheFirstAccountThatCanReadIt() {
-        let logins = ["jhzl1", "ocampos-biai"]
-        func pick(_ canRead: [String: Bool], owner: String = "celes-app") -> String? {
+        let logins = ["jhzl1", "work-user"]
+        func pick(_ canRead: [String: Bool], owner: String = "acme-org") -> String? {
             GitHubAccounts.defaultLogin(owner: owner, logins: logins, active: "jhzl1", canRead: canRead)
         }
-        #expect(pick(["jhzl1": false, "ocampos-biai": true]) == "ocampos-biai")
-        #expect(pick(["jhzl1": true, "ocampos-biai": true]) == "jhzl1")
-        #expect(pick(["ocampos-biai": true]) == "ocampos-biai")
-        #expect(pick(["jhzl1": false, "ocampos-biai": false]) == "jhzl1")
+        #expect(pick(["jhzl1": false, "work-user": true]) == "work-user")
+        #expect(pick(["jhzl1": true, "work-user": true]) == "jhzl1")
+        #expect(pick(["work-user": true]) == "work-user")
+        #expect(pick(["jhzl1": false, "work-user": false]) == "jhzl1")
         #expect(pick([:]) == "jhzl1")
         // The owner's login wins whatever the probe said.
-        #expect(pick(["jhzl1": true], owner: "ocampos-biai") == "ocampos-biai")
+        #expect(pick(["jhzl1": true], owner: "work-user") == "work-user")
     }
 
     @Test func readProbeOrderAsksTheActiveAccountFirstAndOnlyWhenItMatters() {
-        let logins = ["ocampos-biai", "jhzl1", "ana"]
-        #expect(GitHubAccounts.readProbeOrder(owner: "celes-app", logins: logins, active: "jhzl1") == ["jhzl1", "ocampos-biai", "ana"])
-        #expect(GitHubAccounts.readProbeOrder(owner: "celes-app", logins: logins, active: nil) == logins)
+        let logins = ["work-user", "jhzl1", "ana"]
+        #expect(GitHubAccounts.readProbeOrder(owner: "acme-org", logins: logins, active: "jhzl1") == ["jhzl1", "work-user", "ana"])
+        #expect(GitHubAccounts.readProbeOrder(owner: "acme-org", logins: logins, active: nil) == logins)
         #expect(GitHubAccounts.readProbeOrder(owner: "JHZL1", logins: logins, active: "ana").isEmpty)
-        #expect(GitHubAccounts.readProbeOrder(owner: "celes-app", logins: ["jhzl1"], active: "jhzl1").isEmpty)
-        #expect(GitHubAccounts.readProbeOrder(owner: "celes-app", logins: [], active: nil).isEmpty)
+        #expect(GitHubAccounts.readProbeOrder(owner: "acme-org", logins: ["jhzl1"], active: "jhzl1").isEmpty)
+        #expect(GitHubAccounts.readProbeOrder(owner: "acme-org", logins: [], active: nil).isEmpty)
     }
 
     /// Review Focus 2: gh printed a token and then failed; the error names the status and suggests the login
     /// command, and carries neither that token nor any token fetched earlier.
     @Test func errorsNeverCarryTheToken() async throws {
         let failure = ProcessFailure(
-            command: "gh auth token --user ocampos-biai --hostname github.com",
+            command: "gh auth token --user work-user --hostname github.com",
             status: 1,
             stderr: "gho_leakedByABrokenKeyring\nkeyring read gho_fetchedEarlier: permission denied"
         )
@@ -162,7 +162,7 @@ struct GitHubAccountsTests {
         _ = try await accounts.token(for: "jhzl1")
 
         do {
-            _ = try await accounts.token(for: "ocampos-biai")
+            _ = try await accounts.token(for: "work-user")
             Issue.record("the token fetch should have failed")
         } catch {
             let texts = ["\(error)", error.localizedDescription, String(reflecting: error)]

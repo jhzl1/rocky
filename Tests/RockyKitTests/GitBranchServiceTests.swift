@@ -178,7 +178,7 @@ struct GitBranchServiceTests {
         let parent = try Fixtures.temporaryDirectory("branch")
         let repo = try GitFixture.clonedRepo(in: parent)
         let (script, record) = try WorktreeServiceTests.recordingSSH(in: parent)
-        try GitFixture.git(["remote", "set-url", "origin", "ssh://git@example.invalid/celes-app/celes-platform.git"], in: repo)
+        try GitFixture.git(["remote", "set-url", "origin", "ssh://git@example.invalid/acme-org/acme-platform.git"], in: repo)
         try GitFixture.git(["config", "core.sshCommand", "\(script.path) -o IdentitiesOnly=yes"], in: repo)
         var environment = GitFixture.environment
         environment["GIT_SSH_COMMAND"] = nil

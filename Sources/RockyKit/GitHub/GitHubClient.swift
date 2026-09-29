@@ -71,7 +71,7 @@ public actor GitHubClient {
     // MARK: Links (KIT-14)
 
     /// `GHL-03`'s Issues tab. Without `query` (nil or blank): the 30 open issues updated last. With one: GitHub's
-    /// search of the open issues, 30 at most, and for a number ("4573", "#4573") that issue first, in any state, when
+    /// search of the open issues, 30 at most, and for a number ("212", "#212") that issue first, in any state, when
     /// the repository has it. One request either way.
     public func issues(repository: GitHubRepository, query: String?) async throws -> [IssueSummary] {
         let text = query?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

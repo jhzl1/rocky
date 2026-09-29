@@ -5,9 +5,9 @@
   "tasks": [
     // ── Setup ─────────────────────────────────────────────────────────────
     {
-      "label": "Setup: Local DB",
+      "label": "Setup: Local database",
       "type": "shell",
-      "command": "${workspaceFolder}/scripts/setup-db.sh ${input:apiEnv}",
+      "command": "${workspaceFolder}/scripts/local-db.sh ${input:environment}",
       "options": { "cwd": "${workspaceFolder}/apps/api" },
       "group": "build",
       "presentation": { "reveal": "always", "focus": true, "panel": "dedicated", "clear": true },
@@ -18,7 +18,7 @@
     {
       "label": "Run: API + Web",
       "type": "shell",
-      "command": "pnpm ${input:runMode}",
+      "command": "pnpm ${input:stackMode}",
       "options": { "cwd": "${workspaceFolder}/apps/web" },
       "dependsOn": ["_Dev: Cleanup", "_API: Run (mode)"],
       "dependsOrder": "sequence",
@@ -47,7 +47,7 @@
     {
       "label": "Run: API",
       "type": "shell",
-      "command": "set -a && source ${workspaceFolder}/apps/api/.env.${input:apiEnv} && set +a && uvicorn src.main:app --port 8100",
+      "command": "set -a && source ${workspaceFolder}/apps/api/.env.${input:environment} && set +a && uvicorn src.main:app --port 8100",
       "options": { "cwd": "${workspaceFolder}/apps/api" },
       "dependsOn": ["_Dev: Cleanup", "_API: Setup"],
       "dependsOrder": "sequence",
@@ -94,7 +94,7 @@
     {
       "label": "_API: Run (mode)",
       "type": "shell",
-      "command": "MODE='${input:runMode}' ${workspaceFolder}/scripts/run-api.sh",
+      "command": "MODE='${input:stackMode}' ${workspaceFolder}/scripts/run-api.sh",
       "options": { "cwd": "${workspaceFolder}/apps/api" },
       "dependsOn": ["_API: Ensure venv", "_API: Ensure hooks"],
       "dependsOrder": "parallel",
@@ -117,27 +117,27 @@
   ],
   "inputs": [
     {
-      "id": "runMode",
+      "id": "stackMode",
       "type": "pickString",
       "description": "Select environment and mode",
       "options": [
-        { "label": "DEV — Local", "value": "dev-local" },
-        { "label": "QA — Local", "value": "qa-local" },
+        { "label": "Development — Local", "value": "dev-local" },
+        { "label": "Staging — Local", "value": "staging-local" },
       ],
       "default": "dev-local",
     },
     {
-      "id": "apiEnv",
+      "id": "environment",
       "type": "pickString",
       "description": "API environment",
-      "options": ["dev", "qa"],
+      "options": ["dev", "staging"],
       "default": "dev",
     },
     {
       "id": "webMode",
       "type": "pickString",
       "description": "Web mode",
-      "options": ["dev", "dev:qa"],
+      "options": ["dev", "dev:staging"],
     },
   ],
 }

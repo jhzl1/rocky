@@ -212,7 +212,7 @@ Cada fila tiene un ícono de estado. Si aplican varios, gana el primero de esta 
 | Idle | Ícono de rama gris | Nada de lo anterior. |
 
 El título de una fila es el de la conversación abierta más antigua del workspace, tomado de su primer mensaje. Si ese
-mensaje lleva un issue vinculado, el título es el del issue, por ejemplo "#4573 Un filtro negativo…" (sección 6). Si
+mensaje lleva un issue vinculado, el título es el del issue, por ejemplo "#212 Search ignores filters…" (sección 6). Si
 todavía no hay mensajes, la fila muestra el nombre de la ciudad, más tenue. Al pasar el mouse sobre una fila
 aparecen "Remove workspace" (ícono de caja) y "…". El menú "…" y el clic derecho ofrecen Open in Finder, Copy Branch
 Name y Remove Workspace… Mientras el workspace se crea, el menú solo tiene Remove; si la creación falló, tiene Retry y
@@ -356,8 +356,8 @@ salida.
 ### El hook `post-checkout` en el Setup
 
 Git corre el hook `post-checkout` del repositorio cada vez que crea un worktree. Algunos repositorios hacen ahí un
-trabajo largo: el de celes-platform (`.husky/post-checkout`, con `core.hooksPath=.husky`) corre
-`scripts/setup-worktree.sh` y un `pnpm install` completo, que tarda minutos. Por eso Rocky crea el worktree sin hooks
+trabajo largo: el de acme-platform (`.husky/post-checkout`, con `core.hooksPath=.husky`) corre
+`scripts/link-worktree.sh` y un `pnpm install` completo, que tarda minutos. Por eso Rocky crea el worktree sin hooks
 y corre el hook después, a la vista, como primer paso de la pestaña Setup:
 
 - Rocky busca el hook donde lo buscaría git (`git rev-parse --git-path hooks/post-checkout`, que respeta
@@ -419,7 +419,7 @@ dependencias y sus esperas.
   3. si no, la tarea con `"group": { "kind": "build", "isDefault": true }`;
   4. si no, abre el menú.
 
-  Dice "▶ Run" para el script Run y "▶ Run: Web Client" para una tarea, cortado si es muy largo. Mientras eso corre,
+  Dice "▶ Run" para el script Run y "▶ Run: Web" para una tarea, cortado si es muy largo. Mientras eso corre,
   dice "■ Stop".
 - **La flecha** abre el menú sobre el botón:
   - "Run script", con el script debajo, si hay uno;
@@ -481,7 +481,7 @@ dependencias y sus esperas.
   como lista; si no, Rocky la espera.
 - Si una dependencia sale con un código distinto de 0, o una en segundo plano termina antes de coincidir, la cadena se
   detiene: lo que no había arrancado ya no arranca, su pestaña muestra el punto rojo y aparece el aviso "“_Dev:
-  Cleanup orphans” failed, so “Run: Web Client” didn't start" con "Show", que selecciona esa pestaña. Las
+  Stop stray processes” failed, so “Run: Web” didn't start" con "Show", que selecciona esa pestaña. Las
   dependencias que ya corrían siguen corriendo.
 
 **Detener:**
@@ -502,7 +502,7 @@ dependencias y sus esperas.
 | Una variable no admitida, una entrada de tipo `command`, o un `${input:id}` sin esa entrada | No arranca nada. Aviso: "“Run: X” uses ${file}, which Rocky doesn't support". |
 | `dependsOn` nombra una tarea que el archivo no tiene | No arranca nada. Aviso: "“Run: X” depends on “_Y”, which tasks.json doesn't have". |
 | Dos tareas que dependen una de la otra | No arranca nada. Aviso: "“A” and “B” depend on each other". |
-| Un `endsPattern` que no es una expresión regular válida | No arranca nada. Aviso: "“_API Core: Run (mode)” has an invalid endsPattern". |
+| Un `endsPattern` que no es una expresión regular válida | No arranca nada. Aviso: "“_API: Run (mode)” has an invalid endsPattern". |
 
 ### Variables que recibe cada proceso
 
@@ -623,7 +623,7 @@ request o una rama del repositorio. Usa la cuenta de GitHub del repositorio (sec
 - **El panel** se abre sobre el cuadro de mensaje, con el campo "Search by number, title or description" y tres
   pestañas: Issues, Pull requests y Branches. Abre en Issues.
   - Issues y Pull requests muestran los abiertos, los actualizados más recientemente primero. Al escribir, Rocky busca
-    en GitHub 250 ms después de que dejas de escribir. Un número, "4573" o "#4573", también trae ese issue o pull
+    en GitHub 250 ms después de que dejas de escribir. Un número, "212" o "#212", también trae ese issue o pull
     request aunque esté cerrado, y lo muestra primero.
   - Branches muestra las ramas locales y las de `origin`, con la de commit más reciente primero. "origin" marca una
     rama que solo está en el remoto. Al abrir esa pestaña, Rocky corre un `git fetch origin --prune` en segundo plano y
@@ -639,14 +639,14 @@ request o una rama del repositorio. Usa la cuenta de GitHub del repositorio (sec
 | Esc, o un clic fuera | Cierran el panel. |
 
 **Un issue.** Rocky trae el issue completo (título, estado, autor, etiquetas, asignados, descripción y hasta 100
-comentarios) y lo adjunta como un archivo Markdown, `[GITHUB]-4573.md`. Queda como una etiqueta con el logo de GitHub
-en el lugar del cursor, y su tooltip es "#4573" con el título. El agente lee el archivo como cualquier adjunto.
+comentarios) y lo adjunta como un archivo Markdown, `[GITHUB]-212.md`. Queda como una etiqueta con el logo de GitHub
+en el lugar del cursor, y su tooltip es "#212" con el título. El agente lee el archivo como cualquier adjunto.
 
 - Puedes vincular varios issues en un mensaje. Elegir uno que ya está en el cuadro solo cierra el panel.
 - El archivo es una copia del momento en que lo vinculas; no se actualiza.
 
 **Un pull request o una rama.** Rocky cambia el worktree del workspace a esa rama y después adjunta su archivo:
-`[GITHUB]-PR-4536.md` (como el de un issue, más la rama y si es borrador) o `[BRANCH]-feat-look-and-feel-3.md` (las
+`[GITHUB]-PR-131.md` (como el de un issue, más la rama y si es borrador) o `[BRANCH]-feat-button-styles.md` (las
 "/" del nombre pasan a "-"), con la rama, su upstream y los últimos 20 commits que la base no tiene. Su etiqueta lleva
 el ícono de pull request o de rama. Va uno por mensaje: un segundo dice "One pull request or branch per message.".
 
@@ -669,7 +669,7 @@ el ícono de pull request o de rama. Va uno por mensaje: un segundo dice "One pu
   instrucciones.
 
 **El nombre del workspace.** Si el primer mensaje de una conversación lleva un issue vinculado, la conversación (y la
-fila del workspace en la barra lateral) toma el título del issue: "#4573 " más su título, cortado a 40 caracteres como
+fila del workspace en la barra lateral) toma el título del issue: "#212 " más su título, cortado a 40 caracteres como
 cualquier título. Con varios issues, gana el primero. Un pull request o una rama no cambian esa regla. Un mensaje sin
 texto y sin issue deja la conversación sin título.
 
@@ -1024,8 +1024,8 @@ Rocky corre `git remote get-url origin` en el clon principal y saca de la URL el
 | URL de `origin` | Dueño / nombre |
 | --- | --- |
 | `git@github.com:jhzl1/rocky.git` | `jhzl1` / `rocky` |
-| `https://github.com/RentekFintech/doculift.git` | `RentekFintech` / `doculift` |
-| `git@github-celes:celes-app/celes-platform.git` (alias SSH, ejemplo) | `celes-app` / `celes-platform` |
+| `https://github.com/AcmeCorp/docs-portal.git` | `AcmeCorp` / `docs-portal` |
+| `git@github-work:acme-org/acme-platform.git` (alias SSH, ejemplo) | `acme-org` / `acme-platform` |
 
 Lo hace una vez por repositorio en cada sesión.
 
@@ -1035,9 +1035,9 @@ Si la URL usa SSH con un host distinto de `github.com`, ese host es un alias de 
 tiene, por ejemplo:
 
 ```
-Host github-celes
+Host github-work
   HostName github.com
-  IdentityFile ~/.ssh/id_rsa_celes
+  IdentityFile ~/.ssh/id_rsa_work
 ```
 
 y también `github.com-personal` y `github.com`, los dos con `~/.ssh/id_rsa_personal`.
@@ -1046,7 +1046,7 @@ Rocky corre `ssh -G <alias>`, que imprime la configuración que usaría ssh **si
 `hostname`. Puedes verlo tú mismo:
 
 ```
-ssh -G github-celes | rg '^hostname'
+ssh -G github-work | rg '^hostname'
 # hostname github.com
 ```
 
@@ -1056,7 +1056,7 @@ ssh -G github-celes | rg '^hostname'
 
 ### Paso 3: la cuenta
 
-Rocky usa las cuentas de `gh`. Tus cuentas son `jhzl1` (la activa) y `ocampos-biai`.
+Rocky usa las cuentas de `gh`. Tus cuentas son `jhzl1` (la activa) y `work-user`.
 
 1. **Si elegiste una cuenta** en los ajustes del repositorio (sección GitHub), esa gana siempre.
 2. **Con "Automatic"**, Rocky decide en tres pasos:
@@ -1083,21 +1083,21 @@ El menú de cuentas muestra lo que decidió "Automatic", por ejemplo "Automatic 
 
 Verificado el 2026-09-24:
 
-| Repositorio | `jhzl1` | `ocampos-biai` | Cuenta elegida |
+| Repositorio | `jhzl1` | `work-user` | Cuenta elegida |
 | --- | --- | --- | --- |
-| `RentekFintech/doculift` | 200 | 404 | `jhzl1` |
-| `RentekFintech/veritas` | 200 | 404 | `jhzl1` |
-| `celes-app/celes-platform` | 404 | 200 | `ocampos-biai` |
+| `AcmeCorp/docs-portal` | 200 | 404 | `jhzl1` |
+| `AcmeCorp/ledger` | 200 | 404 | `jhzl1` |
+| `acme-org/acme-platform` | 404 | 200 | `work-user` |
 
-En `celes-platform` la cuenta activa (`jhzl1`) recibe 404, así que Rocky sigue con `ocampos-biai`, que recibe 200.
+En `acme-platform` la cuenta activa (`jhzl1`) recibe 404, así que Rocky sigue con `work-user`, que recibe 200.
 
 ### Comprobarlo desde la terminal
 
 Esto hace lo mismo que la prueba de Rocky, con cada cuenta:
 
 ```
-GH_TOKEN=$(gh auth token --user jhzl1) gh api repos/celes-app/celes-platform
-GH_TOKEN=$(gh auth token --user ocampos-biai) gh api repos/celes-app/celes-platform
+GH_TOKEN=$(gh auth token --user jhzl1) gh api repos/acme-org/acme-platform
+GH_TOKEN=$(gh auth token --user work-user) gh api repos/acme-org/acme-platform
 ```
 
 Si imprime los datos del repositorio, esa cuenta puede leerlo (200). Si termina con `Not Found (HTTP 404)`, no puede.
@@ -1131,9 +1131,9 @@ use the new account."
 `git push` por SSH usa la llave SSH, no el token.
 
 - Rocky respeta el `core.sshCommand` del repositorio. En tu caso viene de:
-  - `~/.gitconfig`: `[includeIf "gitdir:~/Documents/dev/celes/"]`, con `path = ~/.gitconfig-celes`.
-  - `~/.gitconfig-celes`: `sshCommand = ssh -o IdentitiesOnly=yes -o IdentityFile=/Users/jhzl/.ssh/id_rsa_celes`.
-- Los worktrees viven al lado del repositorio (`celes-platform-worktrees/`), dentro de `~/Documents/dev/celes/`, así
+  - `~/.gitconfig`: `[includeIf "gitdir:~/Documents/dev/acme/"]`, con `path = ~/.gitconfig-work`.
+  - `~/.gitconfig-work`: `sshCommand = ssh -o IdentitiesOnly=yes -o IdentityFile=/Users/jhzl/.ssh/id_rsa_work`.
+- Los worktrees viven al lado del repositorio (`acme-platform-worktrees/`), dentro de `~/Documents/dev/acme/`, así
   que la regla `includeIf` también aplica en ellos.
 - En sus propias operaciones contra el remoto (el `git fetch` al crear un workspace, Pull y Push del panel), Rocky
   solo añade `-o BatchMode=yes` al comando que git usaría. Así ssh falla en lugar de quedarse esperando una

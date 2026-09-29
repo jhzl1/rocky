@@ -43,7 +43,7 @@ public struct WorktreeService: Sendable {
     /// `environment` for a git run that reaches the remote (fetch, pull, push) in `directory`: ssh in batch mode, so a
     /// passphrase or host-key question fails instead of waiting for a terminal, on the command git itself would run
     /// (`batchSSHCommand`). A fixed `GIT_SSH_COMMAND=ssh -o BatchMode=yes` overrode the repository's
-    /// `core.sshCommand`: a celes clone's key, set by an `includeIf "gitdir:…"`, was skipped, and the fetch went out
+    /// `core.sshCommand`: an acme clone's key, set by an `includeIf "gitdir:…"`, was skipped, and the fetch went out
     /// with the personal key, which has no access (user report, 2026-09-23).
     static func remoteEnvironment(_ environment: [String: String], in directory: URL) -> [String: String] {
         var remote = environment
@@ -131,7 +131,7 @@ public struct WorktreeService: Sendable {
     }
 
     /// WSC-05: the post-checkout hook git would have run for `worktree`, where git looks for it:
-    /// `rev-parse --git-path hooks/post-checkout` honors `core.hooksPath` (`.husky/post-checkout` in celes-platform) and
+    /// `rev-parse --git-path hooks/post-checkout` honors `core.hooksPath` (`.husky/post-checkout` in acme-platform) and
     /// the hooks a linked worktree shares with its main clone. nil when that file is missing or not executable, which
     /// git skips too.
     public func postCheckoutHook(worktree: URL) -> URL? {

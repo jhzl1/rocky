@@ -25,8 +25,8 @@ struct RemoteURLTests {
 
     /// `ACC-01`: SSH aliases from `~/.ssh/config` count when `ssh -G` resolves them to github.com.
     @Test func sshAliasesResolveThroughSSHConfig() {
-        let hosts = ["github-celes": "github.com", "github.com-personal": "github.com", "gitlab-work": "gitlab.com"]
-        #expect(repository("git@github-celes:celes/platform.git", sshHosts: hosts) == GitHubRepository(owner: "celes", name: "platform"))
+        let hosts = ["github-work": "github.com", "github.com-personal": "github.com", "gitlab-work": "gitlab.com"]
+        #expect(repository("git@github-work:acme/platform.git", sshHosts: hosts) == GitHubRepository(owner: "acme", name: "platform"))
         #expect(repository("git@github.com-personal:jhzl1/rocky.git", sshHosts: hosts) == GitHubRepository(owner: "jhzl1", name: "rocky"))
         #expect(repository("git@gitlab-work:team/app.git", sshHosts: hosts) == nil)
         #expect(repository("git@unknown-alias:team/app.git", sshHosts: hosts) == nil)
@@ -36,7 +36,7 @@ struct RemoteURLTests {
         #expect(repository("https://gitlab.com/team/app.git") == nil)
         #expect(repository("git@gitlab.com:team/app.git", sshHosts: ["gitlab.com": "gitlab.com"]) == nil)
         // An https host is never an alias: only SSH reads ~/.ssh/config.
-        #expect(repository("https://github-celes/celes/platform.git", sshHosts: ["github-celes": "github.com"]) == nil)
+        #expect(repository("https://github-work/acme/platform.git", sshHosts: ["github-work": "github.com"]) == nil)
     }
 
     @Test func garbageIsNil() {
@@ -53,7 +53,7 @@ struct RemoteURLTests {
     }
 
     @Test func readsTheHostNameOfSSHConfig() {
-        let output = "user git\nhostname github.com\nport 22\nidentityfile ~/.ssh/id_celes\n"
+        let output = "user git\nhostname github.com\nport 22\nidentityfile ~/.ssh/id_work\n"
         #expect(GitHubRemote.hostName(fromSSHConfig: output) == "github.com")
         #expect(GitHubRemote.hostName(fromSSHConfig: "user git\n") == nil)
     }

@@ -2,11 +2,11 @@ import Foundation
 
 /// A branch the picker's Branches tab offers (`GHL-03`, `KIT-15`): a local branch, or one only on origin.
 public struct BranchRef: Equatable, Sendable, Identifiable {
-    /// Without `origin/`: "feat/look-and-feel-3".
+    /// Without `origin/`: "feat/button-styles".
     public let name: String
     /// Only on origin: switching to it creates the local branch, tracking it.
     public let isRemoteOnly: Bool
-    /// "origin/feat/look-and-feel-3": a local branch's upstream, nil without one; a remote-only branch's own ref.
+    /// "origin/feat/button-styles": a local branch's upstream, nil without one; a remote-only branch's own ref.
     public let upstream: String?
     /// The worktree that has it checked out, the workspace's own included; nil when none does.
     public let heldBy: URL?
@@ -86,7 +86,7 @@ public enum BranchLinks {
         return "Checked out in \(holderLabel(holder, mainClone: mainClone))"
     }
 
-    /// A worktree as the reason names it: "celes-platform-worktrees/tokyo" for one of Rocky's, next to the main clone;
+    /// A worktree as the reason names it: "acme-platform-worktrees/tokyo" for one of Rocky's, next to the main clone;
     /// any other folder, the main clone included, with `~` for the home folder.
     public static func holderLabel(_ holder: URL, mainClone: URL) -> String {
         let root = WorktreeService.worktreesRoot(for: mainClone).resolvingSymlinksInPath().path

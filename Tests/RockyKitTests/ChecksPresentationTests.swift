@@ -13,8 +13,8 @@ struct ChecksPresentationTests {
     ) -> PullRequestInfo {
         PullRequestInfo(
             id: "PR_1",
-            number: 4525,
-            url: URL(string: "https://github.com/jhzl1/rocky/pull/4525")!,
+            number: 128,
+            url: URL(string: "https://github.com/jhzl1/rocky/pull/128")!,
             isDraft: isDraft,
             isMerged: isMerged,
             baseRefName: "development",
@@ -99,14 +99,14 @@ struct ChecksPresentationTests {
         }
         #expect(DeploymentStatus.deploying.word == "Deploying")
 
-        let vercel = PullRequestDeployment(environment: "Preview", state: "SUCCESS", url: URL(string: "https://celes-web-git-invoice.vercel.app"))
+        let vercel = PullRequestDeployment(environment: "Preview", state: "SUCCESS", url: URL(string: "https://acme-web-git-invoice.vercel.app"))
         #expect(vercel.isVercel)
-        #expect(vercel.displayName == "celes-web-git-invoice")
+        #expect(vercel.displayName == "acme-web-git-invoice")
         let storybook = PullRequestDeployment(environment: "storybook", state: "SUCCESS", url: URL(string: "https://storybook.example.dev"))
         #expect(!storybook.isVercel)
         #expect(storybook.displayName == "storybook")
 
-        let check = PullRequestCheck(name: "Vercel – celes-web", state: .passed, url: URL(string: "https://vercel.com/celes/web/abc"))
+        let check = PullRequestCheck(name: "Vercel – acme-web", state: .passed, url: URL(string: "https://vercel.com/acme/web/abc"))
         #expect(check.isVercel)
         #expect(!PullRequestCheck(name: "unit", state: .passed, url: URL(string: "https://github.com/jhzl1/rocky/actions/runs/1")).isVercel)
     }
@@ -121,7 +121,7 @@ struct ChecksPresentationTests {
             PullRequestCheck(name: "ci/circleci", state: .failed, url: URL(string: "https://circleci.com/gh/jhzl1/rocky/12")),
         ]
         #expect(pr(checks: checks).failedWorkflowRunIds == [901, 903])
-        #expect(pr().checksURL == URL(string: "https://github.com/jhzl1/rocky/pull/4525/checks"))
+        #expect(pr().checksURL == URL(string: "https://github.com/jhzl1/rocky/pull/128/checks"))
     }
 
     @Test func relativeAgeReadsSecondsMinutesHoursAndDays() {
@@ -163,7 +163,7 @@ struct ChecksPresentationTests {
         #expect(panel.shownPullRequest == nil)
 
         panel.snapshot = PullRequestSnapshot(repository: RepositorySettings(id: "R_1"), pullRequest: pr())
-        #expect(panel.shownPullRequest?.number == 4525)
+        #expect(panel.shownPullRequest?.number == 128)
     }
 
     /// PR-05's labels: the button's, its confirmation's, the menu's items and second lines, and the tooltip.

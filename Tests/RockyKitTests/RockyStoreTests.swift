@@ -10,7 +10,7 @@ struct RockyStoreTests {
         let store = try RockyStore.inMemory()
         var repo = Repo(name: "app", path: "/dev/app", createdAt: day)
         try store.add(repo)
-        repo.claudeConfigDir = "/Users/me/.claude-celes"
+        repo.claudeConfigDir = "/Users/me/.claude-work"
         try store.update(repo)
         #expect(try store.repos() == [repo])
     }
@@ -19,9 +19,9 @@ struct RockyStoreTests {
         let store = try RockyStore.inMemory()
         var repo = Repo(name: "app", path: "/dev/app", createdAt: day)
         try store.add(repo)
-        repo.linkedPaths = "apps/api-core/.venv\n.vscode/*"
+        repo.linkedPaths = "apps/api/.venv\n.vscode/*"
         try store.update(repo)
-        #expect(try store.repos().first?.linkedPaths == "apps/api-core/.venv\n.vscode/*")
+        #expect(try store.repos().first?.linkedPaths == "apps/api/.venv\n.vscode/*")
     }
 
     @Test func rejectsTheSameRepoPathTwice() throws {
@@ -224,9 +224,9 @@ struct RockyStoreTests {
         let store = try RockyStore.inMemory()
         var repo = Repo(name: "app", path: "/dev/app", createdAt: day)
         try store.add(repo)
-        repo.githubLogin = "ocampos-biai"
+        repo.githubLogin = "work-user"
         try store.update(repo)
-        #expect(try store.repos().first?.githubLogin == "ocampos-biai")
+        #expect(try store.repos().first?.githubLogin == "work-user")
         repo.githubLogin = nil
         try store.update(repo)
         #expect(try store.repos().first?.githubLogin == nil)
@@ -234,8 +234,8 @@ struct RockyStoreTests {
 
     private func storedPullRequest() -> StoredPullRequest {
         StoredPullRequest(
-            number: 4525,
-            url: URL(string: "https://github.com/jhzl1/rocky/pull/4525")!,
+            number: 128,
+            url: URL(string: "https://github.com/jhzl1/rocky/pull/128")!,
             state: "OPEN",
             headerState: "checksFailing",
             checks: [
@@ -283,7 +283,7 @@ struct RockyStoreTests {
         try store.savePullRequest(storedPullRequest(), workspaceId: stale.id)
         let saved = try #require(try store.workspaces(repoId: repo.id).first)
         #expect(saved.name == "kyoto")
-        #expect(saved.storedPullRequest?.number == 4525)
+        #expect(saved.storedPullRequest?.number == 128)
     }
 
     // MARK: Review comments (M3)

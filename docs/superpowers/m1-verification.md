@@ -14,14 +14,14 @@ Tasks 1–11 were committed without compiling. The first `swift build` had no er
 
 ## Manual checklist
 
-The checklist was run against `~/Documents/dev/rentek/doculift`, not the personal repo the plan names.
+The checklist was run against `~/Documents/dev/acme/docs-portal`, not the personal repo the plan names.
 
 | # | Item | Result |
 | --- | --- | --- |
-| 1 | Add a repository | Pass: a "doculift" section appears. |
+| 1 | Add a repository | Pass: a "docs-portal" section appears. |
 | 2 | New Workspace | Pass: `bergen` and `bogota` created; output below. |
 | 3 | OpenCode chat | Not run. |
-| 4 | Claude Code chat | Fail at first, then pass. With no Claude instance set, the adapter used `~/.claude`, whose login had expired. With `~/.claude-rentek` the chat answers. No permission sheet: the instance runs in `bypassPermissions` mode. |
+| 4 | Claude Code chat | Fail at first, then pass. With no Claude instance set, the adapter used `~/.claude`, whose login had expired. With `~/.claude-client` the chat answers. No permission sheet: the instance runs in `bypassPermissions` mode. |
 | 5 | Claude instance from repo settings | Pass for a chat started after the change; output below. A chat already running kept the old instance (fixed, see below). |
 | 6 | Quit leaves no agent process | Pass: output below. Not confirmed that an agent was running when Rocky quit. |
 | 7 | Resume after reopening | Not run. |
@@ -30,10 +30,10 @@ The checklist was run against `~/Documents/dev/rentek/doculift`, not the persona
 Item 2:
 
 ```
-$ eza ~/Documents/dev/rentek/doculift-worktrees
+$ eza ~/Documents/dev/acme/docs-portal-worktrees
 bergen
 bogota
-$ git -C ~/Documents/dev/rentek/doculift branch --list 'rocky/*'
+$ git -C ~/Documents/dev/acme/docs-portal branch --list 'rocky/*'
 + rocky/bergen
 + rocky/bogota
 ```
@@ -41,8 +41,8 @@ $ git -C ~/Documents/dev/rentek/doculift branch --list 'rocky/*'
 Item 5 (the `printenv CLAUDE_CONFIG_DIR` prompt was not sent; the session file location shows which instance ran it):
 
 ```
-$ fd 776bf5db ~/.claude-rentek/projects
-/Users/jhzl/.claude-rentek/projects/-Users-jhzl-Documents-dev-rentek-doculift-worktrees-bogota/776bf5db-e2f9-44ef-98b5-a0e024a4f568.jsonl
+$ fd 776bf5db ~/.claude-client/projects
+/Users/jhzl/.claude-client/projects/-Users-jhzl-Documents-dev-acme-docs-portal-worktrees-bogota/776bf5db-e2f9-44ef-98b5-a0e024a4f568.jsonl
 ```
 
 Item 6:
@@ -55,8 +55,8 @@ $ pgrep -fl 'Rocky.app/Contents/MacOS/Rocky|claude-agent-acp|opencode acp'
 Item 8:
 
 ```
-Could not remove bergen: git worktree remove /Users/jhzl/Documents/dev/rentek/doculift-worktrees/bergen exited 128: fatal: '/Users/jhzl/Documents/dev/rentek/doculift-worktrees/bergen' contains modified or untracked files, use --force to delete it
-$ git -C ~/Documents/dev/rentek/doculift-worktrees/bergen status --porcelain
+Could not remove bergen: git worktree remove /Users/jhzl/Documents/dev/acme/docs-portal-worktrees/bergen exited 128: fatal: '/Users/jhzl/Documents/dev/acme/docs-portal-worktrees/bergen' contains modified or untracked files, use --force to delete it
+$ git -C ~/Documents/dev/acme/docs-portal-worktrees/bergen status --porcelain
 ?? .atl/
 ```
 

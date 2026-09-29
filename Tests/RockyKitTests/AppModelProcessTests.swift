@@ -192,11 +192,11 @@ struct AppModelProcessTests {
     /// repository's token as GH_TOKEN over the login shell's. gh itself never sees the shell's token, each token is
     /// fetched once, and none reaches the store.
     @Test func terminalsScriptsAndAgentsGetTheRepoAccountToken() async throws {
-        let gh = FakeGH(tokens: ["jhzl1": "gho_personal", "ocampos-biai": "gho_work"])
+        let gh = FakeGH(tokens: ["jhzl1": "gho_personal", "work-user": "gho_work"])
         let launches = LaunchBox()
         let remotes = FakeRemotes([
             "alpha": GitHubRepository(owner: "jhzl1", name: "alpha"),
-            "beta": GitHubRepository(owner: "ocampos-biai", name: "beta"),
+            "beta": GitHubRepository(owner: "work-user", name: "beta"),
         ])
         let model = try makeModel(
             launches: launches,
@@ -232,7 +232,7 @@ struct AppModelProcessTests {
         #expect(!gh.environments.isEmpty)
         #expect(gh.environments.allSatisfy { $0["GH_TOKEN"] == nil && $0["GITHUB_TOKEN"] == nil && $0["PATH"] != nil })
         #expect(gh.tokenCalls(for: "jhzl1") == 1)
-        #expect(gh.tokenCalls(for: "ocampos-biai") == 1)
+        #expect(gh.tokenCalls(for: "work-user") == 1)
         let stored = "\(try model.store.repos())\(try model.store.workspaces(repoId: alphaId))\(try model.store.workspaces(repoId: betaId))"
         #expect(!stored.contains("gho_"))
         await model.stopAllProcesses()
@@ -386,18 +386,18 @@ struct AppModelProcessTests {
         try writeTasks("""
         { "version": "2.0.0", "tasks": [
           { "label": "Open", "type": "shell", "command": "open ${file}" },
-          { "label": "Run: Web Client", "type": "shell", "command": "echo web", "dependsOn": "_Dev: Cleanup orphans" },
-          { "label": "_Dev: Cleanup orphans", "type": "shell", "command": "exit 4" }
+          { "label": "Run: Web", "type": "shell", "command": "echo web", "dependsOn": "_Dev: Stop stray processes" },
+          { "label": "_Dev: Stop stray processes", "type": "shell", "command": "exit 4" }
         ] }
         """, in: model, repoId: repoId)
         #expect(await model.runTask(workspaceId: workspace.id, label: "Open") { _ in nil } == .invalid(.unsupportedVariable(task: "Open", variable: "${file}")))
         #expect(model.existingProcesses(for: workspace.id)?.tasks.isEmpty != false)
 
-        let outcome = await model.runTask(workspaceId: workspace.id, label: "Run: Web Client") { _ in nil }
+        let outcome = await model.runTask(workspaceId: workspace.id, label: "Run: Web") { _ in nil }
         let cleanup = try #require(model.existingProcesses(for: workspace.id)?.tasks.first)
-        #expect(outcome == .failed(dependency: "_Dev: Cleanup orphans", process: cleanup.id))
+        #expect(outcome == .failed(dependency: "_Dev: Stop stray processes", process: cleanup.id))
         #expect(cleanup.state == .exited(4))
-        #expect(model.existingProcesses(for: workspace.id)?.tasks.map(\.title) == ["_Dev: Cleanup orphans"])
+        #expect(model.existingProcesses(for: workspace.id)?.tasks.map(\.title) == ["_Dev: Stop stray processes"])
     }
 
     @Test func rejectsInvalidVariableNames() async throws {
@@ -430,7 +430,7 @@ struct AppModelProcessTests {
     /// A workspace of a repository with its own Claude instance, and a Claude Code conversation in it.
     private func claudeConversation(_ model: AppModel) async throws -> (workspace: Workspace, conversationId: String) {
         let repoId = try await addRepo(model)
-        await model.setClaudeConfigDir(repoId: repoId, "/Users/me/.claude-celes")
+        await model.setClaudeConfigDir(repoId: repoId, "/Users/me/.claude-work")
         await model.createWorkspace(repoId: repoId)
         let workspace = try #require(model.workspaces[repoId]?.first)
         try #require(await model.newConversation(workspace: workspace, agent: .claude) != nil)
@@ -457,7 +457,7 @@ struct AppModelProcessTests {
         let resolved = try #require(realpath(workspace.path, nil))
         let worktree = String(cString: resolved)
         free(resolved)
-        #expect(session.outputText.contains("count=<1> args=</mcp extra> config=</Users/me/.claude-celes> cwd=<\(worktree)> update=<1>"))
+        #expect(session.outputText.contains("count=<1> args=</mcp extra> config=</Users/me/.claude-work> cwd=<\(worktree)> update=<1>"))
         #expect(session.state.isRunning)
 
         session.send("\n")

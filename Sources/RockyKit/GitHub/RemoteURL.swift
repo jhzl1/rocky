@@ -6,7 +6,7 @@ public struct RemoteURL: Equatable, Sendable {
     public let host: String
     public let owner: String
     public let name: String
-    /// Reached over SSH, so `host` may be an alias of `~/.ssh/config` (`github-celes`).
+    /// Reached over SSH, so `host` may be an alias of `~/.ssh/config` (`github-work`).
     public let isSSH: Bool
 
     public init(host: String, owner: String, name: String, isSSH: Bool) {

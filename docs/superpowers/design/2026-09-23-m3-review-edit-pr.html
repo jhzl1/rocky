@@ -992,11 +992,11 @@ export function writeDocument(file: string) {
 `;
   const OPENAPI_AGENT = OPENAPI_V1.replace('    operationId: route.name,\n', '    operationId: uniqueId(route),\n    summary: route.summary ?? route.name,\n');
   const F = (path, status, committed, base, current) => ({ path, status, committed, base, current });
-  const repos = { celes: { name: 'celes-platform', color: '#4C7BD9', login: 'jhzl1' }, veritas: { name: 'veritas', color: '#8E6BE0', login: 'jhzl1' }, doculift: { name: 'doculift', color: '#3A9C8C', login: 'jhzl1' } };
+  const repos = { acme: { name: 'acme-platform', color: '#4C7BD9', login: 'jhzl1' }, ledger: { name: 'ledger', color: '#8E6BE0', login: 'jhzl1' }, 'docs-portal': { name: 'docs-portal', color: '#3A9C8C', login: 'jhzl1' } };
   const conv = (id, agent, title, items) => ({ id, agent, title, items });
   const it = (kind, text, extra = {}) => ({ id: uid(), kind, text, ...extra });
   const workspaces = [
-    { id: 'w1', repo: 'celes', name: 'tokyo', branch: 'jhzl/openapi-export', baseBranch: 'main', port: 41000, title: 'OpenAPI export for providers',
+    { id: 'w1', repo: 'acme', name: 'tokyo', branch: 'jhzl/openapi-export', baseBranch: 'main', port: 41000, title: 'OpenAPI export for providers',
       files: [
         F('src/openapi.ts', 'M', false, OPENAPI_BASE, OPENAPI_V1),
         F('test/openapi.test.ts', 'A', false, null, `import { describe, expect, it } from "vitest";
@@ -1019,14 +1019,14 @@ describe("buildDocument", () => {
 ];
 `),
         F('package.json', 'M', true, `{
-  "name": "celes-platform",
+  "name": "acme-platform",
   "scripts": {
     "dev": "vite",
     "test": "vitest"
   }
 }
 `, `{
-  "name": "celes-platform",
+  "name": "acme-platform",
   "scripts": {
     "dev": "vite",
     "test": "vitest",
@@ -1048,13 +1048,13 @@ Use /v1/providers.xml for the list.
         it('agent', 'Done. `buildDocument()` now emits OpenAPI 3.1 with an operation per method, and the new test checks the version and that paths exist.'),
         it('footer', '', { agent: 'claude', duration: '1m 4s', time: '4:02 PM' }),
       ])] },
-    { id: 'w2', repo: 'celes', name: 'lima', branch: 'jhzl/invoice-rounding', baseBranch: 'main', port: 41010, title: 'Fix invoice rounding', needsYou: true,
+    { id: 'w2', repo: 'acme', name: 'lima', branch: 'jhzl/invoice-rounding', baseBranch: 'main', port: 41010, title: 'Fix invoice rounding', needsYou: true,
       files: [F('src/billing/round.ts', 'M', false, `export const round = (n) => Math.round(n * 100) / 100;
 `, `export const round = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 `)], pr: null,
       convs: [conv('c3', 'claude', 'Fix invoice rounding', [it('user', 'Round invoice totals half-up to two decimals.'), it('agent', 'The change is in. I need permission to run `pnpm test billing` to check it.')])] },
-    { id: 'w3', repo: 'celes', name: 'oslo', branch: 'jhzl/oslo', baseBranch: 'main', port: 41020, title: null, files: [], pr: null, convs: [conv('c8', 'claude', null, [])] },
-    { id: 'w4', repo: 'veritas', name: 'quito', branch: 'jhzl/list-prs', baseBranch: 'main', port: 41030, title: 'List repo PRs by author',
+    { id: 'w3', repo: 'acme', name: 'oslo', branch: 'jhzl/oslo', baseBranch: 'main', port: 41020, title: null, files: [], pr: null, convs: [conv('c8', 'claude', null, [])] },
+    { id: 'w4', repo: 'ledger', name: 'quito', branch: 'jhzl/list-prs', baseBranch: 'main', port: 41030, title: 'List repo PRs by author',
       files: [F('src/prs.ts', 'M', true, `export async function listPrs(repo) {
   return fetchPrs(repo);
 }
@@ -1068,7 +1068,7 @@ Use /v1/providers.xml for the list.
         { name: 'build', state: 'success' }, { name: 'typecheck', state: 'success' }, { name: 'e2e / webkit', state: 'running' },
       ] },
       convs: [conv('c4', 'claude', 'List repo PRs by author', [it('user', 'List the open pull requests in this repo grouped by author.'), it('agent', 'Done: `prs:list` prints them grouped by author, newest first.')])] },
-    { id: 'w5', repo: 'veritas', name: 'bergen', branch: 'jhzl/acp-handshake', baseBranch: 'main', port: 41040, title: 'Refactor ACP handshake', unread: true,
+    { id: 'w5', repo: 'ledger', name: 'bergen', branch: 'jhzl/acp-handshake', baseBranch: 'main', port: 41040, title: 'Refactor ACP handshake', unread: true,
       files: [F('src/acp.ts', 'M', false, `await connection.initialize();
 `, `try {
   await connection.initialize();
@@ -1077,7 +1077,7 @@ Use /v1/providers.xml for the list.
 }
 `)], pr: null,
       convs: [conv('c5', 'claude', 'Refactor ACP handshake', [it('user', 'Retry the ACP handshake once when the adapter exits during initialize.'), it('agent', 'The handshake now retries once.')])] },
-    { id: 'w6', repo: 'doculift', name: 'cairo', branch: 'jhzl/scanned-invoices', baseBranch: 'main', port: 41080, title: 'Parse scanned invoices', files: [],
+    { id: 'w6', repo: 'docs-portal', name: 'cairo', branch: 'jhzl/scanned-invoices', baseBranch: 'main', port: 41080, title: 'Parse scanned invoices', files: [],
       pr: { number: 88, state: 'merged', updated: Date.now() - 600000, checks: [{ name: 'test', state: 'success' }] },
       convs: [conv('c10', 'claude', 'Parse scanned invoices', [it('user', 'Parse the scanned invoices in fixtures/ and extract their totals.'), it('agent', 'Totals match for every fixture.')])] },
   ];
@@ -1089,16 +1089,16 @@ Use /v1/providers.xml for the list.
 
   // ---------- FIL: each repository's worktree (the files that are not changes) ----------
   const REPO_FILES = {
-    celes: ['.github/workflows/ci.yml', '.gitignore', 'README.md', 'package.json', 'package-lock.json', 'tsconfig.json', 'docs/old-api.md', 'scripts/openapi.ts',
+    acme: ['.github/workflows/ci.yml', '.gitignore', 'README.md', 'package.json', 'package-lock.json', 'tsconfig.json', 'docs/old-api.md', 'scripts/openapi.ts',
       'src/openapi.ts', 'src/server.ts', 'src/schemas.ts', 'src/routes/index.ts', 'src/routes/providers.ts', 'src/billing/round.ts',
       'assets/logo.png', 'assets/fonts/Inter.woff2', 'data/fixtures.sqlite'],
-    veritas: ['README.md', 'package.json', 'tsconfig.json', 'src/index.ts', 'src/prs.ts', 'src/acp.ts', 'test/prs.test.ts'],
-    doculift: ['README.md', 'pyproject.toml', 'src/parse.py', 'fixtures/invoice-001.pdf'],
+    ledger: ['README.md', 'package.json', 'tsconfig.json', 'src/index.ts', 'src/prs.ts', 'src/acp.ts', 'test/prs.test.ts'],
+    'docs-portal': ['README.md', 'pyproject.toml', 'src/parse.py', 'fixtures/invoice-001.pdf'],
   };
-  const IGNORED = { celes: ['.env', 'dist/openapi.json', 'node_modules/vitest/package.json', 'node_modules/zod/package.json'], veritas: ['node_modules/typescript/package.json'], doculift: ['.venv/pyvenv.cfg'] };
+  const IGNORED = { acme: ['.env', 'dist/openapi.json', 'node_modules/vitest/package.json', 'node_modules/zod/package.json'], ledger: ['node_modules/typescript/package.json'], 'docs-portal': ['.venv/pyvenv.cfg'] };
   const SIZES = { 'package-lock.json': 3.4e6, 'data/fixtures.sqlite': 48e6, 'assets/logo.png': 24e3, 'assets/fonts/Inter.woff2': 112e3, 'fixtures/invoice-001.pdf': 180e3 };
   const CONTENT = {
-    'README.md': '# celes-platform\n\nProvider onboarding and billing.\n\n## Develop\n\n    npm install\n    npm run dev\n',
+    'README.md': '# acme-platform\n\nProvider onboarding and billing.\n\n## Develop\n\n    npm install\n    npm run dev\n',
     'src/server.ts': 'import { createServer } from "node:http";\nimport { routes } from "./routes";\n\nconst server = createServer((req, res) => {\n  const route = routes.find((r) => r.path === req.url);\n  res.end(route ? "ok" : "not found");\n});\n\nserver.listen(Number(process.env.PORT ?? 3000));\n',
     'src/schemas.ts': 'import type { Route } from "./routes";\n\nexport function schemaFor(route: Route) {\n  return { type: "object", title: route.name };\n}\n',
     'src/routes/index.ts': 'import { providers } from "./providers";\n\nexport type Route = { name: string; method: string; path: string };\nexport const routes: Route[] = [...providers];\n',
@@ -1106,7 +1106,7 @@ Use /v1/providers.xml for the list.
     '.gitignore': 'node_modules/\ndist/\n.env\n',
     '.github/workflows/ci.yml': 'name: CI\non: [push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: npm ci && npm test\n',
     'scripts/openapi.ts': 'import { writeDocument } from "../src/openapi";\n\nwriteDocument("dist/openapi.json");\n',
-    'package-lock.json': '{\n  "name": "celes-platform",\n  "lockfileVersion": 3,\n  "requires": true,\n  "packages": {\n    "": {\n      "name": "celes-platform",\n      "devDependencies": {\n        "vitest": "^3.2.0"\n      }\n    },\n    …\n',
+    'package-lock.json': '{\n  "name": "acme-platform",\n  "lockfileVersion": 3,\n  "requires": true,\n  "packages": {\n    "": {\n      "name": "acme-platform",\n      "devDependencies": {\n        "vitest": "^3.2.0"\n      }\n    },\n    …\n',
   };
   const kindOf = (p) => {
     const ext = (p.split('.').pop() || '').toLowerCase();

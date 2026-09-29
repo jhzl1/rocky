@@ -8,10 +8,6 @@ import Testing
 /// `FD_CLOEXEC`, as the pipes and files Foundation and SwiftTerm open are, and has the child list `/dev/fd`.
 @MainActor
 struct ChildDescriptorsTests {
-    /// What a child that inherited nothing lists: 0, 1 and 2, and the two descriptors `ls` opens itself to read the
-    /// folder. A child spawned with `POSIX_SPAWN_CLOEXEC_DEFAULT`, which keeps only the 0, 1 and 2 it is given, lists
-    /// the same.
-    private static let ownOnly: [Int32] = [0, 1, 2, 3, 4]
     /// "end" comes after the listing, so a pseudo-terminal's output is known to be whole.
     private static let listing = "/bin/ls -1 /dev/fd; printf end"
     /// No `.zshenv` to read in a temporary HOME: the user's could open descriptors of its own.
@@ -28,21 +24,18 @@ struct ChildDescriptorsTests {
         return moved
     }
 
-    /// A descriptor another thread opens between the marking and the fork still reaches a pseudo-terminal's child
-    /// (`FileDescriptors.closeAllOnExec()`), and a parallel test run opens pipes all the time, two for each git run: a
-    /// listing with one more than `ownOnly` is taken again, up to three times. The canary, open since before the first
-    /// spawn, must never be there.
+    /// The canary, open since before the spawn and without `FD_CLOEXEC`, must never reach the child: that is what the
+    /// fix proves, and before it every child listed it. The listing must also hold the child's own 0, 1 and 2. It is not
+    /// required to be exactly those and the two `ls` opens itself (0 to 4, what a `POSIX_SPAWN_CLOEXEC_DEFAULT` child
+    /// lists): a descriptor another thread opens between the marking and the fork still reaches a pseudo-terminal's
+    /// child (`FileDescriptors.closeAllOnExec()`), and a parallel test run opens pipes all the time, two for each git
+    /// run, so an exact listing failed now and then with nothing wrong (2026-09-29).
     private func expectNothingInherited(_ list: () async throws -> [Int32]) async throws {
         let canary = try openCanary()
         defer { canary.forEach { close($0) } }
-        var seen: [Int32] = []
-        for _ in 1...3 {
-            seen = try await list()
-            let leaked = seen.contains(where: canary.contains)
-            #expect(!leaked, "the canary \(canary) reached the child, which lists \(seen)")
-            if leaked || seen == Self.ownOnly { break }
-        }
-        #expect(seen == Self.ownOnly)
+        let seen = try await list()
+        #expect(!seen.contains(where: canary.contains), "the canary \(canary) reached the child, which lists \(seen)")
+        #expect(Set([0, 1, 2]).isSubset(of: Set(seen)), "the child lists \(seen), without its own 0, 1 and 2")
     }
 
     /// The numbers of `ls -1`'s lines, from a pipe ("\n"), a pseudo-terminal ("\r\n") or one line of them (" ").

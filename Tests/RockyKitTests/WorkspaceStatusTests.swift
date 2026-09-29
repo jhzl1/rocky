@@ -9,8 +9,8 @@ struct WorkspaceStatusTests {
         checks: [CheckState] = []
     ) -> StoredPullRequest {
         StoredPullRequest(
-            number: 4525,
-            url: URL(string: "https://github.com/jhzl1/rocky/pull/4525")!,
+            number: 128,
+            url: URL(string: "https://github.com/jhzl1/rocky/pull/128")!,
             state: state,
             headerState: headerState.rawValue,
             checks: checks.enumerated().map { PullRequestCheck(name: "check \($0.offset)", state: $0.element) },

@@ -7,7 +7,7 @@ public struct Repo: Codable, Sendable, Equatable, Identifiable, FetchableRecord,
     public var id: String
     public var name: String
     public var path: String
-    /// Claude Code instance for this repo's agents (for example `~/.claude-celes`); nil uses Claude's default.
+    /// Claude Code instance for this repo's agents (for example `~/.claude-work`); nil uses Claude's default.
     public var claudeConfigDir: String?
     /// Scripts from Rocky's repo settings. A `rocky.json` at a workspace root replaces all of them there.
     public var setupScript: String?

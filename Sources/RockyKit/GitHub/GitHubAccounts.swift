@@ -94,7 +94,7 @@ public final class GitHubAccounts {
     /// `readProbeOrder(owner:logins:active:)` that `canRead` says can read the repository; else gh's active account.
     /// `canRead` holds the probe's answers (`GitHubClient.canRead(repository:)`); a login missing from it has no
     /// answer (offline, rate limited) and is skipped. An organization's repository matches no login, and the active
-    /// account may not see it (user report, 2026-09-23: celes-app's repository, 404 for the active jhzl1).
+    /// account may not see it (user report, 2026-09-23: acme-org's repository, 404 for the active jhzl1).
     public nonisolated static func defaultLogin(
         owner: String,
         logins: [String],

@@ -75,7 +75,7 @@ private struct HeaderLabel: View {
     }
 }
 
-/// HDR-03: two segments in a 24-point outline, radius 5. "#4525" shows the Checks tab, Rocky's view of the pull
+/// HDR-03: two segments in a 24-point outline, radius 5. "#128" shows the Checks tab, Rocky's view of the pull
 /// request, and ⌘-click opens it on GitHub; ↗ opens it on GitHub. Its text and border follow the header: `success` in
 /// the in-sync group, `merged` once merged.
 struct PullRequestPill: View {

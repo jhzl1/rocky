@@ -222,7 +222,7 @@ final class RoutedGitHubProtocol: URLProtocol {
 
 /// GitHub's answers for the pull request tests of `AppModelTests`.
 enum GitHubStubs {
-    /// `PR-01`'s answer: the branch's pull request #4525 of jhzl1/app against `main` (open unless `state` says
+    /// `PR-01`'s answer: the branch's pull request #128 of jhzl1/app against `main` (open unless `state` says
     /// MERGED), with these `statusCheckRollup` nodes.
     static func snapshot(
         state: String = "OPEN",
@@ -232,7 +232,7 @@ enum GitHubStubs {
         Data("""
             {"data":{"repository":{"id":"R_1","squashMergeAllowed":true,"rebaseMergeAllowed":true,"mergeCommitAllowed":true,
             "viewerDefaultMergeMethod":"SQUASH","defaultBranchRef":{"name":"main"},
-            "pullRequests":{"nodes":[{"id":"PR_1","number":4525,"url":"https://github.com/jhzl1/app/pull/4525",
+            "pullRequests":{"nodes":[{"id":"PR_1","number":128,"url":"https://github.com/jhzl1/app/pull/128",
             "title":"Retry uploads","body":"With backoff.","isDraft":\(isDraft),"state":"\(state)","mergedAt":null,"baseRefName":"main",
             "headRefName":"rocky/tokyo","headRefOid":"","mergeable":"MERGEABLE","mergeStateStatus":"BLOCKED",
             "reviewDecision":"REVIEW_REQUIRED","canBeRebased":true,"reviewRequests":{"totalCount":0},"autoMergeRequest":null,
@@ -374,12 +374,12 @@ struct AppModelTests {
         let repo = try await GitFixture.localRepoOffMain(in: try Fixtures.temporaryDirectory("repos"))
         await model.addRepo(at: repo)
         let repoId = try #require(model.repos.first?.id)
-        await model.setClaudeConfigDir(repoId: repoId, "/Users/me/.claude-celes")
+        await model.setClaudeConfigDir(repoId: repoId, "/Users/me/.claude-work")
         await model.createWorkspace(repoId: repoId)
         let workspace = try #require(model.workspaces[repoId]?.first)
 
         let chat = try #require(await model.openChat(workspace: workspace, agent: .claude))
-        #expect(launches.last?["CLAUDE_CONFIG_DIR"] == "/Users/me/.claude-celes")
+        #expect(launches.last?["CLAUDE_CONFIG_DIR"] == "/Users/me/.claude-work")
         #expect(chat.state == .ready)
         async let sending: Void = chat.send("hi")
         try await answerNextPermission(chat)
@@ -409,12 +409,12 @@ struct AppModelTests {
         let chat = try #require(await model.openChat(workspace: workspace, agent: .claude))
         #expect(launches.last?["CLAUDE_CONFIG_DIR"] == nil)
 
-        await model.setClaudeConfigDir(repoId: repoId, "/Users/me/.claude-rentek")
+        await model.setClaudeConfigDir(repoId: repoId, "/Users/me/.claude-client")
         #expect(chat.state == .stopped("Stopped"))
         // The conversation on screen reopens at once, with the new instance.
         let reopened = try #require(model.existingChat(workspaceId: workspace.id))
         #expect(reopened !== chat)
-        #expect(launches.last?["CLAUDE_CONFIG_DIR"] == "/Users/me/.claude-rentek")
+        #expect(launches.last?["CLAUDE_CONFIG_DIR"] == "/Users/me/.claude-client")
         await model.stopAllAgents()
     }
 
@@ -429,7 +429,7 @@ struct AppModelTests {
         _ = try #require(await model.openChat(workspace: workspace, agent: .claude))
         model.selectedWorkspaceId = nil
 
-        await model.setClaudeConfigDir(repoId: repoId, "/Users/me/.claude-rentek")
+        await model.setClaudeConfigDir(repoId: repoId, "/Users/me/.claude-client")
         #expect(model.existingChat(workspaceId: workspace.id) == nil)
         await model.stopAllAgents()
     }
@@ -776,10 +776,10 @@ struct AppModelTests {
     /// AGM-04: a repository with its own Claude instance keeps that instance's list.
     @Test func claudesModelsAreKeptUnderTheRepositorysInstance() async throws {
         let (model, workspace) = try await emptyWorkspace(store: try RockyStore.inMemory())
-        await model.setClaudeConfigDir(repoId: workspace.repoId, "/Users/me/.claude-celes")
+        await model.setClaudeConfigDir(repoId: workspace.repoId, "/Users/me/.claude-work")
         _ = try #require(await model.openChat(workspace: workspace, agent: .claude))
         #expect(model.knownModels(agent: .claude, workspaceId: workspace.id)?.map(\.value) == ["default", "opus"])
-        #expect(model.modelCatalog.models(agent: .claude, claudeInstance: "/Users/me/.claude-celes")?.count == 2)
+        #expect(model.modelCatalog.models(agent: .claude, claudeInstance: "/Users/me/.claude-work")?.count == 2)
         #expect(model.modelCatalog.models(agent: .claude, claudeInstance: nil) == nil)
         await model.stopAllAgents()
     }
@@ -984,7 +984,7 @@ struct AppModelTests {
     @Test func repoWithoutClaudeInstanceNeverInheritsOne() async throws {
         let launches = LaunchBox()
         let model = try makeModel(capture: {
-            GitFixture.environment.merging(["CLAUDE_CONFIG_DIR": "/Users/me/.claude-celes"]) { _, new in new }
+            GitFixture.environment.merging(["CLAUDE_CONFIG_DIR": "/Users/me/.claude-work"]) { _, new in new }
         }, launches: launches)
         await model.bootstrap()
         let repo = try await GitFixture.localRepoOffMain(in: try Fixtures.temporaryDirectory("repos"))
@@ -1005,8 +1005,8 @@ struct AppModelTests {
     @Test func githubLoginDefaultsToTheOwnerElseTheActiveAccount() async throws {
         let gh = FakeGH()
         let remotes = FakeRemotes([
-            "alpha": GitHubRepository(owner: "ocampos-biai", name: "alpha"),
-            "beta": GitHubRepository(owner: "celes-dev", name: "beta"),
+            "alpha": GitHubRepository(owner: "work-user", name: "alpha"),
+            "beta": GitHubRepository(owner: "acme-dev", name: "beta"),
         ])
         let model = try makeModel(gh: gh, remotes: remotes)
         await model.bootstrap()
@@ -1018,14 +1018,14 @@ struct AppModelTests {
         let beta = try #require(model.repos.first { $0.name == "beta" })
         let gamma = try #require(model.repos.first { $0.name == "gamma" })
 
-        #expect(await model.githubLogin(for: alpha) == "ocampos-biai")
+        #expect(await model.githubLogin(for: alpha) == "work-user")
         #expect(await model.githubLogin(for: beta) == "jhzl1")
         #expect(await model.githubLogin(for: gamma) == nil)
-        #expect(await model.githubRepository(for: alpha) == GitHubRepository(owner: "ocampos-biai", name: "alpha"))
+        #expect(await model.githubRepository(for: alpha) == GitHubRepository(owner: "work-user", name: "alpha"))
 
-        model.setGitHubLogin(repoId: beta.id, "ocampos-biai")
-        #expect(model.repo(id: beta.id)?.githubLogin == "ocampos-biai")
-        #expect(await model.githubLogin(for: beta) == "ocampos-biai")
+        model.setGitHubLogin(repoId: beta.id, "work-user")
+        #expect(model.repo(id: beta.id)?.githubLogin == "work-user")
+        #expect(await model.githubLogin(for: beta) == "work-user")
         #expect(await model.defaultGitHubLogin(for: beta) == "jhzl1")
 
         // "Automatic" stores nil and goes back to the default.
@@ -1037,33 +1037,33 @@ struct AppModelTests {
         #expect(remotes.lookups.sorted() == ["alpha", "beta", "gamma"])
     }
 
-    /// ACC-01 for an organization's repository (user report, 2026-09-23): celes-app is no login, and the active jhzl1
-    /// gets a 404, so the default is ocampos-biai, the account that can read it. Each account is asked once per launch,
+    /// ACC-01 for an organization's repository (user report, 2026-09-23): acme-org is no login, and the active jhzl1
+    /// gets a 404, so the default is work-user, the account that can read it. Each account is asked once per launch,
     /// the active one first.
     @Test func organizationRepositoryDefaultsToTheAccountThatCanReadIt() async throws {
         let (personal, personalRoute) = RoutedGitHubProtocol.route { _ in .init(status: 404) }
         let (work, workRoute) = RoutedGitHubProtocol.route { _ in .init(status: 200) }
-        let gh = FakeGH(tokens: ["jhzl1": personal, "ocampos-biai": work])
-        let remotes = FakeRemotes(["celes-platform": GitHubRepository(owner: "celes-app", name: "celes-platform")])
+        let gh = FakeGH(tokens: ["jhzl1": personal, "work-user": work])
+        let remotes = FakeRemotes(["acme-platform": GitHubRepository(owner: "acme-org", name: "acme-platform")])
         let model = try makeModel(gh: gh, remotes: remotes, githubSession: RoutedGitHubProtocol.session())
         await model.bootstrap()
-        await model.addRepo(at: try await GitFixture.localRepoOffMain(in: try Fixtures.temporaryDirectory("repos"), name: "celes-platform"))
+        await model.addRepo(at: try await GitFixture.localRepoOffMain(in: try Fixtures.temporaryDirectory("repos"), name: "acme-platform"))
         let repo = try #require(model.repos.first)
 
-        #expect(await model.defaultGitHubLogin(for: repo) == "ocampos-biai")
-        #expect(await model.githubLogin(for: repo) == "ocampos-biai")
+        #expect(await model.defaultGitHubLogin(for: repo) == "work-user")
+        #expect(await model.githubLogin(for: repo) == "work-user")
 
-        #expect(personalRoute.requests.map { $0.request.url?.path } == ["/repos/celes-app/celes-platform"])
-        #expect(workRoute.requests.map { $0.request.url?.path } == ["/repos/celes-app/celes-platform"])
+        #expect(personalRoute.requests.map { $0.request.url?.path } == ["/repos/acme-org/acme-platform"])
+        #expect(workRoute.requests.map { $0.request.url?.path } == ["/repos/acme-org/acme-platform"])
         let tokenLogins = gh.calls.filter { $0.starts(with: ["auth", "token"]) }.compactMap { call in
             call.firstIndex(of: "--user").map { call[$0 + 1] }
         }
-        #expect(tokenLogins == ["jhzl1", "ocampos-biai"])
+        #expect(tokenLogins == ["jhzl1", "work-user"])
     }
 
     /// ENV-01: an account change applies to new processes; the running agent keeps its token.
     @Test func accountChangeDoesNotStopRunningAgents() async throws {
-        let gh = FakeGH(tokens: ["jhzl1": "gho_personal", "ocampos-biai": "gho_work"])
+        let gh = FakeGH(tokens: ["jhzl1": "gho_personal", "work-user": "gho_work"])
         let launches = LaunchBox()
         let model = try makeModel(launches: launches, gh: gh, remotes: FakeRemotes(["app": GitHubRepository(owner: "jhzl1", name: "app")]))
         await model.bootstrap()
@@ -1074,7 +1074,7 @@ struct AppModelTests {
         let chat = try #require(await model.openChat(workspace: workspace, agent: .claude))
         #expect(launches.last?["GH_TOKEN"] == "gho_personal")
 
-        model.setGitHubLogin(repoId: repoId, "ocampos-biai")
+        model.setGitHubLogin(repoId: repoId, "work-user")
         #expect(chat.state == .ready)
         #expect(model.existingChat(workspaceId: workspace.id) === chat)
 
@@ -1356,7 +1356,7 @@ struct AppModelTests {
         await sendingAll
 
         #expect(chat.items.last(where: { $0.kind == .user })?.text == """
-            Review comments on pull request #4525:
+            Review comments on pull request #128:
 
             1. ana on src/ocr/retry.ts, line 42
             > Use exponential backoff instead of a fixed delay.
@@ -1381,7 +1381,7 @@ struct AppModelTests {
         await sendingOne
 
         #expect(chat.items.last(where: { $0.kind == .user })?.text == """
-            Review comments on pull request #4525:
+            Review comments on pull request #128:
 
             1. ana (conversation)
             > Please add a test for the timeout path.
@@ -2739,10 +2739,10 @@ struct AppModelTests {
 
     // MARK: GitHub links (GHL-01…GHL-06, M2.9)
 
-    /// GitHub's answers for the link tests: the full issue #4573; the full pull request `number`, from `head` into
-    /// `release`, a fork's for #4402; the pull request panel's snapshot for any other query; and `readable`'s answer to
+    /// GitHub's answers for the link tests: the full issue #212; the full pull request `number`, from `head` into
+    /// `release`, a fork's for #119; the pull request panel's snapshot for any other query; and `readable`'s answer to
     /// ACC-01's GET of the repository.
-    private static func linkReplies(head: String = "fix/test-pr-validation", readable: Bool = true) -> @Sendable (StubURLProtocol.Sent) -> StubURLProtocol.Reply {
+    private static func linkReplies(head: String = "fix/webhook-retry", readable: Bool = true) -> @Sendable (StubURLProtocol.Sent) -> StubURLProtocol.Reply {
         { sent in
             guard sent.request.url?.path == "/graphql" else { return .init(status: readable ? 200 : 404) }
             let query = sent.graphQL?.query ?? ""
@@ -2750,16 +2750,16 @@ struct AppModelTests {
             guard query.contains("comments(first: 100)") else { return .init(body: GitHubStubs.snapshot()) }
             if query.contains("issue(number: $number)") {
                 return .init(body: Data(#"""
-                    {"data":{"repository":{"issue":{"number":4573,"title":"Un filtro negativo de proveedor aplica también a los productos sin proveedor",
-                    "url":"https://github.com/jhzl1/app/issues/4573","state":"OPEN","stateReason":null,"createdAt":"2026-09-20T10:00:00Z",
+                    {"data":{"repository":{"issue":{"number":212,"title":"Search ignores filters on archived items",
+                    "url":"https://github.com/jhzl1/app/issues/212","state":"OPEN","stateReason":null,"createdAt":"2026-09-20T10:00:00Z",
                     "body":"Steps.","author":{"login":"jhzl1"},"labels":{"nodes":[]},"assignees":{"nodes":[]},
                     "comments":{"totalCount":1,"nodes":[{"author":{"login":"ana"},"createdAt":"2026-09-21T10:00:00Z","body":"Seen."}]}}}}}
                     """#.utf8))
             }
-            let fork = number == .number(4402)
+            let fork = number == .number(119)
             return .init(body: Data("""
-                {"data":{"repository":{"pullRequest":{"number":\(fork ? 4402 : 4536),"title":"Validate the PR comment flow",
-                "url":"https://github.com/jhzl1/app/pull/4536","state":"OPEN","isDraft":false,"headRefName":"\(head)",
+                {"data":{"repository":{"pullRequest":{"number":\(fork ? 119 : 131),"title":"Retry failed webhooks",
+                "url":"https://github.com/jhzl1/app/pull/131","state":"OPEN","isDraft":false,"headRefName":"\(head)",
                 "baseRefName":"release","isCrossRepository":\(fork),"createdAt":"2026-09-22T10:00:00Z","body":"",
                 "author":{"login":"jhzl1"},"labels":{"nodes":[]},"assignees":{"nodes":[]},"comments":{"totalCount":0,"nodes":[]}}}}}
                 """.utf8))
@@ -2858,16 +2858,16 @@ struct AppModelTests {
     /// GHL-04: an issue is fetched in full and written as its attachment, under the model's pasted files.
     @Test func linkingAnIssueWritesItsFile() async throws {
         let (model, workspace, _, route) = try await linkWorkspace()
-        let file = try await model.linkIssue(workspaceId: workspace.id, number: 4573)
+        let file = try await model.linkIssue(workspaceId: workspace.id, number: 212)
 
-        #expect(file.lastPathComponent == "[GITHUB]-4573.md")
+        #expect(file.lastPathComponent == "[GITHUB]-212.md")
         #expect(file.deletingLastPathComponent().deletingLastPathComponent().path == model.paths.pastedFiles.path)
         let text = try await Task.blocking { try String(contentsOf: file, encoding: .utf8) }.value
-        #expect(text.hasPrefix("# #4573 Un filtro negativo de proveedor aplica también a los productos sin proveedor\n"))
+        #expect(text.hasPrefix("# #212 Search ignores filters on archived items\n"))
         #expect(text.contains("### @ana, 2026-09-21\n\nSeen."))
         #expect(!text.contains("gho_test"))
         let full = route.requests.compactMap(\.graphQL).filter { $0.query.contains("issue(number: $number)") }
-        #expect(full.map(\.variables) == [["owner": "jhzl1", "name": "app", "number": 4573]])
+        #expect(full.map(\.variables) == [["owner": "jhzl1", "name": "app", "number": 212]])
         // Linking changes nothing in the worktree.
         #expect(model.workspace(id: workspace.id)?.branch == workspace.branch)
     }
@@ -2875,44 +2875,44 @@ struct AppModelTests {
     /// GHL-05: a branch only on origin is tracked, the workspace keeps its base, its own empty branch is deleted, and
     /// the file lists the commits the base lacks.
     @Test func linkingABranchSwitchesTheWorktreeAndDeletesTheOwnBranch() async throws {
-        let (model, workspace, _, _) = try await linkWorkspace(pushing: ["feat/look-and-feel-3"])
+        let (model, workspace, _, _) = try await linkWorkspace(pushing: ["feat/button-styles"])
         await model.fetchLinkBranches(workspaceId: workspace.id)
         let branches = try await model.linkBranches(workspaceId: workspace.id)
-        let remote = try #require(branches.branches.first { $0.name == "feat/look-and-feel-3" })
+        let remote = try #require(branches.branches.first { $0.name == "feat/button-styles" })
         #expect(remote.isRemoteOnly)
         #expect(branches.reason(for: remote) == nil)
         let own = try #require(branches.branches.first { $0.name == workspace.branch })
         #expect(branches.reason(for: own) == "Current branch")
 
         let file = try await model.linkBranch(workspaceId: workspace.id, branch: remote)
-        #expect(file.lastPathComponent == "[BRANCH]-feat-look-and-feel-3.md")
+        #expect(file.lastPathComponent == "[BRANCH]-feat-button-styles.md")
         let switched = try #require(model.workspace(id: workspace.id))
-        #expect(switched.branch == "feat/look-and-feel-3")
+        #expect(switched.branch == "feat/button-styles")
         #expect(switched.baseRef == "origin/trunk")
-        #expect(try await currentBranch(of: workspace) == "feat/look-and-feel-3")
+        #expect(try await currentBranch(of: workspace) == "feat/button-styles")
         #expect(await !hasLocalBranch(workspace.branch, in: workspace))
-        #expect(try model.store.workspaces(repoId: workspace.repoId).first?.branch == "feat/look-and-feel-3")
+        #expect(try model.store.workspaces(repoId: workspace.repoId).first?.branch == "feat/button-styles")
         let text = try await Task.blocking { try String(contentsOf: file, encoding: .utf8) }.value
-        #expect(text.hasPrefix("# feat/look-and-feel-3\n\n- Upstream: origin/feat/look-and-feel-3\n- Base: origin/trunk\n"))
+        #expect(text.hasPrefix("# feat/button-styles\n\n- Upstream: origin/feat/button-styles\n- Base: origin/trunk\n"))
         #expect(text.contains("## Commits not in origin/trunk (1)"))
-        #expect(text.contains(" Push feat/look-and-feel-3\n"))
+        #expect(text.contains(" Push feat/button-styles\n"))
     }
 
     /// GHL-05: a pull request switches to its head, fetched first, and its base becomes the workspace's, so Changes and
     /// new processes' ROCKY_DEFAULT_BRANCH follow.
     @Test func linkingAPullRequestSwitchesToItsHeadAndBase() async throws {
-        let (model, workspace, _, _) = try await linkWorkspace(pushing: ["fix/test-pr-validation", "release"])
-        let file = try await model.linkPullRequest(workspaceId: workspace.id, number: 4536)
+        let (model, workspace, _, _) = try await linkWorkspace(pushing: ["fix/webhook-retry", "release"])
+        let file = try await model.linkPullRequest(workspaceId: workspace.id, number: 131)
 
-        #expect(file.lastPathComponent == "[GITHUB]-PR-4536.md")
+        #expect(file.lastPathComponent == "[GITHUB]-PR-131.md")
         let switched = try #require(model.workspace(id: workspace.id))
-        #expect(switched.branch == "fix/test-pr-validation")
+        #expect(switched.branch == "fix/webhook-retry")
         #expect(switched.baseRef == "origin/release")
         #expect(model.environment(for: switched)["ROCKY_DEFAULT_BRANCH"] == "release")
-        #expect(try await currentBranch(of: workspace) == "fix/test-pr-validation")
+        #expect(try await currentBranch(of: workspace) == "fix/webhook-retry")
         #expect(await !hasLocalBranch(workspace.branch, in: workspace))
         let text = try await Task.blocking { try String(contentsOf: file, encoding: .utf8) }.value
-        #expect(text.contains("- Branch: fix/test-pr-validation → release\n"))
+        #expect(text.contains("- Branch: fix/webhook-retry → release\n"))
     }
 
     /// GHL-05's refusals, each at pick time, each leaving the worktree and the record as they were: a fork's pull
@@ -2925,7 +2925,7 @@ struct AppModelTests {
         let target = try #require(try await model.linkBranches(workspaceId: workspace.id).branches.first { $0.name == "feat/x" })
         #expect(await model.linkSwitchRefusal(workspaceId: workspace.id) == nil)
 
-        #expect(await linkError { _ = try await model.linkPullRequest(workspaceId: workspace.id, number: 4402) } == .fromFork)
+        #expect(await linkError { _ = try await model.linkPullRequest(workspaceId: workspace.id, number: 119) } == .fromFork)
 
         try await Task.blocking { try Data("draft\n".utf8).write(to: worktree.appendingPathComponent("notes.txt")) }.value
         #expect(await model.linkSwitchRefusal(workspaceId: workspace.id) == .uncommittedChanges)
@@ -2967,7 +2967,7 @@ struct AppModelTests {
         let (model, workspace) = try await emptyWorkspace(store: try RockyStore.inMemory())
         let folder = try Fixtures.temporaryDirectory("pasted")
         let issue = try await Task.blocking {
-            try LinkAttachments.write(("[GITHUB]-4573.md", "# #4573 Un filtro negativo de proveedor aplica también a los productos sin proveedor\n\n- State: open\n"), in: folder)
+            try LinkAttachments.write(("[GITHUB]-212.md", "# #212 Search ignores filters on archived items\n\n- State: open\n"), in: folder)
         }.value
         let chat = try #require(await model.openChat(workspace: workspace, agent: .claude))
         async let sending: Void = chat.send(PromptAttachment.marker, attachments: [issue])
@@ -2975,8 +2975,8 @@ struct AppModelTests {
         await sending
 
         try await waitUntil { model.conversations[workspace.id]?.first?.title != nil }
-        #expect(model.conversations[workspace.id]?.map(\.title) == ["#4573 Un filtro negativo de proveedor ap…"])
-        #expect(model.title(for: workspace) == ("#4573 Un filtro negativo de proveedor ap…", false))
+        #expect(model.conversations[workspace.id]?.map(\.title) == ["#212 Search ignores filters on archived …"])
+        #expect(model.title(for: workspace) == ("#212 Search ignores filters on archived …", false))
         await model.stopAllAgents()
     }
 

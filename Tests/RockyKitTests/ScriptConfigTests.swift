@@ -51,10 +51,10 @@ struct ScriptConfigTests {
     @Test func linksAreTheRepoSettingsAndTheFilesTogether() throws {
         let repo = Repo(name: "app", path: "/r/app", linkedPaths: ".venv\n  \n.vscode/*\n")
         let withFile = try ScriptConfigResolver.resolve(
-            workspace: try workspace(rockyJSON: #"{"links":[".vscode/*", " apps/api-core/celes-platform-*.json ", ""]}"#),
+            workspace: try workspace(rockyJSON: #"{"links":[".vscode/*", " apps/api/acme-platform-*.json ", ""]}"#),
             repo: repo
         )
-        #expect(withFile.links == [".venv", ".vscode/*", "apps/api-core/celes-platform-*.json"])
+        #expect(withFile.links == [".venv", ".vscode/*", "apps/api/acme-platform-*.json"])
         let withoutFile = try ScriptConfigResolver.resolve(workspace: try workspace(rockyJSON: nil), repo: repo)
         #expect(withoutFile.links == [".venv", ".vscode/*"])
     }

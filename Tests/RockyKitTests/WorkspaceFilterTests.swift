@@ -9,7 +9,7 @@ struct WorkspaceFilterTests {
             title: "Fix invoice rounding",
             branch: "jhzl/invoice-rounding",
             name: "lima",
-            repo: "celes-platform"
+            repo: "acme-platform"
         )
     }
 
@@ -21,7 +21,7 @@ struct WorkspaceFilterTests {
     @Test func matchingIgnoresCase() {
         #expect(matches("ROU"))
         #expect(matches("Lima"))
-        #expect(matches("CELES"))
+        #expect(matches("ACME"))
     }
 
     @Test func matchesTheTitleBranchNameOrRepository() {
@@ -40,7 +40,7 @@ struct WorkspaceFilterTests {
             title: "OpenAPI export for providers",
             branch: "jhzl/openapi-export",
             name: "tokyo",
-            repo: "celes-platform"
+            repo: "acme-platform"
         ))
     }
 }

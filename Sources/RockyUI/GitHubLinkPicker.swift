@@ -532,8 +532,8 @@ extension LinkAttachments.Kind {
     }
 }
 
-/// The badges' tooltips (Decision 4): the first line of the file Rocky wrote for a link, "#3655 Look and feel 3/6:
-/// Components" or a branch's name. The picker gives the title it knows when it attaches the file; any other is read
+/// The badges' tooltips (Decision 4): the first line of the file Rocky wrote for a link, "#154 Refresh the button
+/// styles" or a branch's name. The picker gives the title it knows when it attaches the file; any other is read
 /// once, off the main actor, and kept until Rocky quits.
 @MainActor
 enum LinkBadgeTitles {
@@ -861,7 +861,7 @@ private struct LinkNotice: View {
 }
 
 /// One row, 32 points, radius 7, padding 0 10, gap 8 (`GHL-02`). An issue or a pull request: GitHub's mark, its state
-/// glyph (a spinner while it is picked), "#4573" in 12.5 mono tabular `textTertiary` in 52 points, the title. A branch:
+/// glyph (a spinner while it is picked), "#212" in 12.5 mono tabular `textTertiary` in 52 points, the title. A branch:
 /// the branch glyph, its name in 12.5 mono, "origin" for one only on the remote. A reason at the end, in 11
 /// `textTertiary`, which is also the tooltip.
 private struct LinkRowView: View {

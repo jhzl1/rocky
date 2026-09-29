@@ -30,7 +30,7 @@ struct RepoMonogramTests {
     }
 
     @Test func letterIsTheUppercasedFirstCharacter() {
-        #expect(RepoMonogram.letter(repoName: "celes-platform") == "C")
+        #expect(RepoMonogram.letter(repoName: "acme-platform") == "A")
         #expect(RepoMonogram.letter(repoName: "Rocky") == "R")
         #expect(RepoMonogram.letter(repoName: "élan") == "É")
         #expect(RepoMonogram.letter(repoName: "") == "")

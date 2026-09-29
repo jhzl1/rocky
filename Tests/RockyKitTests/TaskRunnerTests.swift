@@ -199,17 +199,17 @@ struct TaskRunnerTests {
     @Test func aFailureMidwayStopsTheChain() async throws {
         let launcher = FakeTaskLauncher()
         let runner = TaskRunner(launcher: launcher)
-        let plan = try plan("Run: Web Client", tasks("""
-        { "label": "Run: Web Client", "type": "shell", "command": "pnpm dev", "dependsOn": ["_Dev: Cleanup orphans", "_next"], "dependsOrder": "sequence" },
-        { "label": "_Dev: Cleanup orphans", "type": "shell", "command": "cleanup" },
+        let plan = try plan("Run: Web", tasks("""
+        { "label": "Run: Web", "type": "shell", "command": "pnpm dev", "dependsOn": ["_Dev: Stop stray processes", "_next"], "dependsOrder": "sequence" },
+        { "label": "_Dev: Stop stray processes", "type": "shell", "command": "cleanup" },
         { "label": "_next", "type": "shell", "command": "next" }
         """))
         let run = start(runner, plan)
-        try await waitUntil { launcher.labels == ["_Dev: Cleanup orphans"] }
-        let cleanup = try #require(launcher.process("_Dev: Cleanup orphans"))
+        try await waitUntil { launcher.labels == ["_Dev: Stop stray processes"] }
+        let cleanup = try #require(launcher.process("_Dev: Stop stray processes"))
         cleanup.exit(1)
-        #expect(await run.value == .failed(dependency: "_Dev: Cleanup orphans", process: cleanup.id))
-        #expect(launcher.labels == ["_Dev: Cleanup orphans"])
+        #expect(await run.value == .failed(dependency: "_Dev: Stop stray processes", process: cleanup.id))
+        #expect(launcher.labels == ["_Dev: Stop stray processes"])
     }
 
     /// TSK-05: a background step that ends before its pattern fails the chain too, and a parallel sibling already running
@@ -261,13 +261,13 @@ struct TaskRunnerTests {
         let launcher = FakeTaskLauncher()
         let runner = TaskRunner(launcher: launcher)
         let json = tasks("""
-        { "label": "Run: Web Client", "type": "shell", "command": "web", "dependsOn": ["_cleanup", "_api"], "dependsOrder": "sequence" },
-        { "label": "Run: Web Studio", "type": "shell", "command": "studio", "dependsOn": ["_cleanup", "_api"], "dependsOrder": "sequence" },
+        { "label": "Run: Web", "type": "shell", "command": "web", "dependsOn": ["_cleanup", "_api"], "dependsOrder": "sequence" },
+        { "label": "Run: Admin", "type": "shell", "command": "studio", "dependsOn": ["_cleanup", "_api"], "dependsOrder": "sequence" },
         { "label": "_cleanup", "type": "shell", "command": "cleanup" },
         { "label": "_api", "type": "shell", "command": "api", "isBackground": true,
           "problemMatcher": { "background": { "endsPattern": "Application startup complete" } } }
         """)
-        let first = start(runner, try plan("Run: Web Client", json))
+        let first = start(runner, try plan("Run: Web", json))
         try await waitUntil { launcher.labels == ["_cleanup"] }
         launcher.process("_cleanup")?.exit(0)
         try await waitUntil { launcher.labels == ["_cleanup", "_api"] }
@@ -275,17 +275,17 @@ struct TaskRunnerTests {
         api.write("INFO:     Application startup complete.\n")
         _ = await first.value
 
-        let second = start(runner, try plan("Run: Web Studio", json))
+        let second = start(runner, try plan("Run: Admin", json))
         try await waitUntil { launcher.labels.count == 4 }
         launcher.process("_cleanup")?.exit(0)
         _ = await second.value
-        #expect(launcher.labels == ["_cleanup", "_api", "Run: Web Client", "_cleanup", "Run: Web Studio"])
+        #expect(launcher.labels == ["_cleanup", "_api", "Run: Web", "_cleanup", "Run: Admin"])
 
-        await runner.stop("Run: Web Client")
-        #expect(launcher.stops == ["Run: Web Client"])
+        await runner.stop("Run: Web")
+        #expect(launcher.stops == ["Run: Web"])
         #expect(api.isRunning)
-        await runner.stop("Run: Web Studio")
-        #expect(launcher.stops == ["Run: Web Client", "Run: Web Studio", "_api"])
+        await runner.stop("Run: Admin")
+        #expect(launcher.stops == ["Run: Web", "Run: Admin", "_api"])
         #expect(!runner.isRunning("_api"))
     }
 
@@ -298,25 +298,25 @@ struct TaskRunnerTests {
         let run = start(runner, plan) { input in
             asked.ids.append(input.id)
             #expect(launcher.started.isEmpty)
-            return "qa-local"
+            return "staging-local"
         }
         try await waitUntil { launcher.labels == ["_Dev: Cleanup"] }
-        #expect(asked.ids == ["runMode"])
+        #expect(asked.ids == ["stackMode"])
         launcher.process("_Dev: Cleanup")?.exit(0)
         try await waitUntil { launcher.labels.count == 3 }
         launcher.process("_API: Ensure venv")?.exit(0)
         launcher.process("_API: Ensure hooks")?.exit(0)
         try await waitUntil { launcher.labels.count == 4 }
         let api = try #require(launcher.process("_API: Run (mode)"))
-        #expect(api.launch.commandLine.hasPrefix("MODE='qa-local' "))
+        #expect(api.launch.commandLine.hasPrefix("MODE='staging-local' "))
         api.write("INFO:     Application startup complete.\r\n")
         _ = await run.value
         let web = try #require(launcher.process("Run: API + Web"))
-        #expect(web.launch.commandLine == "pnpm qa-local")
+        #expect(web.launch.commandLine == "pnpm staging-local")
         #expect(web.launch.command.cwd.path == "/tmp/repo-worktrees/lima/apps/web")
         #expect(web.launch.panel == .dedicated)
         #expect(web.launch.focus)
-        #expect(asked.ids == ["runMode"])
+        #expect(asked.ids == ["stackMode"])
     }
 
     /// TSK-04: Esc on an input cancels the whole run.

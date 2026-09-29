@@ -545,12 +545,12 @@ var pendingDrafts: [String: ComposerDraft]                                      
   const effortLabel = (c) => (c.effort && c.effort !== 'default' ? effortName(c.effort) : '');   // AGM-07: "Default" stays out of the label
   const modelName = (a, v) => (CATALOG[a].find((m) => m.value === v) || {}).name || v;
 
-  const repos = { celes: { name: 'celes-platform', color: '#4C7BD9', last: 'claude' }, veritas: { name: 'veritas', color: '#8E6BE0', last: null } };
+  const repos = { acme: { name: 'acme-platform', color: '#4C7BD9', last: 'claude' }, ledger: { name: 'ledger', color: '#8E6BE0', last: null } };
   const conv = (agent, title, items) => ({ id: uid(), agent, title, items, state: 'ready', model: DEFAULT_MODEL[agent], effort: initialEffort(agent, DEFAULT_MODEL[agent]), fast: false, draft: '' });
   const workspaces = [
-    { id: 'w1', repo: 'celes', name: 'tokyo', branch: 'jhzl/openapi-export', convs: [conv('claude', 'OpenAPI export', [{ k: 'user', t: 'Export the provider endpoints as OpenAPI 3.1.' }, { k: 'agent', t: 'Done: buildDocument() emits OpenAPI 3.1 and a test validates it.' }])] },
-    { id: 'w2', repo: 'celes', name: 'lima', branch: 'jhzl/invoice-rounding', convs: [] },
-    { id: 'w3', repo: 'veritas', name: 'quito', branch: 'jhzl/ocr-retry', convs: [] },
+    { id: 'w1', repo: 'acme', name: 'tokyo', branch: 'jhzl/openapi-export', convs: [conv('claude', 'OpenAPI export', [{ k: 'user', t: 'Export the provider endpoints as OpenAPI 3.1.' }, { k: 'agent', t: 'Done: buildDocument() emits OpenAPI 3.1 and a test validates it.' }])] },
+    { id: 'w2', repo: 'acme', name: 'lima', branch: 'jhzl/invoice-rounding', convs: [] },
+    { id: 'w3', repo: 'ledger', name: 'quito', branch: 'jhzl/ocr-retry', convs: [] },
   ];
   workspaces.forEach((w) => { w.active = w.convs[0] ? w.convs[0].id : null; });
   const state = { selected: 'w1', menu: null, noOpenCodeCache: false };
@@ -784,7 +784,7 @@ var pendingDrafts: [String: ComposerDraft]                                      
   }
   $('#demoDlg').addEventListener('click', () => dialog({ req: 'DLG-02', title: 'Discard changes to README.md?', message: 'This cannot be undone.', buttons: [{ label: 'Cancel', role: 'cancel', done: 'Cancelled.' }, { label: 'Discard Changes', role: 'destructive', done: 'Discarded the changes to README.md.' }] }));
   $('#demoDlg3').addEventListener('click', () => dialog({ req: 'DLG-01', title: 'Save changes to openapi.ts?', message: 'Your changes will be lost if you don’t save them.', buttons: [{ label: 'Don’t Save', role: 'destructive', left: true, cmdD: true, done: 'Closed without saving.' }, { label: 'Cancel', role: 'cancel', done: 'Cancelled.' }, { label: 'Save', role: 'primary', done: 'Saved openapi.ts and closed the tab.' }] }));
-  $('#demoPerm').addEventListener('click', () => dialog({ req: 'DLG-06', lg: true, agentMark: true, title: 'Permission needed', cmd: 'Bash: pnpm --filter web-client exec vitest run src/forms', buttons: [{ label: 'Cancel', role: 'cancel', left: true, done: 'Cancelled the request.' }, { label: 'Reject', left: true, done: 'Rejected.' }, { label: 'Always Allow', done: 'Allowed always.' }, { label: 'Allow', role: 'primary', done: 'Allowed once.' }] }));
+  $('#demoPerm').addEventListener('click', () => dialog({ req: 'DLG-06', lg: true, agentMark: true, title: 'Permission needed', cmd: 'Bash: pnpm --filter web exec vitest run src/forms', buttons: [{ label: 'Cancel', role: 'cancel', left: true, done: 'Cancelled the request.' }, { label: 'Reject', left: true, done: 'Rejected.' }, { label: 'Always Allow', done: 'Allowed always.' }, { label: 'Allow', role: 'primary', done: 'Allowed once.' }] }));
   $('#demoPins').addEventListener('click', (e) => { e.currentTarget.setAttribute('aria-pressed', String(document.body.classList.toggle('spec-on'))); });
   document.addEventListener('click', (e) => {
     if (!document.body.classList.contains('spec-on')) return;

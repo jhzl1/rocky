@@ -71,7 +71,7 @@ record of what the code does now; where it contradicts a line above or in the M1
   show in Rocky.
 - **No Conductor compatibility** (user decision, 2026-09-23): Rocky exports only `PORT` and `ROCKY_*` variables, and
   reads scripts from its own `rocky.json` (same shape as conductor.json) instead of `conductor.json`. This replaces
-  the Decisions above about `conductor.json` and the `CONDUCTOR_*` variables. No repo used either (doculift,
+  the Decisions above about `conductor.json` and the `CONDUCTOR_*` variables. No repo used either (docs-portal,
   its bergen worktree and rocky were checked).
 - **Rocky draws all its menus itself**, in the model menu's style: a dark rounded panel, hairline border, rows lit
   on hover, icon and shortcut per row (user decision, 2026-09-23). No `Menu` or `.contextMenu` from SwiftUI.
@@ -203,7 +203,7 @@ record of what the code does now; where it contradicts a line above or in the M1
 - Shell: use `bat`, `eza`, `rg`, `fd`, `sd` (this machine blocks `cat`, `ls`, `grep`, `find`, `sed` in agent shells).
 - Energy (spec Section 1): no timers that poll. Processes start only on user action; creating a workspace counts for its setup script. PTY output is event-driven (DispatchIO). *(Exception since 2026-09-23: the agent of the conversation on screen starts in the background.)*
 - All code, comments, identifiers and UI copy in English.
-- Manual tests use personal repos only (`~/Documents/dev/personal/rocky`). M1 was tested against `~/Documents/dev/rentek/doculift`; do not repeat that.
+- Manual tests use personal repos only (`~/Documents/dev/personal/rocky`). M1 was tested against `~/Documents/dev/acme/docs-portal`; do not repeat that.
 
 ## Review Focus
 

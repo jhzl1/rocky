@@ -64,9 +64,9 @@ struct WorkspaceEnvironmentTests {
         let withSetting = WorkspaceEnvironment.make(
             login: ["CLAUDE_CONFIG_DIR": "/shell"],
             repoVariables: ["CLAUDE_CONFIG_DIR": "/var"],
-            claudeConfigDir: "/Users/me/.claude-rentek"
+            claudeConfigDir: "/Users/me/.claude-client"
         )
-        #expect(withSetting["CLAUDE_CONFIG_DIR"] == "/Users/me/.claude-rentek")
+        #expect(withSetting["CLAUDE_CONFIG_DIR"] == "/Users/me/.claude-client")
     }
 
     @Test func branchNameDropsOrigin() {

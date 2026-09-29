@@ -37,13 +37,13 @@ struct BranchLinksTests {
     @Test func branchesAreLocalAndRemoteOnceEachWithTheirHolders() throws {
         let parent = try Fixtures.temporaryDirectory("links")
         let repo = try GitFixture.clonedRepo(in: parent)
-        try push("feat/look-and-feel-3", in: parent)
+        try push("feat/button-styles", in: parent)
         try service.fetchPruning(worktree: repo)
         let held = parent.appendingPathComponent("app-worktrees/tokyo", isDirectory: true)
         try GitFixture.git(["worktree", "add", "-q", "-b", "rocky/tokyo", held.path, "trunk"], in: repo)
 
         let branches = try service.branches(worktree: repo)
-        #expect(Set(branches.map(\.id)) == ["trunk", "feature", "rocky/tokyo", "origin/feat/look-and-feel-3"])
+        #expect(Set(branches.map(\.id)) == ["trunk", "feature", "rocky/tokyo", "origin/feat/button-styles"])
         let byName = Dictionary(uniqueKeysWithValues: branches.map { ($0.name, $0) })
         #expect(byName["trunk"]?.upstream == "origin/trunk")
         #expect(byName["trunk"]?.isRemoteOnly == false)
@@ -51,9 +51,9 @@ struct BranchLinksTests {
         #expect(byName["feature"]?.upstream == nil)
         #expect(byName["feature"].flatMap(\.heldBy).map { BranchLinks.samePath($0, repo) } == true)
         #expect(byName["rocky/tokyo"].flatMap(\.heldBy).map { BranchLinks.samePath($0, held) } == true)
-        let remote = try #require(byName["feat/look-and-feel-3"])
+        let remote = try #require(byName["feat/button-styles"])
         #expect(remote.isRemoteOnly)
-        #expect(remote.upstream == "origin/feat/look-and-feel-3")
+        #expect(remote.upstream == "origin/feat/button-styles")
         #expect(remote.heldBy == nil)
     }
 
@@ -97,14 +97,14 @@ struct BranchLinksTests {
 
     /// GHL-02's reasons: the current branch, and one another worktree holds, named from the worktrees' folder.
     @Test func unavailableRowsSayWhy() {
-        let main = URL(fileURLWithPath: "/Users/me/dev/celes-platform")
-        let lima = URL(fileURLWithPath: "/Users/me/dev/celes-platform-worktrees/lima")
-        let tokyo = URL(fileURLWithPath: "/Users/me/dev/celes-platform-worktrees/tokyo")
+        let main = URL(fileURLWithPath: "/Users/me/dev/acme-platform")
+        let lima = URL(fileURLWithPath: "/Users/me/dev/acme-platform-worktrees/lima")
+        let tokyo = URL(fileURLWithPath: "/Users/me/dev/acme-platform-worktrees/tokyo")
         #expect(BranchLinks.unavailableReason(heldBy: nil, worktree: lima, mainClone: main) == nil)
         #expect(BranchLinks.unavailableReason(heldBy: lima, worktree: lima, mainClone: main) == "Current branch")
-        #expect(BranchLinks.unavailableReason(heldBy: tokyo, worktree: lima, mainClone: main) == "Checked out in celes-platform-worktrees/tokyo")
-        let home = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("dev/celes-platform")
-        #expect(BranchLinks.holderLabel(home, mainClone: home) == "~/dev/celes-platform")
+        #expect(BranchLinks.unavailableReason(heldBy: tokyo, worktree: lima, mainClone: main) == "Checked out in acme-platform-worktrees/tokyo")
+        let home = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("dev/acme-platform")
+        #expect(BranchLinks.holderLabel(home, mainClone: home) == "~/dev/acme-platform")
     }
 
     // MARK: Switching (GHL-05)
@@ -137,11 +137,11 @@ struct BranchLinksTests {
     @Test func switchingToAPullRequestFetchesItsHead() throws {
         let parent = try Fixtures.temporaryDirectory("links")
         let repo = try GitFixture.clonedRepo(in: parent)
-        try push("fix/test-pr-validation", in: parent)
+        try push("fix/webhook-retry", in: parent)
 
-        #expect(try service.switchTo(.pullRequest(head: "fix/test-pr-validation"), worktree: repo, dropping: "feature"))
-        #expect(try currentBranch(repo) == "fix/test-pr-validation")
-        #expect(try GitFixture.git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], in: repo) == "origin/fix/test-pr-validation")
+        #expect(try service.switchTo(.pullRequest(head: "fix/webhook-retry"), worktree: repo, dropping: "feature"))
+        #expect(try currentBranch(repo) == "fix/webhook-retry")
+        #expect(try GitFixture.git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], in: repo) == "origin/fix/webhook-retry")
         #expect(!hasLocalBranch("feature", in: repo))
     }
 

@@ -1302,7 +1302,7 @@ public final class AppModel {
     /// A problem is added to `errorMessage` and never stops the workspace or its Setup.
     ///
     /// git runs no hook while it makes the worktree (WSC-04): a repo whose post-checkout hook runs its own
-    /// setup-worktree script (veritas, celes-platform) runs it after this, from Setup. The linker leaves every existing
+    /// link-worktree script (ledger, acme-platform) runs it after this, from Setup. The linker leaves every existing
     /// destination alone, and those scripts leave the links alone, so either one may run first.
     private func linkMainCloneFiles(into workspace: Workspace, repo: Repo, extraEntries: [String]) async {
         let linker = WorktreeLinker(environment: loginEnvironment)
@@ -1891,7 +1891,7 @@ public final class AppModel {
 
     /// TITLE-01's rule. While the conversation's list is unknown (at launch, before any agent has started), a message
     /// that starts with "/name" counts as a command: a wrong title stays for good, a missing one comes with the next
-    /// message. GHL-06: `issueTitle`, "#4573 Un filtro…" from the message's linked issue, names it in place of its text,
+    /// message. GHL-06: `issueTitle`, "#212 Search…" from the message's linked issue, names it in place of its text,
     /// cut to 40 characters as any title. nil for a command, and for a message with neither words nor an issue, which
     /// used to store an empty title (M2.9 Decision 6).
     nonisolated static func title(from message: String, issueTitle: String? = nil, commands: [SlashCommand]?) -> String? {
@@ -2065,7 +2065,7 @@ public final class AppModel {
 
     /// `nonconcurrent` mode (TSK-03, Decision 10 of M2.9): before a workspace's Run script or task starts, the Run
     /// scripts and the tasks of every other workspace stop, in every repository, since tasks bind fixed ports as run
-    /// scripts do (8000 and 6379 in celes-platform). One rule for both.
+    /// scripts do (8000 and 6379 in acme-platform). One rule for both.
     private func stopRunsElsewhere(than workspaceId: String) async {
         for (id, other) in processes where id != workspaceId {
             if let session = other.run, session.state.isRunning { await session.stop() }

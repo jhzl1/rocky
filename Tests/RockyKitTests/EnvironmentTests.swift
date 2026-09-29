@@ -37,21 +37,21 @@ struct EnvironmentTests {
     }
 
     @Test func workspaceEnvironmentNeverInheritsClaudeConfigDir() {
-        let login = ["PATH": "/usr/bin", "CLAUDE_CONFIG_DIR": "/Users/me/.claude-celes", "SHLVL": "2"]
+        let login = ["PATH": "/usr/bin", "CLAUDE_CONFIG_DIR": "/Users/me/.claude-work", "SHLVL": "2"]
         #expect(WorkspaceEnvironment.make(login: login, claudeConfigDir: nil) == ["PATH": "/usr/bin"])
-        #expect(WorkspaceEnvironment.make(login: login, claudeConfigDir: "/Users/me/.claude-rentek")
-            == ["PATH": "/usr/bin", "CLAUDE_CONFIG_DIR": "/Users/me/.claude-rentek"])
+        #expect(WorkspaceEnvironment.make(login: login, claudeConfigDir: "/Users/me/.claude-client")
+            == ["PATH": "/usr/bin", "CLAUDE_CONFIG_DIR": "/Users/me/.claude-client"])
     }
 
     @Test func detectsClaudeInstancesWithSettings() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("home-\(UUID().uuidString)")
-        for name in [".claude", ".claude-celes", ".claude-empty", ".config"] {
+        for name in [".claude", ".claude-work", ".claude-empty", ".config"] {
             try FileManager.default.createDirectory(at: home.appendingPathComponent(name), withIntermediateDirectories: true)
         }
-        for name in [".claude", ".claude-celes"] {
+        for name in [".claude", ".claude-work"] {
             FileManager.default.createFile(atPath: home.appendingPathComponent("\(name)/settings.json").path, contents: Data("{}".utf8))
         }
-        #expect(ClaudeInstances.detect(home: home) == [home.appendingPathComponent(".claude").path, home.appendingPathComponent(".claude-celes").path])
+        #expect(ClaudeInstances.detect(home: home) == [home.appendingPathComponent(".claude").path, home.appendingPathComponent(".claude-work").path])
     }
 
     @Test func processRunnerReturnsTrimmedStdoutAndThrowsOnFailure() throws {

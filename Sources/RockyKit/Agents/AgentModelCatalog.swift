@@ -38,7 +38,7 @@ public struct AgentModelCatalog: Sendable, Equatable {
         save()
     }
 
-    /// "claude:default", "claude:/Users/me/.claude-celes", "opencode".
+    /// "claude:default", "claude:/Users/me/.claude-work", "opencode".
     static func key(agent: AgentKind, claudeInstance: String?) -> String {
         switch agent {
         case .claude:
