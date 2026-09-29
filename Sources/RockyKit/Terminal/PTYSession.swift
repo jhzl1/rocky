@@ -108,6 +108,11 @@ public final class PTYSession: Identifiable {
         environment["COLORTERM"] = "truecolor"
         let process = LocalProcess(delegate: self, dispatchQueue: .main)
         self.process = process
+        // SwiftTerm starts the child with forkpty, then execve (`PseudoTerminalHelpers.fork`), and execve keeps every
+        // descriptor without FD_CLOEXEC: each shell, script and task got Rocky's database, the agents' ACP pipes and
+        // the other terminals' masters, and one that outlives its tab (`redis-server --daemonize yes`) kept them open.
+        // One another thread opens between this line and the fork can still leak; see `closeAllOnExec()`.
+        FileDescriptors.closeAllOnExec()
         process.startProcess(
             executable: command.executable,
             args: command.arguments,
