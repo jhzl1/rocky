@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rocky · Updates spec</title>
+<!--
+==========================================================================================================
+HOW TO READ THIS FILE (for the agent that implements it)
+==========================================================================================================
+Visual, behavioral and technical source of truth for M5's in-app update. dev-1 writes the plan from these
+requirement ids (docs/superpowers/plans/2026-09-29-m5-distribution.md). The release script, install.sh and the
+signing live in the product spec, "Distribution (M5)"; this file covers what the user sees inside Rocky.
+
+- What changes: at launch and on becoming active, at most once a day, Rocky asks GitHub for its latest release. When a newer one exists, a banner in the
+  sidebar offers Update, which downloads the zip, replaces /Applications/Rocky.app and relaunches. Rocky ▸ Check for
+  Updates… and Settings do the same on demand, and Settings shows the version.
+- User decisions (2026-09-29, relayed by dev-1): a banner offers Update and Rocky installs and relaunches; Apple
+  Silicon only; friends install with the curl | bash one-liner. No system notification (CLAUDE.md).
+- The sidebar, the footer, the Settings panel and the mini-modals are M2.5's and M2.8's, simplified.
+- Requirement ids: UPD (updates), KIT (RockyKit), OUT. Pins: button "Requirement pins". When the mock and a
+  requirement's text disagree, the text wins.
+==========================================================================================================
+-->
+<style>
+:root {
+  --page: #131519; --bg: #23272E; --sidebar: #1E2127; --panel: #1A1D22; --composer: #2A2F37; --composer-border: rgba(255,255,255,0.10);
+  --hairline: rgba(255,255,255,0.08); --hairline-soft: rgba(255,255,255,0.06);
+  --text: #E6E8EB; --text-2: #A3A9B1; --text-3: #858C95; --sep: #5C636C;
+  --fill-hover: rgba(255,255,255,0.04); --fill-selected: rgba(255,255,255,0.08); --fill-control: rgba(255,255,255,0.05);
+  --fill-icon-hover: rgba(255,255,255,0.06); --fill-button: rgba(255,255,255,0.08); --fill-button-hover: rgba(255,255,255,0.12);
+  --accent: #78BDF5; --attention: #E8A94B; --danger: #F0876A; --success: #7CC08A;
+  --titlebar: 38px; --row: 28px; --r-row: 7px; --r-btn: 6px;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --dur-fast: 120ms; --dur-base: 150ms; --dur-enter: 220ms; --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--page); color: var(--text); font: 13px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; -webkit-font-smoothing: antialiased; display: flex; overflow: hidden; }
+[hidden] { display: none !important; }
+button { font: inherit; color: inherit; background: none; border: 0; margin: 0; padding: 0; text-align: left; cursor: pointer; }
+button:disabled { cursor: default; opacity: 0.45; }
+svg { display: block; flex-shrink: 0; }
+code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 4px; }
+.grow { flex-grow: 1; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.stage { flex: 1 0 auto; overflow: auto; padding: 20px 24px 48px; }
+.doc-title { width: 1100px; margin: 0 0 4px; font-size: 18px; font-weight: 600; }
+.doc-sub { width: 1100px; margin: 0 0 14px; color: var(--text-2); font-size: 12.5px; line-height: 1.5; }
+.demo { width: 1100px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
+.demo-label { font-size: 10.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.07em; margin-right: 4px; }
+.demo button { height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.14); color: var(--text-2); font-size: 12px; }
+.demo button:hover { color: var(--text); border-color: rgba(255,255,255,0.3); }
+.demo button[aria-pressed="true"] { background: rgba(120,189,245,0.14); border-color: rgba(120,189,245,0.55); color: var(--text); }
+
+/* window: the M2.5 shell, simplified */
+.window { position: relative; width: 1100px; height: 640px; display: flex; background: var(--bg); border-radius: 10px; overflow: hidden; box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 24px 60px rgba(0,0,0,0.45); transition: opacity 300ms ease-in; }
+.window.relaunching { opacity: 0; }
+.lights { display: inline-flex; gap: 8px; } .light { width: 12px; height: 12px; border-radius: 50%; }
+.light.close { background: #FF5F57; } .light.min { background: #FEBC2E; } .light.zoom { background: #28C840; }
+.sidebar { width: 260px; flex-shrink: 0; display: flex; flex-direction: column; background: var(--sidebar); border-right: 1px solid var(--hairline); }
+.sb-top { height: var(--titlebar); display: flex; align-items: center; padding: 0 16px; }
+.sb-list { flex-grow: 1; overflow-y: auto; padding: 4px 8px; display: flex; flex-direction: column; gap: 2px; }
+.repo { height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 8px; margin-top: 8px; font-weight: 600; }
+.monogram { width: 16px; height: 16px; border-radius: 4px; color: #fff; font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.row { width: 100%; height: var(--row); display: flex; align-items: center; gap: 8px; padding: 0 8px 0 32px; border-radius: var(--r-row); }
+.row .g { width: 14px; margin-left: -22px; display: flex; justify-content: center; color: var(--text-3); }
+.row .g.run { color: var(--text-2); }
+.row.selected { background: var(--fill-selected); }
+.sb-foot { height: 37px; flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 12px; border-top: 1px solid var(--hairline-soft); color: var(--text-2); font-size: 13px; }
+.sb-foot .gear { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r-btn); }
+.sb-foot .gear:hover { background: var(--fill-icon-hover); color: var(--text); }
+.main { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; }
+.topbar { height: var(--titlebar); flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 0 16px; color: var(--text-2); }
+.content { flex-grow: 1; display: flex; align-items: center; justify-content: center; color: var(--text-3); font-size: 13px; border-top: 1px solid var(--hairline); }
+.spinner { animation: spin 0.9s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
+
+/* UPD-02: the banner, above the sidebar's footer */
+.upd { margin: 0 8px 8px; padding: 10px 10px 10px 12px; border-radius: 10px; background: var(--fill-control); box-shadow: inset 0 0 0 1px var(--hairline); display: flex; flex-direction: column; gap: 8px; animation: upd-in var(--dur-enter) var(--ease-out) both; }
+.upd.out { animation: upd-out 150ms ease-in both; }
+@keyframes upd-in { from { opacity: 0; transform: translateY(6px); } }
+@keyframes upd-out { to { opacity: 0; transform: translateY(6px); } }
+.upd .l1 { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text); }
+.upd .l1 .ico { color: var(--accent); display: flex; }
+.upd .l1 .ico.err { color: var(--danger); }
+.upd .l1 .t { flex-grow: 1; min-width: 0; }
+.upd .l1 .t small { display: block; font-size: 11.5px; color: var(--text-3); margin-top: 1px; line-height: 1.35; }
+.upd .x { width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; border-radius: 4px; color: var(--text-3); align-self: flex-start; }
+.upd .x:hover { background: var(--fill-icon-hover); color: var(--text); }
+.upd .l2 { display: flex; align-items: center; gap: 8px; }
+.upd .link { font-size: 12px; color: var(--text-2); display: inline-flex; align-items: center; gap: 4px; }
+.upd .link:hover { color: var(--text); }
+.upd .go { height: 24px; padding: 0 10px; border-radius: 6px; background: #FFFFFF; color: #111316; font-size: 12px; font-weight: 500; }
+.upd .go:hover { background: #E9EBEE; }
+.upd .bar { height: 3px; border-radius: 2px; background: var(--fill-button); overflow: hidden; }
+.upd .bar i { display: block; height: 100%; background: var(--accent); border-radius: 2px; transition: width 200ms linear; }
+.upd .mb { font: 11px var(--mono); color: var(--text-3); font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .upd, .upd.out { animation: none; } .upd .bar i { transition: none; } }
+
+/* M2.8 DLG: mini-modals */
+.dlg-scrim { position: absolute; inset: 0; z-index: 70; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.45); animation: fade-in 150ms ease-out both; }
+@keyframes fade-in { from { opacity: 0; } }
+.dlg { width: 360px; padding: 20px 20px 16px; border-radius: 14px; background: var(--bg); box-shadow: 0 0 0 1px var(--composer-border), 0 12px 30px rgba(0,0,0,0.5); animation: dlg-in 150ms var(--ease-out) both; }
+@keyframes dlg-in { from { opacity: 0; transform: scale(0.98); } }
+.dlg h4 { margin: 0; font-size: 14px; font-weight: 600; }
+.dlg p { margin: 6px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--text-2); }
+.dlg ul { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; line-height: 1.55; color: var(--text-2); }
+.dlg .btns { display: flex; gap: 8px; margin-top: 20px; }
+.dlg .btns button { height: 28px; padding: 0 14px; border-radius: 7px; font-size: 12.5px; font-weight: 500; background: var(--fill-button); }
+.dlg .btns .primary { background: #FFFFFF; color: #111316; }
+.dlg .btns .destructive { background: rgba(240,135,106,0.16); color: var(--danger); }
+
+/* M2.x Settings panel, simplified */
+.set-scrim { position: absolute; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.45); }
+.set { width: 560px; border-radius: 14px; background: var(--bg); box-shadow: 0 0 0 1px var(--composer-border), 0 12px 30px rgba(0,0,0,0.5); overflow: hidden; }
+.set-head { display: flex; align-items: center; padding: 8px 12px 8px 20px; font-size: 15px; font-weight: 600; border-bottom: 1px solid var(--hairline); }
+.set-head button { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; color: var(--text-2); }
+.set-body { padding: 20px 24px 24px; display: flex; flex-direction: column; gap: 16px; }
+.set-sec h5 { margin: 0 0 6px; font-size: 11px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.05em; }
+.set-card { border-radius: 10px; background: var(--composer); box-shadow: inset 0 0 0 1px var(--composer-border); }
+.set-row { display: flex; align-items: center; gap: 12px; padding: 10px 14px; }
+.set-row + .set-row { border-top: 1px solid var(--hairline); }
+.set-row .lbl { flex-grow: 1; } .set-row .lbl small { display: block; font-size: 11.5px; color: var(--text-3); margin-top: 2px; }
+.set-btn { height: 24px; padding: 0 10px; border-radius: 6px; background: var(--fill-button); font-size: 12px; }
+.set-btn:hover { background: var(--fill-button-hover); }
+.muted { color: var(--text-2); font-size: 12.5px; }
+
+/* the Rocky menu, for UPD-06 */
+.appmenu { position: absolute; z-index: 65; left: 70px; top: 6px; width: 230px; padding: 5px; border-radius: 10px; background: var(--panel); box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 12px 34px rgba(0,0,0,0.55); }
+.appmenu button { width: 100%; height: 26px; display: flex; align-items: center; padding: 0 8px; border-radius: 6px; font-size: 13px; }
+.appmenu button:hover:not(:disabled) { background: rgba(255,255,255,0.07); }
+.appmenu button span { margin-left: auto; color: var(--text-3); font-size: 11.5px; }
+.appmenu .sep { height: 1px; background: var(--hairline); margin: 5px 4px; }
+
+.toast { position: absolute; left: 50%; bottom: 60px; z-index: 80; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 8px; background: var(--panel); box-shadow: 0 0 0 1px rgba(255,255,255,0.1), 0 8px 24px rgba(0,0,0,0.45); font-size: 12px; color: var(--text-2); opacity: 0; pointer-events: none; transition: opacity var(--dur-base); }
+.toast.show { opacity: 1; pointer-events: auto; }
+.toast button { color: var(--accent); font-weight: 500; }
+
+.spec-on .window [data-req] { outline: 1px dashed rgba(120,189,245,0.6); outline-offset: -1px; position: relative; }
+.spec-on .window [data-req]::after { content: attr(data-req); position: absolute; top: 1px; right: 1px; z-index: 55; padding: 2px 4px; border-radius: 3px; background: var(--accent); color: #0E1116; font: 600 9px/1 var(--mono); pointer-events: none; }
+
+/* spec */
+.spec { flex: 0 1 480px; min-width: 340px; overflow-y: auto; overflow-x: hidden; background: #16181C; border-left: 1px solid var(--hairline); padding: 22px 24px 80px; font-size: 12.5px; line-height: 1.55; color: var(--text-2); }
+.spec h1 { margin: 0 0 6px; font-size: 16px; color: var(--text); }
+.spec h2 { margin: 30px 0 8px; font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); }
+.spec p { margin: 6px 0; } .spec strong { color: var(--text); font-weight: 600; } .spec code { overflow-wrap: anywhere; }
+.spec pre { margin: 6px 0; padding: 8px 10px; border-radius: 6px; background: rgba(0,0,0,0.28); font: 11px/1.55 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+.req { margin: 0 -12px 6px; padding: 12px 12px 10px; border: 1px solid transparent; border-radius: 8px; transition: background 0.3s, border-color 0.3s; scroll-margin-top: 12px; }
+.req.flash { background: rgba(120,189,245,0.08); border-color: rgba(120,189,245,0.4); }
+.req > header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.req .id { font: 600 10.5px var(--mono); color: var(--accent); background: none; padding: 0; }
+.req h3 { flex-grow: 1; margin: 0; font-size: 13px; font-weight: 600; color: var(--text); }
+.scope { font-size: 10px; padding: 1px 6px; border-radius: 4px; border: 1px solid; white-space: nowrap; }
+.scope.in { color: var(--success); border-color: rgba(124,192,138,0.4); } .scope.out { color: var(--attention); border-color: rgba(232,169,75,0.5); }
+.scope.tech { color: var(--accent); border-color: rgba(120,189,245,0.45); }
+.req dl { display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 5px 10px; margin: 8px 0 0; }
+.req dt { padding-top: 1px; font-size: 11px; color: var(--text-3); } .req dd { margin: 0; }
+.req ol, .req ul { margin: 2px 0 0; padding-left: 18px; } .req li { margin: 2px 0; }
+.spec table { width: 100%; border-collapse: collapse; margin: 6px 0; font-size: 11.5px; }
+.spec th { text-align: left; font-weight: 600; color: var(--text-3); padding: 4px 6px 4px 0; border-bottom: 1px solid var(--hairline); }
+.spec td { padding: 4px 6px 4px 0; border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: top; }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <h1 class="doc-title">Rocky · Updates (M5)</h1>
+  <p class="doc-sub">At launch, and when it becomes active again, at most once a day, Rocky asks GitHub for its latest release. A newer one shows a <strong>banner above the sidebar's footer</strong>: Update downloads it, replaces <code>/Applications/Rocky.app</code> and relaunches, after asking with a mini-modal when agents, scripts, tasks, terminals or unsaved edits would stop. <strong>Rocky ▸ Check for Updates…</strong> and Settings do the same on demand. Try it: "New version", then Update; turn on "Things running" or "Download fails" first to see those paths.</p>
+  <div class="demo" aria-label="Demo controls">
+    <span class="demo-label">Demo controls, not part of Rocky</span>
+    <button type="button" id="demoNew">New version (daily check)</button>
+    <button type="button" id="demoBusy" aria-pressed="false">Things running</button>
+    <button type="button" id="demoUnsaved" aria-pressed="false">Unsaved edits</button>
+    <button type="button" id="demoFail" aria-pressed="false">Download fails</button>
+    <button type="button" id="demoMenu">Rocky menu</button>
+    <button type="button" id="demoSettings">Settings</button>
+    <button type="button" id="demoPins" aria-pressed="false">Requirement pins</button>
+  </div>
+
+  <div class="window" id="win">
+    <nav class="sidebar" aria-label="Workspaces">
+      <div class="sb-top"><span class="lights"><span class="light close"></span><span class="light min"></span><span class="light zoom"></span></span></div>
+      <div class="sb-list" id="sbList"></div>
+      <div id="updSlot"></div>
+      <div class="sb-foot"><span id="addRepo"></span><span>Add repository</span><span class="grow"></span><button class="gear" data-action="settings" aria-label="Settings" title="Settings ⌘,"></button></div>
+    </nav>
+    <main class="main">
+      <header class="topbar"><span>acme-platform</span><span style="color:var(--sep)">/</span><span style="font:12px var(--mono);color:var(--text)">jhzl/openapi-export</span></header>
+      <div class="content">The workspace, as in M2.5–M2.9.</div>
+    </main>
+  </div>
+</div>
+
+<aside class="spec" id="spec">
+  <h1>Requirements</h1>
+  <p>Plan (dev-1): <code>docs/superpowers/plans/2026-09-29-m5-distribution.md</code>. Product spec: "Distribution (M5)" in <code>docs/superpowers/specs/2026-09-22-rocky-design.md</code>, which holds the release script, <code>install.sh</code> and the signing. Labels: <span class="scope tech">Technical</span> for data and process facts; <span class="scope in">In scope</span> for behavior and UI.</p>
+  <p><strong>User decisions (2026-09-29, relayed by dev-1):</strong> a banner offers Update; Rocky installs the new version and relaunches · Apple Silicon only · friends install with <code>curl -fsSL https://github.com/jhzl1/rocky/releases/latest/download/install.sh | bash</code> · no system notification (CLAUDE.md).</p>
+
+  <h2>Knowing about a new version</h2>
+  <section class="req" id="REQ-UPD-01">
+    <header><code class="id">UPD-01</code><h3>The check</h3><span class="scope tech">Technical</span></header>
+    <dl>
+      <dt>Asks</dt><dd><code>GET https://api.github.com/repos/jhzl1/rocky/releases/latest</code> over <code>URLSession</code>, <strong>without a token</strong> (the repository is public; the user's GitHub accounts are never sent), <code>Accept: application/vnd.github+json</code>. It reads <code>tag_name</code> ("v0.3.0"), <code>html_url</code>, and the asset named <code>Rocky.zip</code> (<code>browser_download_url</code>, <code>size</code>). <code>releases/latest</code> already skips drafts and prereleases.</dd>
+      <dt>Newer</dt><dd>The tag, without its "v", compared as numbers part by part (0.10.0 is newer than 0.9.0) with <code>CFBundleShortVersionString</code>. A release without a <code>Rocky.zip</code> asset counts as no update.</dd>
+      <dt>When</dt><dd>On events, never on a timer (CLAUDE.md: "Nothing polls at rest. No timers on the disk or the network"): at launch, and whenever Rocky becomes active again (<code>NSApplication.didBecomeActiveNotification</code>), each time only when the last check is more than 24 h old; the time of the last check in <code>UserDefaults</code>. The agents' check works the same way (<code>AppModel.checkAgentUpdates</code>, called at launch). Plus the manual check (UPD-06). GitHub allows 60 requests an hour without a token; at most one a day is far under.</dd>
+      <dt>Where</dt><dd>Only a Rocky running from <code>/Applications/Rocky.app</code> checks and updates itself. A build run elsewhere (<code>build/Rocky.app</code>, <code>swift run</code>) never shows the banner, and Settings' row says why (UPD-06), so a development build is never replaced by a release.</dd>
+      <dt>Quiet</dt><dd>The daily check shows nothing when it finds nothing or fails: no toast, no badge. Only the manual check answers either way.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-UPD-02">
+    <header><code class="id">UPD-02</code><h3>The banner</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Where</dt><dd>In the sidebar, right above its footer (SB-06, "Add repository" and Settings), full width with 8 of margin at the sides and below. The workspace list shrinks to make room, so nothing in the window moves, and the banner stays out of the conversation. With the sidebar hidden, it is hidden too; Settings and the Rocky menu still offer the update (UPD-06).</dd>
+      <dt>Look</dt><dd>Radius 10, <code>fillControl</code> with a 1 px <code>hairline</code> ring (on the sidebar's opaque color), padding 10, 10, 10, 12, gap 8 between its two lines. Line 1: <code>arrow.down.circle</code> 14 in <code>accent</code>; "Rocky 0.3.0 is available" 12.5 <code>textPrimary</code>, with "You have 0.2.0" under it (11.5 <code>textTertiary</code>); a 16 pt × at the right (<code>xmark</code> 9, <code>textTertiary</code>, tooltip "Hide until the next launch"). Line 2: "What's new ↗" (12 <code>textSecondary</code>, opens <code>html_url</code> in the browser), then at the right <b>Update</b>: 24 pt, radius 6, white fill with <code>#111316</code> text (DLG-02's primary).</dd>
+      <dt>Motion</dt><dd>It enters with M2.5's entrance (220 ms, from 6 pt below, fade) and leaves with the reverse, 150 ms. Reduce Motion: it just appears and goes.</dd>
+      <dt>Hide</dt><dd>× hides it until Rocky's next launch. A newer version found meanwhile brings it back at once. The next launch shows it again for the same version, so an update is never forgotten for good. Nothing is stored beyond the launch.</dd>
+      <dt>Access</dt><dd>VoiceOver reads "Rocky 0.3.0 is available. You have 0.2.0." with the actions Update, What's new and Hide.</dd>
+      <dt>Done when</dt><dd>With 0.3.0 released, a Rocky 0.2.0 in <code>/Applications</code> shows the banner at launch; × hides it until the next launch; the workspace area never moves.</dd>
+    </dl>
+  </section>
+
+  <h2>Updating</h2>
+  <section class="req" id="REQ-UPD-03">
+    <header><code class="id">UPD-03</code><h3>Update while things run</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Asks</dt><dd>Updating relaunches Rocky, which stops everything, as quitting does. So when something would stop, Update first shows a mini-modal (M2.8 DLG-02); with nothing, it goes straight on. Title "Update to Rocky 0.3.0?", message "Rocky relaunches, and these stop:" then a list, one line each, at most 5 lines and then "and 3 more":
+        <ul>
+          <li>"2 agents working: tokyo, lima" (their turns are cancelled; the conversations stay);</li>
+          <li>"The Run script in oslo", "2 tasks: Run: API + Web, Run: Admin";</li>
+          <li>"3 terminals", "The Setup script in porto";</li>
+          <li>"2 files with unsaved edits: openapi.ts, README.md".</li>
+        </ul>
+        Idle conversations and finished processes are not listed: nothing of theirs is lost.</dd>
+      <dt>Buttons</dt><dd>Cancel · <b>Update and Relaunch</b> (primary, default). With unsaved edits, the quit prompt's three (DLG-05): Don't Save (destructive, left, ⌘D) · Cancel · <b>Save All and Update</b> (primary); a save that fails cancels the update and shows that file, as when quitting.</dd>
+      <dt>Blocked</dt><dd>While a workspace is being created, set up or removed (M2.9 WSC-01, WSC-07), Update is disabled, tooltip "Wait for lima to finish setting up": a relaunch in the middle would leave a half-made or half-deleted worktree.</dd>
+      <dt>Done when</dt><dd>With an agent working and a file unsaved, Update asks with the three buttons and both listed; with nothing running it downloads at once.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-UPD-04">
+    <header><code class="id">UPD-04</code><h3>Downloading, installing, relaunching</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>States</dt><dd>The banner shows each state in place; its size barely changes.</dd>
+    </dl>
+    <table>
+      <tr><th>State</th><th>Line 1</th><th>Line 2</th></tr>
+      <tr><td>Downloading</td><td>spinner 14 · "Downloading Rocky 0.3.0…"</td><td>a 3 pt bar (<code>fillButton</code> track, <code>accent</code> fill, radius 2) and "6.2 of 15.1 MB" (11 mono <code>textTertiary</code>, tabular); Cancel as a text button. No ×.</td></tr>
+      <tr><td>Installing</td><td>spinner 14 · "Installing Rocky 0.3.0…" · "Rocky relaunches in a moment"</td><td>none; nothing is clickable</td></tr>
+      <tr><td>Failed</td><td>UPD-05</td><td>UPD-05</td></tr>
+    </table>
+    <dl>
+      <dt>Order</dt><dd>
+        <ol>
+          <li>The zip downloads to <code>~/Library/Caches/Rocky/Updates/0.3.0/</code> (<code>URLSession</code> download task, its progress feeding the bar). Rocky keeps working meanwhile; the mini-modal's stops happen only at step 3.</li>
+          <li>It unzips with <code>ditto -x -k</code> and checks the new app before anything is replaced: <code>codesign --verify --deep --strict</code>, the same certificate as the running Rocky ("Rocky Local", compared by its leaf certificate), <code>CFBundleIdentifier</code> equal, and the version equal to the tag. Any mismatch is a failure; nothing is installed.</li>
+          <li>Rocky stops everything as quitting does (<code>stopAllProcesses</code>, the agents' turns cancelled), starts a detached helper (<code>/bin/sh -c</code>) and quits. The helper waits for Rocky's process to end, moves the old <code>/Applications/Rocky.app</code> aside, moves the new one in, removes the old one, and opens the new one; if the move fails, it puts the old one back and opens it.</li>
+        </ol>
+      </dd>
+      <dt>After</dt><dd>The new Rocky, on its first launch, shows one toast: "Updated to Rocky 0.3.0" with What's new (the release page). It knows by comparing its version with the last one it ran (<code>UserDefaults</code>).</dd>
+      <dt>Cancel</dt><dd>Cancel during the download stops it, deletes the partial file and brings the banner back to "is available".</dd>
+      <dt>Done when</dt><dd>From 0.2.0, Update shows the bar moving to 15.1 MB, then "Installing…", Rocky closes and opens as 0.3.0 within seconds with the "Updated" toast, and <code>/Applications/Rocky.app</code> is 0.3.0.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-UPD-05">
+    <header><code class="id">UPD-05</code><h3>When it fails</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Banner</dt><dd>Line 1: <code>exclamationmark.triangle</code> 14 in <code>danger</code>, "Couldn't update to 0.3.0" and the reason under it (11.5 <code>textTertiary</code>, up to 2 lines, the full text in the tooltip); the × comes back. Line 2: "Copy install command" (a text button: copies the <code>curl … | bash</code> line, toast "Copied the install command") and <b>Retry</b> (primary).</dd>
+      <dt>Reasons</dt><dd>"No internet connection" · "GitHub answered 503" · "The download stopped at 6.2 of 15.1 MB" · "The new app isn't signed like this one" (UPD-04 step 2) · "Rocky can't write to /Applications". Nothing is replaced in any of them, and Rocky keeps running as it was.</dd>
+      <dt>Retry</dt><dd>Starts at UPD-04's step 1 again. The install command is the way out when retrying keeps failing, for example without write access to <code>/Applications</code>.</dd>
+    </dl>
+  </section>
+
+  <h2>On demand</h2>
+  <section class="req" id="REQ-UPD-06">
+    <header><code class="id">UPD-06</code><h3>Check for Updates, and the version</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Menu</dt><dd>Rocky ▸ <strong>Check for Updates…</strong>, right under About Rocky, where macOS apps keep it. While it checks, it reads "Checking for Updates…" and is disabled.</dd>
+      <dt>Answers</dt><dd>Nothing newer: toast "Rocky 0.2.0 is the newest version". Newer: the banner (UPD-02), shown even if × hid it; with the sidebar hidden, also a toast "Rocky 0.3.0 is available" with Update. A failure: toast "Couldn't check for updates: <em>reason</em>".</dd>
+      <dt>Settings</dt><dd>A "Rocky" section first in Settings, one row, like the agents' "Updates" row (<code>SettingsView</code>): "Version", detail "0.2.0 (build 12) · checked today at 9:41". At the right: "Up to date", or <b>Update to 0.3.0</b> (the same flow as the banner), or the download's state, and "Check Now" with a 12 pt spinner while it checks. Outside <code>/Applications</code>, the detail reads "0.2.0 (build 12) · runs from build/, so it doesn't update itself" and there is no button.</dd>
+      <dt>Done when</dt><dd>Check for Updates… on the newest version shows "is the newest version"; Settings shows the version and the last check.</dd>
+    </dl>
+  </section>
+
+  <h2>RockyKit</h2>
+  <section class="req" id="REQ-KIT-20">
+    <header><code class="id">KIT-20</code><h3>Rocky's own updates</h3><span class="scope tech">Technical</span></header>
+<pre>struct RockyRelease { version: String; pageURL: URL; zipURL: URL; zipSize: Int }
+enum RockyUpdates {
+  static func parse(latestRelease: Data) throws -> RockyRelease?   // nil without a Rocky.zip asset
+  static func isNewer(_ tag: String, than current: String) -> Bool // "v0.10.0" > "0.9.0"
+  static func stops(running: RunningWork) -> [String]              // UPD-03's lines, at most 5 + "and N more"
+  static func helperScript(old: URL, new: URL, pid: pid_t) -> String
+}
+// AppModel
+var rockyUpdate: RockyUpdateState   // .none, .available(RockyRelease), .downloading(done, total), .installing, .failed(reason)
+func checkRockyUpdate(manual: Bool) async
+func updateRocky() async</pre>
+    <p>Tests: <code>parse</code> on a trimmed real answer, with and without the asset; <code>isNewer</code> for equal, patch, minor, "v" prefix and 0.10 against 0.9; <code>stops</code> for each kind, the plural forms and the cap; the helper script's text (waits for the pid, moves aside, restores on failure). The download, the signature check and the relaunch are on the plan's manual checklist, against a real release.</p>
+  </section>
+
+  <h2>Out of scope</h2>
+  <section class="req" id="REQ-OUT-60">
+    <header><code class="id">OUT-60</code><h3>Not in M5</h3><span class="scope out">Later</span></header>
+    <p>A Developer ID, notarization and a <code>.dmg</code> · Sparkle · a Homebrew tap (the product spec's "Later, only if Rocky goes beyond friends") · Intel Macs · skipping a version for good · release notes shown inside Rocky (the banner links to the release page) · delta updates · a system notification (CLAUDE.md: none).</p>
+  </section>
+</aside>
+
+<script>
+/* Demo behavior. Versions, sizes and timings are canned; the requirements on the right are what matters. */
+(() => {
+  'use strict';
+  const $ = (s) => document.querySelector(s);
+  const win = $('#win');
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const svg = (s, body, w = 1.5) => `<svg width="${s}" height="${s}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+  const spinner = (s) => `<svg class="spinner" width="${s}" height="${s}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" role="img" aria-label="Loading"><circle cx="8" cy="8" r="5.5" stroke-opacity="0.22"/><path d="M8 2.5a5.5 5.5 0 0 1 5.5 5.5"/></svg>`;
+  const I = {
+    down: svg(14, '<circle cx="8" cy="8" r="6"/><path d="M8 5v5.5M5.5 8.5L8 11l2.5-2.5"/>', 1.4),
+    x: svg(9, '<path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/>', 1.8),
+    ext: svg(10, '<path d="M6 3.5h6.5V10M12.5 3.5L5 11"/>', 1.6),
+    warn: svg(14, '<path d="M8 2.5l6 10.5H2z M8 6.5v3M8 11.3v.2"/>', 1.4),
+    gear: svg(15, '<circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.6M8 12.6v1.6M1.8 8h1.6M12.6 8h1.6M3.6 3.6l1.1 1.1M11.3 11.3l1.1 1.1M3.6 12.4l1.1-1.1M11.3 4.7l1.1-1.1"/>', 1.3),
+    folder: svg(15, '<path d="M1.8 4.5a1 1 0 0 1 1-1h3.5l1.4 1.5h5.5a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H2.8a1 1 0 0 1-1-1z M8 7.3v3.4M6.3 9h3.4"/>', 1.3),
+    branch: svg(14, '<circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="5.5" r="1.5"/><path d="M4.5 5v6M11.5 7c0 2.5-3 2.5-7 4"/>', 1.3),
+  };
+  const CURRENT = '0.2.0', NEXT = '0.3.0', TOTAL = 15.1;
+  const state = { upd: 'none', hidden: false, done: 0, busy: false, unsaved: false, fail: false, checking: false };
+
+  function renderSidebar() {
+    const busy = state.busy;
+    $('#sbList').innerHTML = `<div class="repo"><span class="monogram" style="background:#4C7BD9">A</span>acme-platform</div>` +
+      `<button class="row selected"><span class="g${busy ? ' run' : ''}">${busy ? spinner(14) : I.branch}</span>OpenAPI export for providers</button>` +
+      `<button class="row"><span class="g${busy ? ' run' : ''}">${busy ? spinner(14) : I.branch}</span>Fix invoice rounding</button>` +
+      `<div class="repo"><span class="monogram" style="background:#8E6BE0">L</span>ledger</div><button class="row"><span class="g">${I.branch}</span>Retry OCR on timeouts</button>`;
+  }
+  // UPD-02 / UPD-04 / UPD-05: one banner, its state in place
+  function renderBanner(enter) {
+    const slot = $('#updSlot');
+    if (state.upd === 'none' || (state.hidden && state.upd === 'available') || (state.hidden && state.upd === 'failed')) { slot.innerHTML = ''; return; }
+    let l1 = '', l2 = '', req = 'UPD-02';
+    if (state.upd === 'available') {
+      l1 = `<span class="ico">${I.down}</span><span class="t">Rocky ${NEXT} is available<small>You have ${CURRENT}</small></span><button class="x" data-action="hide" title="Hide until the next launch" aria-label="Hide">${I.x}</button>`;
+      l2 = `<button class="link" data-action="notes">What's new ${I.ext}</button><span class="grow"></span><button class="go" data-action="update">Update</button>`;
+    } else if (state.upd === 'downloading') {
+      req = 'UPD-04';
+      l1 = `<span class="ico" style="color:var(--text-2)">${spinner(14)}</span><span class="t">Downloading Rocky ${NEXT}…</span>`;
+      l2 = `<div class="grow" style="display:flex;flex-direction:column;gap:5px"><div class="bar"><i style="width:${(state.done / TOTAL * 100).toFixed(1)}%"></i></div><span class="mb">${state.done.toFixed(1)} of ${TOTAL} MB</span></div><button class="link" data-action="cancel" style="align-self:flex-end">Cancel</button>`;
+    } else if (state.upd === 'installing') {
+      req = 'UPD-04';
+      l1 = `<span class="ico" style="color:var(--text-2)">${spinner(14)}</span><span class="t">Installing Rocky ${NEXT}…<small>Rocky relaunches in a moment</small></span>`;
+    } else if (state.upd === 'failed') {
+      req = 'UPD-05';
+      l1 = `<span class="ico err">${I.warn}</span><span class="t" title="The download stopped at 6.2 of 15.1 MB: the connection was lost.">Couldn't update to ${NEXT}<small>The download stopped at 6.2 of ${TOTAL} MB</small></span><button class="x" data-action="hide" title="Hide until the next launch" aria-label="Hide">${I.x}</button>`;
+      l2 = `<button class="link" data-action="copy">Copy install command</button><span class="grow"></span><button class="go" data-action="update">Retry</button>`;
+    }
+    slot.innerHTML = `<div class="upd${enter ? '' : ''}" data-req="${req}" role="status"><div class="l1">${l1}</div>${l2 ? `<div class="l2">${l2}</div>` : ''}</div>`;
+    if (!enter) slot.firstChild.style.animation = 'none';
+  }
+  function stopsList() {
+    const lines = [];
+    if (state.busy) lines.push('2 agents working: tokyo, lima', 'The Run script in oslo', '2 tasks: Run: API + Web, Run: Admin', '3 terminals');
+    if (state.unsaved) lines.push('2 files with unsaved edits: openapi.ts, README.md');
+    return lines;
+  }
+  function dialog({ title, message, list, buttons }) {
+    const scrim = document.createElement('div'); scrim.className = 'dlg-scrim';
+    const left = buttons.filter((b) => b.left), right = buttons.filter((b) => !b.left);
+    const btn = (b) => `<button class="${b.role || ''}" data-i="${buttons.indexOf(b)}">${esc(b.label)}</button>`;
+    scrim.innerHTML = `<div class="dlg" role="alertdialog" aria-modal="true" data-req="UPD-03"><h4>${esc(title)}</h4><p>${esc(message)}</p><ul>${list.map((l) => `<li>${esc(l)}</li>`).join('')}</ul><div class="btns">${left.map(btn).join('')}<span class="grow"></span>${right.map(btn).join('')}</div></div>`;
+    win.appendChild(scrim);
+    const close = (b) => { document.removeEventListener('keydown', onKey, true); scrim.remove(); if (b.run) b.run(); };
+    const def = right[right.length - 1], cancel = buttons.find((b) => b.role === 'cancel');
+    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); close(cancel); } else if (e.key === 'Enter') { e.preventDefault(); close(def); } };
+    document.addEventListener('keydown', onKey, true);
+    scrim.addEventListener('mousedown', (e) => { if (e.target === scrim) close(cancel); });
+    scrim.querySelector('.btns').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) close(buttons[Number(b.dataset.i)]); });
+  }
+  function askThenUpdate() {   // UPD-03: ask only when something would stop
+    const list = stopsList();
+    if (!list.length) { download(); return; }
+    const buttons = state.unsaved
+      ? [{ label: 'Don’t Save', role: 'destructive', left: true, run: download }, { label: 'Cancel', role: 'cancel' }, { label: 'Save All and Update', role: 'primary', run: download }]
+      : [{ label: 'Cancel', role: 'cancel' }, { label: 'Update and Relaunch', role: 'primary', run: download }];
+    dialog({ title: `Update to Rocky ${NEXT}?`, message: 'Rocky relaunches, and these stop:', list, buttons });
+  }
+  let timer = null;
+  function download() {   // UPD-04: download, check, then install and relaunch
+    state.upd = 'downloading'; state.done = 0; state.hidden = false; renderBanner();
+    clearInterval(timer);
+    timer = setInterval(() => {
+      state.done = Math.min(TOTAL, state.done + 1.1);
+      if (state.fail && state.done >= 6.2) { clearInterval(timer); state.done = 6.2; state.upd = 'failed'; renderBanner(); return; }
+      if (state.done >= TOTAL) { clearInterval(timer); install(); return; }
+      renderBanner();
+    }, 160);
+  }
+  function install() {
+    state.upd = 'installing'; renderBanner();
+    setTimeout(() => {   // the helper swaps the bundles while Rocky is closed, then opens the new one
+      win.classList.add('relaunching');
+      setTimeout(() => { state.upd = 'none'; state.busy = false; state.unsaved = false; $('#demoBusy').setAttribute('aria-pressed', 'false'); $('#demoUnsaved').setAttribute('aria-pressed', 'false'); renderSidebar(); renderBanner(); win.classList.remove('relaunching'); toast(`Updated to Rocky ${NEXT}`, 'What\'s new'); }, 900);
+    }, 1400);
+  }
+  let toastTimer = null;
+  function toast(msg, action) {
+    let t = win.querySelector('.toast'); if (!t) { t = document.createElement('div'); t.className = 'toast'; win.appendChild(t); }
+    t.innerHTML = `<span>${esc(msg)}</span>${action ? `<button data-action="notes">${esc(action)}</button>` : ''}`;
+    t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), action ? 4000 : 2600);
+  }
+  function closeOverlays() { win.querySelectorAll('.appmenu, .set-scrim').forEach((n) => n.remove()); }
+  function manualCheck() {   // UPD-06
+    closeOverlays(); state.checking = true;
+    setTimeout(() => {
+      state.checking = false;
+      if (state.upd === 'none') toast(`Rocky ${CURRENT} is the newest version`);
+      else { state.hidden = false; renderBanner(true); }
+    }, 700);
+  }
+  function openMenu() {
+    closeOverlays();
+    const m = document.createElement('div'); m.className = 'appmenu'; m.dataset.req = 'UPD-06';
+    m.innerHTML = `<button>About Rocky</button><button data-action="check"${state.checking ? ' disabled' : ''}>${state.checking ? 'Checking for Updates…' : 'Check for Updates…'}</button><div class="sep"></div><button data-action="settings">Settings…<span>⌘,</span></button><div class="sep"></div><button>Quit Rocky<span>⌘Q</span></button>`;
+    win.appendChild(m);
+  }
+  function openSettings() {
+    closeOverlays();
+    const right = state.upd === 'available' || state.upd === 'failed' ? `<button class="set-btn" data-action="update" style="background:#fff;color:#111316">Update to ${NEXT}</button>`
+      : state.upd === 'downloading' ? `<span class="muted">Downloading… ${state.done.toFixed(1)} MB</span>` : '<span class="muted">Up to date</span>';
+    const s = document.createElement('div'); s.className = 'set-scrim';
+    s.innerHTML = `<div class="set"><div class="set-head"><span class="grow">Settings</span><button data-action="close-settings" aria-label="Close">${I.x}</button></div><div class="set-body"><div class="set-sec" data-req="UPD-06"><h5>Rocky</h5><div class="set-card"><div class="set-row"><div class="lbl">Version<small>${CURRENT} (build 12) · checked today at 9:41</small></div>${right}<button class="set-btn" data-action="check">Check Now</button></div></div></div><div class="set-sec"><h5>Agents</h5><div class="set-card"><div class="set-row"><div class="lbl">Claude Code<small>Installed 0.81.0 · tested 0.81.0</small></div><span class="muted">Up to date</span></div></div></div></div></div>`;
+    win.appendChild(s);
+    s.addEventListener('mousedown', (e) => { if (e.target === s) s.remove(); });
+  }
+
+  win.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-action]'); if (!b || b.disabled) return;
+    switch (b.dataset.action) {
+      case 'hide': { const u = $('.upd'); if (u) { u.classList.add('out'); setTimeout(() => { state.hidden = true; renderBanner(); }, 150); } break; }
+      case 'update': closeOverlays(); askThenUpdate(); break;
+      case 'cancel': clearInterval(timer); state.upd = 'available'; renderBanner(); break;
+      case 'notes': toast('Opens the release page in the browser.'); break;
+      case 'copy': toast('Copied the install command'); break;
+      case 'check': manualCheck(); break;
+      case 'settings': openSettings(); break;
+      case 'close-settings': closeOverlays(); break;
+      default: break;
+    }
+  });
+  document.addEventListener('mousedown', (e) => { const m = win.querySelector('.appmenu'); if (m && !m.contains(e.target) && e.target.id !== 'demoMenu') m.remove(); });
+  $('#demoNew').addEventListener('click', () => { if (state.upd === 'none') { state.upd = 'available'; state.hidden = false; renderBanner(true); } });
+  $('#demoBusy').addEventListener('click', (e) => { state.busy = !state.busy; e.currentTarget.setAttribute('aria-pressed', String(state.busy)); renderSidebar(); });
+  $('#demoUnsaved').addEventListener('click', (e) => { state.unsaved = !state.unsaved; e.currentTarget.setAttribute('aria-pressed', String(state.unsaved)); });
+  $('#demoFail').addEventListener('click', (e) => { state.fail = !state.fail; e.currentTarget.setAttribute('aria-pressed', String(state.fail)); });
+  $('#demoMenu').addEventListener('click', openMenu);
+  $('#demoSettings').addEventListener('click', openSettings);
+  $('#demoPins').addEventListener('click', (e) => { e.currentTarget.setAttribute('aria-pressed', String(document.body.classList.toggle('spec-on'))); });
+  document.addEventListener('click', (e) => {
+    if (!document.body.classList.contains('spec-on')) return;
+    const el = e.target.closest('[data-req]'); if (!el) return;
+    const s = document.getElementById('REQ-' + el.dataset.req); if (!s) return;
+    s.scrollIntoView({ behavior: 'smooth', block: 'start' }); s.classList.add('flash'); setTimeout(() => s.classList.remove('flash'), 1400);
+  }, true);
+
+  $('#addRepo').innerHTML = I.folder;
+  win.querySelector('.gear').innerHTML = I.gear;
+  renderSidebar(); renderBanner();
+})();
+</script>
+</body>
+</html>

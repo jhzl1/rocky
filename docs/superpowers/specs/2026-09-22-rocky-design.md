@@ -99,12 +99,22 @@ Status as of 2026-09-29 (after M2.9's merge). **Done** means merged into `develo
 | M2.8 | Conversations and agents | "+" creates at once, the default agent, agents in the model menu (added 2026-09-23); ⌃` toggles the terminal (added 2026-09-25); Rocky's own mini-modals in place of the native dialogs (added 2026-09-25) | **Done** 2026-09-25, pushed; "+" and the default agent shipped early with M3's follow-up branch; manual checklist still open (`m2.8-verification.md`) |
 | M2.9 | GitHub links and VS Code tasks | link an issue, a pull request or a branch from the message box's "+", switching the worktree to a pull request or branch and naming the workspace after the issue; run `.vscode/tasks.json`'s tasks from Run, now a split button, with their inputs, dependencies and background waits (added 2026-09-25) | **Done** 2026-09-29, pushed; manual checklist still open (`m2.9-verification.md`) |
 | M3 | Diff, comments, editor, files | review, comment, edit and commit; the All files tab to browse and edit any file (added 2026-09-24); its PR part moved to M2.7 | **Done** 2026-09-24; manual checklist still open (`m3-verification.md`) |
+| M3.1 | All changes | every changed file in one scrolling tab, like VS Code's Open Changes: only what changed, each file folds, its name opens its own tab (added 2026-09-29) | **Done** 2026-09-29 (`m3.1-verification.md`); design `docs/superpowers/design/2026-09-29-m3.1-all-changes.html` by dev-2: ALL-01…09, RVW-01…02, QUE-01, KIT-21 |
 | M4 | Multi-account + energy | per-repo account everywhere; energy measured vs Conductor | **Not planned**: M2.7 already gives each repository its account and `GH_TOKEN`; left: git identity and SSH key per account, and the energy measurement |
-| M5 | Distribution | friends install Rocky with one command and hear about new versions (added 2026-09-25) | **Not planned** (user decision, 2026-09-25: "lo dejemos escrito, pero aún no lo haremos"); what it holds is in "Distribution (M5, not planned)" below |
+| M5 | Distribution | friends install Rocky with one command and hear about new versions (added 2026-09-25) | **Planned** (user decision, 2026-09-29: "Ya, como M5"; written down but not planned since 2026-09-25); what it holds is in "Distribution (M5)" below |
 
-## Distribution (M5, not planned)
+## Distribution (M5)
 
-Written down on 2026-09-25 at the user's request, to be planned later. Today `scripts/make-app.sh` builds
+Written down on 2026-09-25 at the user's request and planned on 2026-09-29. The user's decisions that day:
+
+- **Updates:** a Rocky banner offers Update, which installs the new version and relaunches.
+- **Architecture:** Apple Silicon only (`arm64`); no friend has an Intel Mac.
+- **Signing:** every release is signed with the "Rocky Local" certificate, created once on the user's Mac and
+  backed up, so that a friend's Keychain keeps recognizing Rocky across updates.
+- **Where `install.sh` lives:** the repository has no `main` branch (only `development`), so each release attaches
+  it, at the stable URL `https://github.com/jhzl1/rocky/releases/latest/download/install.sh`.
+
+Before M5, `scripts/make-app.sh` built `build/Rocky.app` and nothing else. Today `scripts/make-app.sh` builds
 `build/Rocky.app` only: signed ad hoc (or with the local "Rocky Local" certificate), `arm64` only, version `0.1.0`
 (build `1`) since the start, no `.dmg`, no update check.
 
@@ -112,8 +122,8 @@ Written down on 2026-09-25 at the user's request, to be planned later. Today `sc
   - raises `CFBundleShortVersionString` and `CFBundleVersion` in `Resources/Info.plist`;
   - builds the app and zips it (`ditto -c -k --keepParent`);
   - creates a GitHub Release on `jhzl1/rocky` (public) with `Rocky.zip` attached (`gh release create`).
-- **Install with one command.** An `install.sh` at the repository's root, run as
-  `curl -fsSL https://raw.githubusercontent.com/jhzl1/rocky/main/install.sh | bash`:
+- **Install with one command.** An `install.sh` at the repository's root, attached to each release and run as
+  `curl -fsSL https://github.com/jhzl1/rocky/releases/latest/download/install.sh | bash`:
   - it downloads the latest release's zip with `curl`, unzips it into `/Applications` and clears
     `com.apple.quarantine`;
   - files that `curl` downloads are not quarantined, so Gatekeeper does not block the ad hoc-signed app, and no Apple
