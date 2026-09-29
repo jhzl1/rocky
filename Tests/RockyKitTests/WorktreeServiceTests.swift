@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import RockyKit
 
@@ -310,6 +311,37 @@ struct WorktreeServiceTests {
         #expect(reason.contains("rocky/accra"))
         #expect(!FileManager.default.fileExists(atPath: made.path.path))
         #expect(try hasBranch("rocky/accra", in: repo))
+    }
+
+    /// A removal git began but could not finish (a process outside Rocky kept writing in the folder) left git without
+    /// the worktree and the folder with what it could not delete: removing again sends that to the Trash, and the branch
+    /// rule applies. A worktree whose folder is gone is forgotten by git. A dirty one still refuses (the test above).
+    @Test func removeFinishesARemovalGitCouldNotComplete() throws {
+        let repo = try GitFixture.clonedRepo(in: try Fixtures.temporaryDirectory("git"))
+        let trash = try Fixtures.temporaryDirectory("trash")
+        let recycled = Mutex<[URL]>([])
+        let service = WorktreeService(environment: GitFixture.environment) { url in
+            recycled.withLock { $0.append(url) }
+            try FileManager.default.moveItem(at: url, to: trash.appendingPathComponent(url.lastPathComponent))
+        }
+
+        let half = try service.create(repo: repo, name: "havana")
+        // What git leaves when it drops a worktree it could not delete: no `.git` file, git's own record gone, files left.
+        try FileManager.default.removeItem(at: half.path.appendingPathComponent(".git"))
+        try GitFixture.git(["worktree", "prune"], in: repo)
+        #expect(try !GitFixture.git(["worktree", "list"], in: repo).contains("havana"))
+        #expect(throws: ProcessFailure.self) { try GitFixture.git(["worktree", "remove", half.path.path], in: repo) }
+
+        #expect(try service.remove(repo: repo, worktree: half.path, branch: half.branch) == .deleted)
+        #expect(recycled.withLock { $0 } == [half.path])
+        #expect(!FileManager.default.fileExists(atPath: half.path.path))
+        #expect(try !hasBranch("rocky/havana", in: repo))
+
+        let gone = try service.create(repo: repo, name: "bogota")
+        try FileManager.default.removeItem(at: gone.path)
+        #expect(try service.remove(repo: repo, worktree: gone.path, branch: gone.branch) == .deleted)
+        #expect(try !GitFixture.git(["worktree", "list"], in: repo).contains("bogota"))
+        #expect(recycled.withLock { $0 } == [half.path])
     }
 
     /// WSC-06: a stopped creation runs no more git, and throws `CancellationError`.

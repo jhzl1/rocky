@@ -28,9 +28,15 @@ public struct WorktreeService: Sendable {
     private static let git = URL(fileURLWithPath: "/usr/bin/git")
 
     public let environment: [String: String]
+    /// Where `remove` sends what a removal git could not finish left behind: the Trash, so nothing is lost for good.
+    private let recycle: @Sendable (URL) throws -> Void
 
-    public init(environment: [String: String]) {
+    public init(
+        environment: [String: String],
+        recycle: @escaping @Sendable (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }
+    ) {
         self.environment = Self.nonInteractive(environment)
+        self.recycle = recycle
     }
 
     /// The environment of Rocky's own git runs: never block on a credential prompt, since there is no terminal to
@@ -166,6 +172,17 @@ public struct WorktreeService: Sendable {
         try run(["branch", "-D", branch], in: repo)
     }
 
+    /// Whether git lists `worktree` among `repo`'s worktrees, by its resolved path. A list git cannot give counts as
+    /// listed, so nothing is sent to the Trash on a guess.
+    private func isRegistered(_ worktree: URL, in repo: URL) -> Bool {
+        guard let list = try? run(["worktree", "list", "--porcelain"], in: repo) else { return true }
+        let wanted = worktree.resolvingSymlinksInPath().standardizedFileURL.path
+        return list.split(separator: "\n").contains { line in
+            line.hasPrefix("worktree ")
+                && URL(fileURLWithPath: String(line.dropFirst("worktree ".count))).resolvingSymlinksInPath().standardizedFileURL.path == wanted
+        }
+    }
+
     private func branchExists(_ branch: String, in repo: URL) -> Bool {
         (try? run(["rev-parse", "--verify", "--quiet", "refs/heads/\(branch)"], in: repo)) != nil
     }
@@ -187,9 +204,22 @@ public struct WorktreeService: Sendable {
     /// remote branch or a tag, so a branch whose work is pushed or merged goes too, and one with a commit nowhere else
     /// stays. A branch without the prefix (one GHL-05 switched to, a pull request's) always stays, and so does every
     /// branch when `branch` is nil.
+    ///
+    /// git drops a worktree it removes even when it cannot delete all of its folder, for example while a dev server
+    /// started from another editor keeps writing in it, and each later `worktree remove` then fails with "is not a
+    /// working tree" (user report, 2026-09-29). So a failure for a worktree git no longer has, or whose folder is gone,
+    /// finishes the removal: what is left goes to the Trash and git forgets it. A worktree git still has refused, and
+    /// nothing changed.
     @discardableResult
     public func remove(repo: URL, worktree: URL, branch: String? = nil) throws -> BranchOutcome {
-        try run(["worktree", "remove", worktree.path], in: repo)
+        do {
+            try run(["worktree", "remove", worktree.path], in: repo)
+        } catch {
+            let folderExists = FileManager.default.fileExists(atPath: worktree.path)
+            guard !folderExists || !isRegistered(worktree, in: repo) else { throw error }
+            if folderExists { try recycle(worktree) }
+            try run(["worktree", "prune"], in: repo)
+        }
         guard let branch, branch.hasPrefix(Self.branchPrefix), branchExists(branch, in: repo) else { return .leftAlone }
         // The worktree is gone by now: what follows can only keep the branch, never bring the workspace back.
         do {

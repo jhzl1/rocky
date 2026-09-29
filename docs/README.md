@@ -280,6 +280,11 @@ clon principal la tiene activa), el workspace se quita igual y un aviso dice por
 nada: el workspace vuelve a la barra lateral como estaba, sin seleccionar, y aparece "Couldn't remove lima" con el
 mensaje de git y OK.
 
+**Si otro programa sigue escribiendo en la carpeta**, por ejemplo un servidor de desarrollo abierto desde otro
+editor, git puede soltar el worktree sin terminar de borrar la carpeta. Rocky manda lo que quede a la Papelera y
+termina de quitar el workspace. Ese programa sigue corriendo; detenlo tú, porque Rocky solo detiene lo que él
+arrancó.
+
 Si el script Archive falla, no se borra nada. Aparece "Archive script failed" con "Remove Anyway" (quita el
 workspace sin volver a correr el script) y "Cancel". La pestaña Archive muestra la salida del script.
 
