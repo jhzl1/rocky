@@ -403,9 +403,12 @@ public final class AppModel {
         didSet { defaults.set(selectedConversationIds, forKey: Self.lastConversationsKey) }
     }
     /// `AGM-02`, `AGM-03`, `KIT-11`: the unsent draft (text, files and line chip) a pick in the model menu moved, by the
-    /// conversation that takes it (M2.8 Decision 1). The next `ChatView` for that conversation takes it once
-    /// (`takePendingDraft`): a switched conversation gets a new view, since its chat is new, and so does a new tab.
+    /// conversation that takes it (M2.8 Decision 1), and the draft a conversation had when another one took the screen
+    /// (`keepDraft`). The next `ChatView` for that conversation takes it once (`takePendingDraft`): a switched
+    /// conversation gets a new view, since its chat is new, and so does a new tab. In memory only.
     @ObservationIgnored public private(set) var pendingDrafts: [String: MessageHistory.Entry] = [:]
+    /// The conversations whose draft AGM-03 just moved to a new tab: their box's next `keepDraft` keeps nothing.
+    @ObservationIgnored private var movedDrafts: Set<String> = []
     /// `AGM-02`: each conversation's agent switch in flight, so a later pick, or the tab closing, wins over an earlier
     /// one still building its chat.
     @ObservationIgnored private var agentSwitches: [String: UUID] = [:]
@@ -1628,6 +1631,8 @@ public final class AppModel {
             return nil
         }
         if hasMessages(conversationId: conversationId) {
+            // AGM-03 moves the draft: the box it leaves keeps none (`keepDraft`), before the new tab takes the screen.
+            if let draft, !draft.isEmpty { movedDrafts.insert(conversationId) }
             let opened = await newConversation(workspace: workspace, agent: agent, model: model, draft: draft)
             return opened == nil ? nil : .openedConversation
         }
@@ -1692,6 +1697,18 @@ public final class AppModel {
         await closeEmbeddedTerminal(conversationId: conversationId)
         startInBackground(fresh)
         return true
+    }
+
+    /// What a conversation's message box held when its view went, for the next view to put back (user report,
+    /// 2026-09-30: switching conversations lost the text). An empty box forgets it, and a closed conversation keeps none.
+    public func keepDraft(_ draft: MessageHistory.Entry?, conversationId: String) {
+        let isOpen = conversations.values.contains { $0.contains { $0.id == conversationId } }
+        let wasMoved = movedDrafts.remove(conversationId) != nil
+        guard let draft, !draft.isEmpty, isOpen, !wasMoved else {
+            pendingDrafts[conversationId] = nil
+            return
+        }
+        pendingDrafts[conversationId] = draft
     }
 
     /// The draft a pick moved to this conversation (`pendingDrafts`), once: the next `ChatView` for it puts it in its

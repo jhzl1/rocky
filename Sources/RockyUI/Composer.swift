@@ -14,6 +14,10 @@ final class ComposerController {
     private(set) var hasContent = false
     /// A line comment's chip starts the message (CMT-05 History): the message goes as that comment again.
     private(set) var hasLineChip = false
+    /// The unsent message as of the last change, kept for when the view goes: its text view may already be gone by
+    /// then, so `draft` could not read it. Every change, typed or not (a send's clear, a loaded draft), passes through
+    /// `textChanged`.
+    @ObservationIgnored private(set) var lastDraft: MessageHistory.Entry?
     /// The editor's height: from two lines up to ten, then it scrolls.
     private(set) var height = ComposerController.minHeight
     /// The slash command popup over the box (CMD-01…CMD-05), driven by this text view.
@@ -96,6 +100,7 @@ final class ComposerController {
                 || !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
         height = min(max(textView.contentHeight, Self.minHeight), Self.maxHeight)
+        lastDraft = draft
         refreshPopup()
     }
 

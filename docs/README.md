@@ -686,6 +686,12 @@ avanza hasta dejar el cuadro vacío. Solo funciona mientras el texto mostrado no
 mueven el cursor como siempre. Un comentario en líneas vuelve con su etiqueta al inicio y el comentario después
 (sección 15).
 
+### El texto sin enviar
+
+Si escribes algo en el cuadro de mensaje y te vas a otra conversación, a otro workspace o a una pestaña de archivo,
+el texto se queda en su conversación, con sus archivos adjuntos y su etiqueta de líneas, y vuelve cuando regresas.
+Dura mientras Rocky esté abierto. Al cerrar la conversación, se descarta.
+
 ### Mensajes en cola
 
 Si el agente está trabajando, Return no interrumpe: el mensaje entra en una cola y sale cuando termina el turno.

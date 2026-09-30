@@ -184,6 +184,9 @@ struct ChatView: View {
         .onChange(of: commandsConfirmed) { composerText.setCommands(commands, confirmed: commandsConfirmed) }
         .onDisappear {
             chat.isVisible = false
+            // Each conversation has its own view, so another conversation or workspace on screen drops this box: what
+            // it held waits in the model and comes back with the next view (user report, 2026-09-30).
+            model.keepDraft(composerText.lastDraft, conversationId: conversationId)
             if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
             keyMonitor = nil
             ConversationComposers.unregister(composerText, conversationId: conversationId)

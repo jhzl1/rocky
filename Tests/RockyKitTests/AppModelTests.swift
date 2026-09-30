@@ -871,6 +871,27 @@ struct AppModelTests {
         await model.stopAllAgents()
     }
 
+    /// A conversation's message box keeps its text while another conversation or workspace is on screen (user report,
+    /// 2026-09-30): the draft waits in the model and comes back once; an empty box forgets it, and a closed
+    /// conversation keeps none.
+    @Test func aConversationKeepsItsDraftWhileAnotherIsOnScreen() async throws {
+        let (model, workspace, _) = try await workspaceWithAConversation(store: try RockyStore.inMemory())
+        let conversationId = try #require(model.selectedConversationIds[workspace.id])
+        let draft = MessageHistory.Entry(text: "Half a thought", files: ["/tmp/a.png"], lineRange: nil)
+
+        model.keepDraft(draft, conversationId: conversationId)
+        #expect(model.takePendingDraft(conversationId: conversationId) == draft)
+        #expect(model.takePendingDraft(conversationId: conversationId) == nil)
+
+        model.keepDraft(draft, conversationId: conversationId)
+        model.keepDraft(nil, conversationId: conversationId)
+        #expect(model.takePendingDraft(conversationId: conversationId) == nil)
+
+        model.keepDraft(draft, conversationId: "closed-or-unknown")
+        #expect(model.takePendingDraft(conversationId: "closed-or-unknown") == nil)
+        await model.stopAllAgents()
+    }
+
     /// KIT-11, AGM-03: with a message sent, another agent's model opens a new conversation at the end, selected, with
     /// the picked model and the draft; the conversation left behind keeps its agent, its session and its chat.
     @Test func aPickWithMessagesOpensANewConversationAndLeavesTheOldOne() async throws {
@@ -887,6 +908,9 @@ struct AppModelTests {
         let newId = try #require(tabs.last?.id)
         #expect(model.selectedConversationIds[workspace.id] == newId)
         #expect(model.takePendingDraft(conversationId: newId) == draft)
+        #expect(model.takePendingDraft(conversationId: firstId) == nil)
+        // The box it left, going off screen with the text still in it, keeps no copy: the draft moved.
+        model.keepDraft(draft, conversationId: firstId)
         #expect(model.takePendingDraft(conversationId: firstId) == nil)
 
         #expect(model.chat(conversationId: firstId) === first)
