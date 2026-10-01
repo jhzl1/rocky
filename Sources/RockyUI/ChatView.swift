@@ -34,8 +34,10 @@ struct ChatView: View {
     @State private var keyMonitor: Any?
     /// `isActive` for the key monitor: its closure keeps the view as it was when it appeared.
     @State private var liveActive = LiveFlag()
-    /// Bumped once after the conversation is laid out (`selectionRefresh`).
+    /// Bumped to update Textual's selection overlays (`refreshSelection`).
     @State private var selectionRefresh = 0
+    /// The refresh waiting for the rows to be laid out; a newer request replaces it.
+    @State private var selectionRefreshTask: Task<Void, Never>?
     /// The message box's frame in the window, which the GitHub picker sits above (`GHL-02`).
     @State private var composerFrame: CGRect = .zero
     @Environment(\.openFile) private var openFile
@@ -125,11 +127,14 @@ struct ChatView: View {
                         Color.clear.frame(height: 1).id(Self.bottomId)
                     }
                     .font(.rocky(14))
-                    // Textual's selection overlays take their hit areas when SwiftUI updates them. A conversation
-                    // opened while the window was already key kept stale ones: nothing could be selected until the
-                    // window lost and regained focus, which updates every view (user report, 2026-09-24). One
-                    // environment change once the rows are laid out does the same.
+                    // Textual's selection overlays take their hit areas when SwiftUI updates them, and they go stale:
+                    // a conversation opened while the window was already key (user report, 2026-09-24), and a reply
+                    // that came in piece by piece (2026-10-01: a press found no text, so a drag selected nothing until
+                    // the view scrolled). One environment change updates them; it goes once the rows are laid out,
+                    // when a turn ends or messages arrive, and as the pointer enters the conversation, which comes
+                    // before any click on it.
                     .environment(\.selectionRefresh, selectionRefresh)
+                    .onHover { inside in if inside { refreshSelection(after: .zero) } }
                     .padding(.horizontal, Self.columnPadding)
                     .padding(.vertical, 20)
                     .frame(maxWidth: Zoom.shared(Self.readingWidth))
@@ -141,18 +146,21 @@ struct ChatView: View {
                 }
                 // Stay pinned to the bottom while the content grows.
                 .defaultScrollAnchor(.bottom)
-                .onChange(of: chat.items.count) { proxy.scrollTo(Self.bottomId, anchor: .bottom) }
+                .onChange(of: chat.items.count) {
+                    proxy.scrollTo(Self.bottomId, anchor: .bottom)
+                    refreshSelection()
+                }
                 .onChange(of: chat.items.last?.text) { proxy.scrollTo(Self.bottomId, anchor: .bottom) }
-                .onChange(of: chat.state) { proxy.scrollTo(Self.bottomId, anchor: .bottom) }
+                .onChange(of: chat.state) {
+                    proxy.scrollTo(Self.bottomId, anchor: .bottom)
+                    if chat.state != .running { refreshSelection() }
+                }
                 .onChange(of: chat.queue.count) { proxy.scrollTo(Self.bottomId, anchor: .bottom) }
             }
         }
         .onAppear {
             chat.isVisible = true
-            Task {
-                try? await Task.sleep(for: .milliseconds(150))
-                selectionRefresh += 1
-            }
+            refreshSelection()
             liveActive.value = isActive
             keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { handleKey($0) }
             ConversationComposers.register(composerText, conversationId: conversationId)
@@ -549,6 +557,16 @@ struct ChatView: View {
         return nil
     }
 
+    /// Updates Textual's selection overlays after `delay`, the time for new rows to be laid out (`selectionRefresh`).
+    private func refreshSelection(after delay: Duration = .milliseconds(150)) {
+        selectionRefreshTask?.cancel()
+        selectionRefreshTask = Task {
+            if delay > .zero { try? await Task.sleep(for: delay) }
+            guard !Task.isCancelled else { return }
+            selectionRefresh &+= 1
+        }
+    }
+
     private func chooseAttachments() {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
@@ -648,11 +666,9 @@ struct ChatItemRow: View, Equatable {
         case .user:
             UserMessageRow(item: item, command: command)
         case .agent:
-            // Headings, lists, highlighted code blocks and tables, styled like Conductor's replies.
-            StructuredText(item.text, parser: RockyMarkdownParser(zoom: Zoom.shared.scale))
-                .textual.structuredTextStyle(RockyMarkdownStyle())
-                .textual.textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            // Headings, lists, highlighted code blocks and tables, styled like Conductor's replies; the code blocks are
+            // Rocky's own views (`AgentReplyView`).
+            AgentReplyView(text: item.text)
         case .thought:
             ThoughtRow(item: item)
         case .tool:

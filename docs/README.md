@@ -686,6 +686,14 @@ avanza hasta dejar el cuadro vacío. Solo funciona mientras el texto mostrado no
 mueven el cursor como siempre. Un comentario en líneas vuelve con su etiqueta al inicio y el comentario después
 (sección 15).
 
+### El código en las respuestas
+
+Los bloques de código de las respuestas del agente muestran el lenguaje arriba a la izquierda y un botón para copiar
+el bloque entero (el ícono cambia a ✓ al copiar). Las líneas largas no se parten: el bloque se desplaza de lado (con el
+trackpad, o con Shift y la rueda del mouse), y el borde donde queda código oculto se difumina hasta que llegas al
+final. Puedes seleccionar una parte del código y copiarla con ⌘C. La selección de un bloque no se extiende al texto de
+alrededor: para copiar la respuesta entera, usa el botón de copiar al pie de la respuesta.
+
 ### El texto sin enviar
 
 Si escribes algo en el cuadro de mensaje y te vas a otra conversación, a otro workspace o a una pestaña de archivo,
@@ -813,6 +821,9 @@ El panel inferior del workspace tiene pestañas para los scripts (Setup, Run, Ar
 - **Nombres:** los terminales se llaman "Terminal 1", "Terminal 2"… según su posición. Una tarea lleva su nombre.
 - **Cerrar:** los terminales, las tareas y el Setup se cierran con la "×" de su pestaña, que detiene su proceso. El
   Setup también se cierra solo cuando termina bien. Run y Archive no se cierran.
+- **El timbre:** si un programa de la terminal manda un aviso sonoro (por ejemplo, zsh cuando el autocompletado no
+  encuentra nada), solo suena mientras escribes en esa terminal con Rocky al frente. Al volver a una pestaña, su
+  salida anterior no vuelve a sonar.
 - **Plegar y desplegar:** ⌘J, o la flecha a la derecha de la barra. Plegar no detiene nada: terminales y scripts
   siguen corriendo. Rocky recuerda si el panel estaba plegado.
 - **⌃` (View ▸ Toggle Terminal)**, como en VS Code:

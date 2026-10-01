@@ -89,6 +89,8 @@ open build/Rocky.app
   `.sheet` or `NSAlert`; the one exception is the quit prompt with no window. File pickers (`NSOpenPanel`) stay native.
 - **No scroll bar track anywhere**: `RockyApp.init()` sets `AppleShowScrollBars` to `WhenScrolling` in Rocky's own
   defaults, so every scroll view shows only the knob, while scrolling. Never give a scroll view its own legacy style.
+  A scroll area inside content, such as a reply's code block, hides its indicators (`.scrollIndicators(.hidden)`),
+  whose knob and hover track would sit over the text; a fading edge shows that more is there.
 - **Key monitors**: an `NSEvent` monitor added from a SwiftUI view keeps the view as it was when it was added;
   read live state through a reference (`LiveFlag`). Esc goes first to an open menu, the settings modal or a sheet,
   then stops the agent's turn.

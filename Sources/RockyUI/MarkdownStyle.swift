@@ -128,6 +128,8 @@ struct RockyCodeBlockStyle: StructuredText.CodeBlockStyle {
                     .font(.rocky(10, design: .monospaced))
                     .foregroundStyle(.secondary)
                 Spacer()
+                // Only for Markdown that does not go through `AgentReplyView`: Textual's selection layer takes the clicks
+                // on this button (its issue #40), so replies draw their code blocks themselves.
                 Button("Copy", systemImage: "doc.on.doc") { configuration.codeBlock.copyToPasteboard() }
                     .labelStyle(.iconOnly)
                     .buttonStyle(.borderless)
@@ -137,19 +139,33 @@ struct RockyCodeBlockStyle: StructuredText.CodeBlockStyle {
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             Rectangle().fill(Markdown.border).frame(height: 1)
-            Overflow {
-                configuration.label
-                    .textual.lineSpacing(.fontScaled(0.25))
-                    .textual.fontScale(0.9)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .monospaced()
-                    .padding(14)
-            }
+            CodeBlockBody(label: configuration.label)
         }
         .background(Markdown.blockBackground)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Markdown.border))
         .textual.blockSpacing(.init(top: 4, bottom: 14))
+    }
+}
+
+/// A code block's code. Long lines wrap (`.wrap`, user decision, 2026-09-30): in Textual's scroll mode the message's
+/// selection layer kept the clicks on the block (seen with lldb at its `NSTextInteractionView.mouseDown`), so no part
+/// of the code could be selected or copied (its issue #49, open in 0.5.0). Wrapped, the code is part of the message's
+/// text and selects and copies with ⌘C like the rest, and nothing is hidden. The header's Copy button copies the whole
+/// block.
+private struct CodeBlockBody: View {
+    let label: StructuredText.CodeBlockStyleConfiguration.Label
+
+    var body: some View {
+        Overflow {
+            label
+                .textual.lineSpacing(.fontScaled(0.25))
+                .textual.fontScale(0.9)
+                .fixedSize(horizontal: false, vertical: true)
+                .monospaced()
+                .padding(14)
+        }
+        .textual.overflowMode(.wrap)
     }
 }
 

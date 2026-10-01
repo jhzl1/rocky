@@ -71,6 +71,15 @@ public enum SyntaxLanguage {
         "sql": "sql",
     ]
 
+    /// A code block's grammar from its fence's info string: a grammar's own name ("typescript"), an extension ("ts"),
+    /// or a shell's name ("shell", "console"); nil for plain text.
+    public static func language(forHint hint: String?) -> String? {
+        guard let word = hint?.split(separator: " ").first?.lowercased(), !word.isEmpty else { return nil }
+        if Set(byExtension.values).contains(word) { return word }
+        if let language = byExtension[word] { return language }
+        return ["shell", "console", "shellsession", "terminal"].contains(word) ? "bash" : nil
+    }
+
     /// The grammar's name in the bundle, or nil for plain text.
     public static func language(forPath path: String) -> String? {
         let name = (path as NSString).lastPathComponent

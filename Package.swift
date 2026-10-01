@@ -29,7 +29,11 @@ let package = Package(
             // highlighter of the diff and the editor (DIFF-04; version and license in README.md). Material Icon Theme
             // 5.38.1 (MIT, © 2025 Material Extensions), the file icons and their manifest (FIL-09), written by
             // scripts/vendor-file-icons.py with the package's LICENSE beside them.
-            resources: [.copy("Resources/Icons"), .copy("Resources/Prism"), .copy("Resources/FileIcons")]
+            resources: [.copy("Resources/Icons"), .copy("Resources/Prism"), .copy("Resources/FileIcons")],
+            // Textual's modifiers such as `.textual.textSelection(_:)` are `@inlinable` with their body behind these
+            // flags; inlined here in a release build they would read Rocky's flags, find none and do nothing (Textual
+            // issue #49, user report 2026-09-30). Defined here too, they behave as in Textual's own build.
+            swiftSettings: [.define("TEXTUAL_ENABLE_TEXT_SELECTION"), .define("TEXTUAL_ENABLE_LINKS")]
         ),
         .executableTarget(name: "Rocky", dependencies: ["RockyKit", "RockyUI"]),
         .testTarget(
