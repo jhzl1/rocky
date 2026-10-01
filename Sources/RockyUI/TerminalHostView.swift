@@ -51,7 +51,10 @@ struct TerminalHostView: NSViewRepresentable {
         let replay = session.attach(context.coordinator.viewerId) { [weak view] bytes in
             view?.feed(byteArray: bytes)
         }
+        // The output so far is shown again, not heard again: its old bells stay silent (`bell(source:)`).
+        context.coordinator.isReplaying = true
         view.feed(byteArray: replay[...])
+        context.coordinator.isReplaying = false
         view.identifier = identifier
         // Once the view is in its window.
         if focusesOnAppear { DispatchQueue.main.async { [weak view] in view?.window?.makeFirstResponder(view) } }
@@ -87,6 +90,8 @@ struct TerminalHostView: NSViewRepresentable {
         let viewerId = UUID()
         /// The last `focusRequest` this view honored.
         var focusedRequest: Int?
+        /// While a new view feeds the session's buffered output (`makeNSView`).
+        var isReplaying = false
 
         init(session: PTYSession) {
             self.session = session
@@ -111,4 +116,15 @@ extension TerminalHostView.Coordinator: @preconcurrency TerminalViewDelegate {
     func scrolled(source: TerminalView, position: Double) {}
 
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
+
+    /// A BEL in the output. SwiftTerm's default beeps for every one, so each new view of a terminal, made on every tab
+    /// or workspace switch, rang again for every bell its output ever had (user report, 2026-09-30: a beep on a
+    /// double-click that switched rows or reflowed the window; caught at `NSBeep` with lldb). A replayed bell stays
+    /// silent, and a live one beeps only while the user types in this terminal and Rocky is the active app, as the
+    /// shell's own feedback (a completion with nothing to complete). A process printing bells elsewhere makes no sound.
+    func bell(source: TerminalView) {
+        guard !isReplaying, NSApp.isActive, let window = source.window, window.isKeyWindow,
+              window.firstResponder === source else { return }
+        NSSound.beep()
+    }
 }
