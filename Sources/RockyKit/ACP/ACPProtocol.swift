@@ -123,6 +123,15 @@ public struct PermissionOption: Sendable, Equatable, Identifiable {
 public struct PermissionRequest: Sendable, Equatable {
     public let title: String
     public let options: [PermissionOption]
+    /// What the request is about beyond its title, as Markdown: Claude's plan for an Approve Plan request, or the
+    /// tool call's text content. nil when the request has only its title.
+    public let detail: String?
+
+    public init(title: String, options: [PermissionOption], detail: String? = nil) {
+        self.title = title
+        self.options = options
+        self.detail = detail
+    }
 }
 
 /// Builds and reads ACP payloads (protocol version 1). Pure functions, no I/O.
@@ -353,7 +362,27 @@ public enum ACPProtocol {
             guard let id = option["optionId"]?.stringValue else { return nil }
             return PermissionOption(id: id, name: option["name"]?.stringValue ?? id, kind: option["kind"]?.stringValue ?? "")
         }
-        return PermissionRequest(title: params["toolCall"]?["title"]?.stringValue ?? "The agent wants to run a tool", options: options)
+        return PermissionRequest(
+            title: params["toolCall"]?["title"]?.stringValue ?? "The agent wants to run a tool",
+            options: options,
+            detail: permissionDetail(params["toolCall"])
+        )
+    }
+
+    /// An Approve Plan request's plan, from the tool's input (Claude's ExitPlanMode puts it in `plan`), else the
+    /// tool call's text content, so the dialog shows what is being approved and not only "Approve Plan" (user report,
+    /// 2026-10-02). A diff or a terminal content is left out.
+    static func permissionDetail(_ toolCall: JSONValue?) -> String? {
+        if let plan = toolCall?["rawInput"]?["plan"]?.stringValue, !plan.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return plan
+        }
+        let texts = (toolCall?["content"]?.arrayValue ?? []).compactMap { entry -> String? in
+            guard entry["type"]?.stringValue == "content", entry["content"]?["type"]?.stringValue == "text",
+                  let text = entry["content"]?["text"]?.stringValue,
+                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            return text
+        }
+        return texts.isEmpty ? nil : texts.joined(separator: "\n\n")
     }
 
     /// `nil` answers "cancelled", which ACP requires when the prompt is cancelled or dismissed.

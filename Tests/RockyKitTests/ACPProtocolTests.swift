@@ -271,6 +271,25 @@ struct ACPProtocolTests {
         #expect(ACPProtocol.permissionResponse(optionId: nil) == ["outcome": ["outcome": "cancelled"]])
     }
 
+    /// An Approve Plan request carries its plan in the tool's input; another request, its text content, without its diffs.
+    @Test func readsAPermissionRequestsPlanOrTextContent() {
+        let plan = ACPProtocol.permissionRequest(from: [
+            "toolCall": ["toolCallId": "t2", "title": "Approve Plan", "rawInput": ["plan": "# Plan\n\n1. Do it"]],
+            "options": [["optionId": "keep", "name": "No, keep planning", "kind": "reject_once"]],
+        ])
+        #expect(plan.detail == "# Plan\n\n1. Do it")
+        let content = ACPProtocol.permissionRequest(from: [
+            "toolCall": ["toolCallId": "t3", "title": "Fetch", "content": [
+                ["type": "content", "content": ["type": "text", "text": "GET https://example.com"]],
+                ["type": "diff", "path": "/a.swift", "oldText": "a", "newText": "b"],
+                ["type": "content", "content": ["type": "text", "text": "  "]],
+            ]],
+            "options": [],
+        ])
+        #expect(content.detail == "GET https://example.com")
+        #expect(ACPProtocol.permissionRequest(from: ["toolCall": ["title": "Run ls"], "options": []]).detail == nil)
+    }
+
     @Test func readsImageSupport() {
         let result: JSONValue = ["agentCapabilities": ["loadSession": true, "promptCapabilities": ["image": true, "embeddedContext": true]]]
         #expect(ACPProtocol.capabilities(from: result) == AgentCapabilities(loadSession: true, promptImages: true))

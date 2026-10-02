@@ -34,6 +34,17 @@ struct Dialog {
         content != nil && !keepsSmallTitle
     }
 
+    /// The buttons one per line, as wide as the panel, in the row's order: when they would not fit in one row at
+    /// their own width. A plan's approval brought five long options and Cancel, cut to "Ye…" (user report,
+    /// 2026-10-02). The estimate is the 12.5-point medium title's width plus the button's padding and spacing.
+    @MainActor
+    var stacksButtons: Bool {
+        let font = NSFont.systemFont(ofSize: Zoom.shared(12.5), weight: .medium)
+        let widths = buttons.map { ($0.title as NSString).size(withAttributes: [.font: font]).width + Zoom.shared(28) }
+        let needed = widths.reduce(0, +) + Zoom.shared(8) * CGFloat(max(0, buttons.count - 1))
+        return needed > Zoom.shared(width) - Zoom.shared(40)
+    }
+
     /// The buttons as the row lays them out, each with the state it has now (`DialogAction.isEnabled`).
     @MainActor
     var row: DialogButtonRow {
@@ -393,23 +404,34 @@ private struct DialogPanel: View {
                     .accessibilityAddTraits(.isHeader)
                     .accessibilityFocused($titleHasVoiceOver)
             }
-            if dialog.message != nil || dialog.content != nil {
+            // The gaps under the title are outside the scroll view, so a long body that scrolls keeps its distance
+            // from the title (user report, 2026-10-02). With a message and a body, only the body scrolls (DLG-06's
+            // Detail): the message, such as "Approve Plan", stays under the title.
+            if let message = dialog.message, let content = dialog.content {
+                messageText(message)
+                    .padding(.top, 6)
                 FittingScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        if let message = dialog.message {
-                            messageText(message)
-                                .padding(.top, 6)
-                        }
-                        if let content = dialog.content {
-                            content()
-                                .padding(.top, 12)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    content()
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .padding(.top, 12)
+            } else if let message = dialog.message {
+                FittingScrollView {
+                    messageText(message)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.top, 6)
+            } else if let content = dialog.content {
+                FittingScrollView {
+                    content()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.top, 12)
             }
-            buttons(row)
-                .padding(.top, 20)
+            Group {
+                if dialog.stacksButtons { stackedButtons(row) } else { buttons(row) }
+            }
+            .padding(.top, 20)
         }
         .padding(.horizontal, 20)
         .padding(.top, 20)
@@ -450,9 +472,27 @@ private struct DialogPanel: View {
         }
     }
 
-    private func button(_ button: DialogButton) -> some View {
+    /// `stacksButtons`' layout: one per line, top to bottom in the row's order, so Tab still goes down the list.
+    private func stackedButtons(_ row: DialogButtonRow) -> some View {
+        VStack(spacing: 8) {
+            ForEach(row.buttons) { button($0, fillsWidth: true) }
+            if let footnote = dialog.footnote {
+                Text(footnote)
+                    .font(.rocky(11.5))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+        }
+    }
+
+    private func button(_ button: DialogButton, fillsWidth: Bool = false) -> some View {
         let action = dialog.buttons[button.id]
-        return DialogButtonView(title: action.title, role: button.role, isFocused: focusedButton == button.id, help: action.help) {
+        return DialogButtonView(
+            title: action.title,
+            role: button.role,
+            isFocused: focusedButton == button.id,
+            help: action.help,
+            fillsWidth: fillsWidth
+        ) {
             presenter.press(button.id)
         }
         .disabled(!button.isEnabled)
@@ -467,6 +507,8 @@ private struct DialogButtonView: View {
     let role: DialogButton.Role
     let isFocused: Bool
     let help: String?
+    /// As wide as the panel, its title centered (`Dialog.stacksButtons`).
+    var fillsWidth = false
     let action: () -> Void
 
     var body: some View {
@@ -484,7 +526,11 @@ private struct DialogButtonView: View {
 
     @ViewBuilder
     private var styled: some View {
-        let button = Button(title, action: action)
+        let button = Button(action: action) {
+            Text(title)
+                .lineLimit(1)
+                .frame(maxWidth: fillsWidth ? .infinity : nil)
+        }
         switch role {
         case .primary:
             button.buttonStyle(RockyPrimaryButtonStyle(height: 28, horizontalPadding: 14, cornerRadius: 7))

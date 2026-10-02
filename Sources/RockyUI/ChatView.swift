@@ -356,6 +356,7 @@ struct ChatView: View {
                     Text("Ask \(chat.agent.displayName) to make changes…")
                         .font(.rocky(14))
                         .foregroundStyle(.tertiary)
+                        .padding(.top, ComposerController.placeholderTopOffset)
                         .allowsHitTesting(false)
                 }
             }
@@ -716,22 +717,44 @@ struct TurnFooterRow: View {
 
 /// DLG-06's permission request, the large mini-modal, 460 wide: the agent's mark and "Permission needed", the request's
 /// title in a mono block, and the buttons in `PermissionRequest.buttons`' order: Cancel and the rejects at the left, then
-/// at the right Always Allow and Allow, which Return presses.
+/// at the right Always Allow and Allow, which Return presses. With a `detail`, such as the plan of an Approve Plan
+/// request, the panel is 640 wide and shows the title as its message and the detail as Markdown, which the dialog
+/// scrolls when it is long (user report, 2026-10-02: the plan was not shown). Buttons that do not fit in one row stack
+/// (`Dialog.stacksButtons`).
 @MainActor
 enum PermissionDialog {
     /// `answer` gets the option's id, or nil for Cancel.
     static func make(request: PermissionRequest, agent: AgentKind, answer: @escaping @MainActor (String?) -> Void) -> Dialog {
         Dialog(
             title: "Permission needed",
+            message: request.detail == nil ? nil : request.title,
             agent: agent,
-            width: 460,
-            content: { AnyView(PermissionRequestBlock(text: request.title)) },
+            width: request.detail == nil ? 460 : 640,
+            content: {
+                if let detail = request.detail {
+                    AnyView(PermissionDetailBlock(markdown: detail))
+                } else {
+                    AnyView(PermissionRequestBlock(text: request.title))
+                }
+            },
             buttons: request.buttons.map { button in
                 DialogAction(title: button.option?.name ?? "Cancel", role: button.role, isLeading: button.isLeading) {
                     answer(button.option?.id)
                 }
             }
         )
+    }
+}
+
+/// A request's detail, such as a plan, drawn as a reply is (`AgentReplyView`) on `fillControl`, radius 8, padding 12
+/// (DLG-06's Detail).
+private struct PermissionDetailBlock: View {
+    let markdown: String
+
+    var body: some View {
+        AgentReplyView(text: markdown)
+            .padding(12)
+            .background(Theme.fillControl, in: RoundedRectangle(cornerRadius: 8))
     }
 }
 

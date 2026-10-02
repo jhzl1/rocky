@@ -175,6 +175,11 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
 @keyframes fade-in { from { opacity: 0; } } @keyframes fade-out { to { opacity: 0; } }
 .dlg { width: 360px; padding: 20px 20px 16px; border-radius: 14px; background: var(--bg); box-shadow: 0 0 0 1px var(--composer-border), 0 12px 30px rgba(0,0,0,0.5); animation: dlg-in 150ms var(--ease-out) both; }
 .dlg.lg { width: 460px; }
+.dlg.xl { width: 640px; max-height: 80%; display: flex; flex-direction: column; }
+.dlg .detail { margin-top: 12px; padding: 12px; border-radius: 8px; background: var(--fill-control); font-size: 13px; line-height: 1.55; color: #D5D8DC; overflow-y: auto; min-height: 0; }
+.dlg .detail h5 { margin: 0 0 6px; font-size: 13.5px; color: var(--text); } .dlg .detail ol { margin: 4px 0; padding-left: 20px; } .dlg .detail code { font-size: 11.5px; }
+.dlg .btns button { flex-shrink: 0; white-space: nowrap; }   /* keep titles whole, so a row that can't hold them stacks */
+.dlg .btns.stack { flex-direction: column; align-items: stretch; } .dlg .btns.stack .grow { display: none; } .dlg .btns.stack button { text-align: center; }
 @keyframes dlg-in { from { opacity: 0; transform: scale(0.98); } }
 .dlg h4 { margin: 0; font-size: 14px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 8px; }
 .dlg.lg h4 { font-size: 15px; }
@@ -224,6 +229,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
     <button type="button" id="demoDlg">Discard confirmation</button>
     <button type="button" id="demoDlg3">Unsaved edits</button>
     <button type="button" id="demoPerm">Permission request</button>
+    <button type="button" id="demoPlan">Plan approval</button>
     <button type="button" id="demoPins" aria-pressed="false">Requirement pins</button>
     <span class="note" id="lastNote"></span>
   </div>
@@ -421,6 +427,7 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
           <li><strong>Cancel</strong> and secondary: <code>fillButton</code> with <code>textPrimary</code>; <code>fillButtonHover</code> on hover (<code>RockyFilledButtonStyle</code>).</li>
         </ul>
         The default is the rightmost button, primary or destructive, as the native dialogs had it.</dd>
+      <dt>Stacking</dt><dd>When the buttons' titles do not fit in one row at the panel's width, they stack full width, one per line, in the row's order from left to right (so the default ends last), and Tab still goes down the list (<code>Dialog.stacksButtons</code>; user report, 2026-10-02, relayed by dev-1: Claude's plan approval cut its options to "Ye…"). Return, Esc and ⌘D keep their buttons.</dd>
       <dt>SwiftUI</dt><dd>A <code>DialogPresenter</code> (observable, <code>@MainActor</code>, like <code>SettingsPresenter</code>) holds the queue (DLG-04); a <code>DialogHost</code> in <code>RootView</code>'s overlay draws the current one above everything, Settings included; <code>.rockyDialog(item:content:)</code> mirrors <code>.confirmationDialog</code> so each call site changes little. <code>.accessibilityAddTraits(.isModal)</code>, and VoiceOver starts on the title.</dd>
       <dt>Done when</dt><dd>Discard in a diff tab shows the left-aligned mini-modal over the dimmed window; Return discards, Esc or a click outside cancels. No native alert or sheet is left in Rocky except the file pickers and DLG-05's no-window case.</dd>
     </dl>
@@ -456,10 +463,11 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
   <section class="req" id="REQ-DLG-06">
     <header><code class="id">DLG-06</code><h3>The large variant: Commit and Permission</h3><span class="scope in">In scope</span></header>
     <dl>
-      <dt>Panel</dt><dd>DLG-02's look and keys, wider: Commit 500 (its width today), Permission 460. A header row (title 15 semibold, as <code>SettingsPanel</code>'s), the body, and the buttons row as in DLG-02. At most 80 % of the window's height; the body scrolls.</dd>
+      <dt>Panel</dt><dd>DLG-02's look and keys, wider: Commit 500 (its width today), Permission 460, or 640 with a detail (below). A header row (title 15 semibold, as <code>SettingsPanel</code>'s), the body, and the buttons row as in DLG-02. At most 80 % of the window's height; the body scrolls.</dd>
       <dt>Commit</dt><dd>Today's content (<code>CommitSheet</code>: message, description, files); Cancel · <b>Commit</b> (primary, default on ⌘Return).</dd>
       <dt>Permission</dt><dd>Header: the agent's mark and "Permission needed". Body: the request's title in a block, 12.5 mono, <code>fillControl</code>, radius 8, padding 10, selectable, up to 10 lines and then scrolling. Buttons: Cancel at the left end (as today's sheet has it), then the agent's options: the <code>reject_*</code> ones next to it (secondary), then at the right <code>allow_always</code> (secondary) and <code>allow_once</code> (primary, default, as Return accepts in Claude Code's own prompt). Other kinds are secondary, in the order given. Cancel, Esc and a click outside all cancel the request, as closing the sheet does today (<code>answerPermission(optionId: nil)</code>).</dd>
-      <dt>Done when</dt><dd>A permission request shows the command in the mono block with Cancel · Reject at the left and Always Allow · Allow at the right; Return allows once.</dd>
+      <dt>Detail</dt><dd>When the request carries a detail (<code>PermissionRequest.detail</code>: Claude's plan approval, ExitPlanMode, puts its plan in <code>toolCall.rawInput.plan</code>; otherwise the tool call's text content), the panel is 640 wide, the request's title becomes the message under the header ("Approve Plan"), and the detail shows as Markdown (<code>AgentReplyView</code>, as the agent's replies) in a <code>fillControl</code> block, radius 8, padding 12, that scrolls within the dialog. Its up to five long options stack (DLG-02). User report, 2026-10-02 (relayed by dev-1): the dialog showed only "Approve Plan" and no plan. Only the block scrolls: the 6 pt under the title and the 12 pt before the block sit outside the scroll, so a long plan scrolled up never touches the title (user report, 2026-10-02: "le falta padding"). The spacing at rest is the same.</dd>
+      <dt>Done when</dt><dd>A permission request shows the command in the mono block with Cancel · Reject at the left and Always Allow · Allow at the right; Return allows once. A plan approval shows the plan as Markdown in a 640 pt dialog, its options stacked and readable.</dd>
     </dl>
   </section>
 
@@ -765,12 +773,15 @@ var pendingDrafts: [String: ComposerDraft]                                      
   function toast(msg) { let t = win.querySelector('.toast'); if (!t) { t = document.createElement('div'); t.className = 'toast'; win.appendChild(t); } t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2600); }
   $('#demoCache').addEventListener('click', (e) => { state.noOpenCodeCache = !state.noOpenCodeCache; e.currentTarget.setAttribute('aria-pressed', String(state.noOpenCodeCache)); renderMenu(); });
   // DLG: one mini-modal at a time, over the dimmed window. Return = the default (rightmost), Esc or a click outside = Cancel.
-  function dialog({ title, message, cmd, lg, agentMark, buttons, req }) {
+  function dialog({ title, message, cmd, detail, lg, xl, agentMark, buttons, req }) {
     const scrim = document.createElement('div'); scrim.className = 'dlg-scrim';
     const left = buttons.filter((b) => b.left); const right = buttons.filter((b) => !b.left);
     const btn = (b, i) => `<button class="${b.role || ''}" data-i="${buttons.indexOf(b)}">${esc(b.label)}</button>`;
-    scrim.innerHTML = `<div class="dlg${lg ? ' lg' : ''}" role="alertdialog" aria-modal="true" data-req="${req}"><h4>${agentMark ? tile('claude', 'lg') : ''}${esc(title)}</h4>${message ? `<p>${esc(message)}</p>` : ''}${cmd ? `<div class="cmd">${esc(cmd)}</div>` : ''}<div class="btns">${left.map(btn).join('')}<span class="grow"></span>${right.map(btn).join('')}</div></div>`;
+    const size = xl ? ' xl' : lg ? ' lg' : '';
+    scrim.innerHTML = `<div class="dlg${size}" role="alertdialog" aria-modal="true" data-req="${req}"><h4>${agentMark ? tile('claude', 'lg') : ''}${esc(title)}</h4>${message ? `<p>${esc(message)}</p>` : ''}${cmd ? `<div class="cmd">${esc(cmd)}</div>` : ''}${detail ? `<div class="detail" data-req="DLG-06">${detail}</div>` : ''}<div class="btns">${left.map(btn).join('')}<span class="grow"></span>${right.map(btn).join('')}</div></div>`;
     win.appendChild(scrim);
+    const row = scrim.querySelector('.btns');
+    if (row.scrollWidth > row.clientWidth + 1) row.classList.add('stack');   // DLG-02: stack when they don't fit
     const close = (b) => { document.removeEventListener('keydown', onKey, true); scrim.classList.add('out'); setTimeout(() => scrim.remove(), 120); if (b) toast(b.done || `${b.label}.`); };
     const def = right[right.length - 1]; const cancel = buttons.find((b) => b.role === 'cancel') || def;
     const onKey = (e) => {
@@ -785,6 +796,17 @@ var pendingDrafts: [String: ComposerDraft]                                      
   $('#demoDlg').addEventListener('click', () => dialog({ req: 'DLG-02', title: 'Discard changes to README.md?', message: 'This cannot be undone.', buttons: [{ label: 'Cancel', role: 'cancel', done: 'Cancelled.' }, { label: 'Discard Changes', role: 'destructive', done: 'Discarded the changes to README.md.' }] }));
   $('#demoDlg3').addEventListener('click', () => dialog({ req: 'DLG-01', title: 'Save changes to openapi.ts?', message: 'Your changes will be lost if you don’t save them.', buttons: [{ label: 'Don’t Save', role: 'destructive', left: true, cmdD: true, done: 'Closed without saving.' }, { label: 'Cancel', role: 'cancel', done: 'Cancelled.' }, { label: 'Save', role: 'primary', done: 'Saved openapi.ts and closed the tab.' }] }));
   $('#demoPerm').addEventListener('click', () => dialog({ req: 'DLG-06', lg: true, agentMark: true, title: 'Permission needed', cmd: 'Bash: pnpm --filter web exec vitest run src/forms', buttons: [{ label: 'Cancel', role: 'cancel', left: true, done: 'Cancelled the request.' }, { label: 'Reject', left: true, done: 'Rejected.' }, { label: 'Always Allow', done: 'Allowed always.' }, { label: 'Allow', role: 'primary', done: 'Allowed once.' }] }));
+  $('#demoPlan').addEventListener('click', () => {
+    const plan = '<h5>Plan</h5><ol><li>Add <code>operation(route)</code> to <code>src/openapi.ts</code>, with an <code>operationId</code> per route.</li><li>Emit OpenAPI 3.1 and a <code>version</code> in <code>info</code>.</li><li>Add <code>test/openapi.test.ts</code>: the version and that every route has a path.</li><li>Run the tests and fix what fails.</li></ol>';
+    const buttons = [
+      { label: 'Cancel', role: 'cancel', left: true, done: 'Cancelled the request.' },
+      { label: 'No, keep planning', left: true, done: 'Kept planning.' },
+      { label: 'Yes, and bypass permissions', done: 'Approved, bypassing permissions.' },
+      { label: 'Yes, and auto-accept edits', done: 'Approved, auto-accepting edits.' },
+      { label: 'Yes, and manually approve edits', role: 'primary', done: 'Approved; edits ask first.' },
+    ];
+    dialog({ req: 'DLG-06', xl: true, agentMark: true, title: 'Permission needed', message: 'Approve Plan', detail: plan, buttons });
+  });
   $('#demoPins').addEventListener('click', (e) => { e.currentTarget.setAttribute('aria-pressed', String(document.body.classList.toggle('spec-on'))); });
   document.addEventListener('click', (e) => {
     if (!document.body.classList.contains('spec-on')) return;
