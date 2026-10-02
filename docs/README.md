@@ -1,6 +1,6 @@
 # Guía de uso de Rocky
 
-Última actualización: 2026-09-29
+Última actualización: 2026-10-02
 
 Rocky es una app de macOS para trabajar con agentes de código (Claude Code y OpenCode) en paralelo. Cada tarea vive
 en su propio workspace, con su propia copia del repositorio, así que varios agentes pueden trabajar a la vez sin
@@ -727,12 +727,17 @@ comentario: ahí Esc es de ese campo. Solo cuando no pasa nada de eso detiene el
 
 - **Preguntas:** cuando el agente te pregunta algo, aparece una tarjeta sobre el cuadro de mensaje, una pregunta a
   la vez. Eliges una opción (o varias), o escribes en "Other answer". Botones: "Skip" (seguir sin responder), "Back",
-  "Next" y "Submit" en la última.
+  "Next" y "Submit" en la última. Con texto en "Other answer", Return da la pregunta por respondida: pasa a la
+  siguiente, o envía las respuestas si es la última.
 - **Permisos:** cuando el agente pide permiso para una acción, aparece el diálogo "Permission needed", con el logo
   del agente. Lo que quiere hacer (por ejemplo, el comando) va en un bloque de texto monoespaciado, que se puede
   seleccionar y que se desplaza pasadas diez líneas. A la izquierda quedan "Cancel" y las opciones de rechazar
   ("Reject"); a la derecha, "Always Allow" y "Allow". Return pulsa "Allow" (permitir una vez), como en Claude Code.
   Cancel, Esc o un clic fuera cancelan la petición. El diálogo aparece mientras esa conversación está en pantalla.
+  Si las opciones no caben en una fila, se apilan, una por línea y a todo el ancho.
+- **Aprobar un plan:** cuando Claude termina un plan en modo plan, el diálogo muestra el plan completo, con su formato
+  y con desplazamiento si es largo, y debajo las opciones del agente ("Yes, auto-accept edits", "Yes, manually
+  approve edits", "No, keep planning"…), apiladas.
 
 En ambos casos el workspace muestra el estado "Needs you" en la barra lateral.
 

@@ -140,11 +140,16 @@ struct QuestionCard: View {
                 }
             }
             if question.otherFieldId != nil {
-                TextField("Other answer", text: Binding(
+                // The placeholder is SwiftUI's own, so it does not sit a point off the typed text (`stablePlaceholder`);
+                // Return answers the question when there is text, and does nothing otherwise (user report, 2026-10-02:
+                // it selected the text).
+                TextField("", text: Binding(
                     get: { other[question.id] ?? "" },
                     set: { other[question.id] = $0 }
                 ))
                 .textFieldStyle(.plain)
+                .stablePlaceholder("Other answer", isVisible: (other[question.id] ?? "").isEmpty)
+                .onSubmit { submitOther(question) }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 7))
@@ -153,6 +158,17 @@ struct QuestionCard: View {
             }
         }
         .font(.rocky(12))
+    }
+
+    /// Return in the Other field: with text, the question is answered, so the card goes on to the next one, or sends
+    /// the answers from the last; empty, nothing happens.
+    private func submitOther(_ question: AgentQuestionRequest.Question) {
+        guard !(other[question.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        if isLast {
+            answer(.answered(picks: picks, other: other))
+        } else {
+            withAnimation(.easeOut(duration: 0.15)) { index += 1 }
+        }
     }
 
     private func toggle(_ label: String, in question: AgentQuestionRequest.Question) {

@@ -29,6 +29,13 @@ final class ComposerController {
 
     /// A line of 14-point text, at Rocky's zoom.
     static var lineHeight: CGFloat { Zoom.shared(18) }
+
+    /// How much lower the first line's text sits than a plain line of the same font, because of
+    /// `ComposerTextView.minimumLineHeight`: the placeholder, drawn by SwiftUI, moves down by as much to stay on it.
+    static var placeholderTopOffset: CGFloat {
+        let font = NSFont.systemFont(ofSize: Zoom.shared(14))
+        return max(0, ComposerTextView.minimumLineHeight(font: font) - ceil(font.ascender - font.descender))
+    }
     static var minHeight: CGFloat { lineHeight * 2 }
     static var maxHeight: CGFloat { lineHeight * 10 }
 
@@ -294,7 +301,22 @@ final class ComposerTextView: NSTextView {
     private var textFont: NSFont { .systemFont(ofSize: 14 * zoom) }
 
     private var textAttributes: [NSAttributedString.Key: Any] {
-        [.font: textFont, .foregroundColor: NSColor.labelColor]
+        [.font: textFont, .foregroundColor: NSColor.labelColor, .paragraphStyle: paragraphStyle]
+    }
+
+    /// Every line as tall as one that holds a file badge. A badge rises above the text (it is centered on it), and a
+    /// line that took one grew upward, so its text dropped 2 points as an image was pasted (user report, 2026-10-02).
+    /// TextKit 2 puts a minimum line height's extra room above the text: measured, the first baseline is 15.95
+    /// without a badge and 16.00 with one, against 14.00 and 16.00 before.
+    private var paragraphStyle: NSParagraphStyle {
+        let style = NSMutableParagraphStyle()
+        style.minimumLineHeight = Self.minimumLineHeight(font: textFont)
+        return style
+    }
+
+    static func minimumLineHeight(font: NSFont) -> CGFloat {
+        let badgeTop = FileBadgeLook.height + FileBadgeLook.baselineOffset
+        return max(badgeTop, font.ascender) - font.descender
     }
 
     func configure() {
@@ -306,6 +328,7 @@ final class ComposerTextView: NSTextView {
         textColor = .labelColor
         insertionPointColor = .labelColor
         typingAttributes = textAttributes
+        defaultParagraphStyle = paragraphStyle
         isAutomaticQuoteSubstitutionEnabled = false
         isAutomaticDashSubstitutionEnabled = false
         isAutomaticTextReplacementEnabled = false

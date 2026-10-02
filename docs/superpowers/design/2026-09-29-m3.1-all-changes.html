@@ -18,7 +18,7 @@ Visual, behavioral and technical source of truth for M3.1. dev-1 writes the plan
   it, with the unchanged runs folded; read and fold only, and a file's name opens its own diff tab; before M5.
 - The tab row, the Changes tab and the diff rows are M3's (CHG-02, CHG-03, DIFF-01…03), simplified. Only the
   button, the tab, its toolbar, the file headers and the folding are specified here.
-- Requirement ids: ALL (All changes), RVW (review comments sent to the chat as a file), QUE (queued messages' actions), KIT, OUT. Pins: button "Requirement pins". When the mock and a requirement's
+- Requirement ids: ALL (All changes), RVW (review comments sent to the chat as a file), QUE (queued messages' actions), BOX (message box), QST (question card), KIT, OUT. Pins: button "Requirement pins". When the mock and a requirement's
   text disagree, the text wins.
 ==========================================================================================================
 -->
@@ -324,6 +324,24 @@ code { font: 12px var(--mono); background: rgba(255,255,255,0.06); padding: 1px 
       <dt>Access</dt><dd>VoiceOver reads the status, then each action by its name ("Send now", "Edit", "Delete this queued message").</dd>
       <dt>Code</dt><dd><code>QueuedMessagesView.swift</code> and <code>ChatView</code> (built by dev-1, 2026-09-29).</dd>
       <dt>Done when</dt><dd>Two messages sent during a turn each show "◷ Queued · ↑ Send now · ✎ Edit · ✕" under them without hovering; with text in the message box, Edit is dimmed.</dd>
+    </dl>
+  </section>
+
+  <h2>Message box and questions</h2>
+  <section class="req" id="REQ-BOX-01">
+    <header><code class="id">BOX-01</code><h3>Line height with badges</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Rule</dt><dd>Every line of the message box has a minimum height of a file badge's top (<code>FileBadge</code>, an attachment or image) plus the font's descender, so pasting a badge no longer pushes the first line down by 2 pt. Measured by dev-1 with TextKit 2 (2026-10-02): first baseline 15.95 of 16.00 with the change, 14.00 of 16.00 before. The placeholder moves down by the same 2 pt, so it sits where the first line's text will.</dd>
+      <dt>Done when</dt><dd>Pasting a screenshot into an empty box, and then typing, moves nothing; the caret's line is where the placeholder was.</dd>
+    </dl>
+  </section>
+
+  <section class="req" id="REQ-QST-01">
+    <header><code class="id">QST-01</code><h3>The question card's "Other answer"</h3><span class="scope in">In scope</span></header>
+    <dl>
+      <dt>Field</dt><dd>Its placeholder is <code>stablePlaceholder</code>, so the text does not jump 1 pt when typing starts.</dd>
+      <dt>Return</dt><dd>With text, Return answers that question: it goes to the next question, or submits on the last. Empty, Return does nothing (it never submits a blank answer).</dd>
+      <dt>Source</dt><dd>User reports, 2026-10-02 (relayed by dev-1), on branch <code>fix/plan-dialog-and-inputs</code>.</dd>
     </dl>
   </section>
 
